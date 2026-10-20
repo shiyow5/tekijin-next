@@ -96,3 +96,10 @@ def test_graph_ranker_extracts_person_ranking(seed_counts, session, fake_embedde
     assert result.route == "person"
     assert result.ranked_experts, "person route must surface a ranked expert list"
     assert all(isinstance(pid, int) for pid in result.ranked_experts)
+    # Per-row record, so a metric that moves between machines can be traced to rows.
+    (row,) = ranker.rows
+    assert row["id"] == 9001
+    assert row["gold_route"] == "person" and row["route"] == "person"
+    assert row["topics"] == result.predicted_topics
+    assert row["ranked_experts"] == result.ranked_experts
+    assert set(row) >= {"out_of_scope", "intent_confidence", "next", "error"}
