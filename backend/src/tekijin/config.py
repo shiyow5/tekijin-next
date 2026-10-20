@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -47,10 +47,32 @@ class Settings(BaseSettings):
     # Database (connection code lands in a later component).
     database_url: str = "postgresql+psycopg://tekijin:tekijin@localhost:5432/tekijin"
 
-    # LLM serving via vLLM (OpenAI-compatible /v1).
-    llm_base_url: str = "http://internship-dgx1:8080/v1"
-    llm_model: str = "Qwen3.6-35B-A3B-NVFP4"
+    # LLM serving via any OpenAI-compatible /v1 endpoint. The default is OpenRouter
+    # (the DGX vLLM went away with the internship); a local llama-server or vLLM
+    # works too — set ``llm_thinking_control="chat_template"`` for those.
+    llm_base_url: str = "https://openrouter.ai/api/v1"
+    llm_model: str = "qwen/qwen3.6-35b-a3b"
     llm_api_key: str = "dummy"
+
+    # How ``llm_enable_thinking`` reaches the server. "chat_template" sends
+    # ``chat_template_kwargs={"enable_thinking": ...}`` (vLLM / llama-server read it
+    # through the Qwen3 template); "reasoning" sends OpenRouter's ``reasoning`` field
+    # (only ``effort="none"`` turns thinking off there); "none" sends nothing, for an
+    # endpoint that rejects unknown fields.
+    llm_thinking_control: Literal["chat_template", "reasoning", "none"] = "reasoning"
+
+    # OpenRouter's ``provider`` object, sent verbatim in the request body. Pin the
+    # provider here: the same model is served at different quantizations and with
+    # different tool/structured-output support, and some providers retain prompts.
+    # Read from the environment as JSON, e.g.
+    # ``{"order": ["akashml", "deepinfra"], "allow_fallbacks": false,
+    #   "require_parameters": true, "data_collection": "deny"}``.
+    llm_provider_routing: dict[str, Any] | None = None
+
+    # ``with_structured_output`` method for every structured call. "function_calling"
+    # is what was measured on the DGX; "json_schema" asks the server for constrained
+    # decoding instead, which some providers honour more reliably than forced tools.
+    llm_structured_output_method: Literal["function_calling", "json_schema"] = "function_calling"
 
     # Whether to let a reasoning model (Qwen3) emit its <think> chain before the
     # answer. Kept OFF by default: with thinking ON the C1/C2 structured-output

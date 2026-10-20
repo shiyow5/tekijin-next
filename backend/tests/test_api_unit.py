@@ -773,8 +773,11 @@ def test_vllm_sufficiency_adapter_converts_schema() -> None:
 def test_thinking_extra_body_wires_setting_both_ways() -> None:
     # The extra_body dict is the actual fix (#140): it must carry the setting's
     # value under chat_template_kwargs.enable_thinking for vLLM to honor it.
-    assert _thinking_extra_body(_settings()) == {"chat_template_kwargs": {"enable_thinking": False}}
-    assert _thinking_extra_body(_settings(llm_enable_thinking=True)) == {
+    vllm = {"llm_thinking_control": "chat_template"}
+    assert _thinking_extra_body(_settings(**vllm)) == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
+    assert _thinking_extra_body(_settings(**vllm, llm_enable_thinking=True)) == {
         "chat_template_kwargs": {"enable_thinking": True}
     }
 
@@ -797,6 +800,55 @@ def test_openai_model_kwargs_pins_retries_for_a_hard_timeout() -> None:
     # not timeout × (ChatOpenAI's default 2 retries + 1).
     assert _openai_model_kwargs(_settings())["max_retries"] == 0
     assert _openai_model_kwargs(_settings(llm_max_retries=1))["max_retries"] == 1
+
+
+def test_thinking_extra_body_speaks_openrouters_reasoning_parameter() -> None:
+    # OpenRouter has no chat template to reach: thinking is toggled with its own
+    # `reasoning` field, and only effort="none" turns it off (`enabled` alone
+    # merely switches it on).
+    off = _settings(llm_thinking_control="reasoning")
+    on = _settings(llm_thinking_control="reasoning", llm_enable_thinking=True)
+    assert _thinking_extra_body(off) == {"reasoning": {"effort": "none"}}
+    assert _thinking_extra_body(on) == {"reasoning": {"enabled": True}}
+
+
+def test_thinking_extra_body_can_send_nothing() -> None:
+    # For an endpoint that rejects unknown fields, the toggle must be omittable.
+    settings = _settings(llm_thinking_control="none", llm_enable_thinking=True)
+    assert _thinking_extra_body(settings) == {}
+
+
+def test_openai_model_kwargs_pins_the_openrouter_provider() -> None:
+    from tekijin.llm.vllm import _openai_model_kwargs
+
+    routing = {"order": ["akashml"], "allow_fallbacks": False, "data_collection": "deny"}
+    kwargs = _openai_model_kwargs(
+        _settings(llm_thinking_control="reasoning", llm_provider_routing=routing)
+    )
+    assert kwargs["extra_body"] == {"reasoning": {"effort": "none"}, "provider": routing}
+
+
+def test_openai_model_kwargs_omits_an_empty_extra_body() -> None:
+    from tekijin.llm.vllm import _openai_model_kwargs
+
+    assert "extra_body" not in _openai_model_kwargs(_settings(llm_thinking_control="none"))
+
+
+def test_provider_routing_is_read_as_json_from_the_environment(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "TEKIJIN_LLM_PROVIDER_ROUTING", '{"order": ["deepinfra"], "data_collection": "deny"}'
+    )
+    settings = _settings()
+    assert settings.llm_provider_routing == {"order": ["deepinfra"], "data_collection": "deny"}
+
+
+def test_structured_output_kwargs_follow_the_setting() -> None:
+    from tekijin.llm.vllm import _structured_output_kwargs
+
+    assert _structured_output_kwargs(_settings()) == {"method": "function_calling"}
+    assert _structured_output_kwargs(_settings(llm_structured_output_method="json_schema")) == {
+        "method": "json_schema"
+    }
 
 
 def test_openai_model_kwargs_wires_temperature_and_max_tokens() -> None:

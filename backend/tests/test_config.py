@@ -18,9 +18,12 @@ def test_defaults(monkeypatch) -> None:
 
     assert settings.app_env == "development"
     assert settings.database_url == "postgresql+psycopg://tekijin:tekijin@localhost:5432/tekijin"
-    assert settings.llm_base_url == "http://internship-dgx1:8080/v1"
-    assert settings.llm_model == "Qwen3.6-35B-A3B-NVFP4"
+    assert settings.llm_base_url == "https://openrouter.ai/api/v1"
+    assert settings.llm_model == "qwen/qwen3.6-35b-a3b"
     assert settings.llm_api_key == "dummy"
+    assert settings.llm_thinking_control == "reasoning"
+    assert settings.llm_provider_routing is None
+    assert settings.llm_structured_output_method == "function_calling"
     assert settings.embedding_model == "nvidia/Nemotron-3-Embed-1B-BF16"
     assert settings.embedding_trust_remote_code is True
     assert settings.bm25_weight == 0.2

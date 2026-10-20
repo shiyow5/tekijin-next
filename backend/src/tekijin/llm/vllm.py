@@ -162,13 +162,26 @@ def _fence_safe(text: str) -> str:
 
 
 def _thinking_extra_body(settings: Settings) -> dict[str, Any]:
-    """vLLM ``extra_body`` that toggles the Qwen3 ``<think>`` pass per request.
+    """``extra_body`` fields that toggle the reasoning pass per request.
 
-    Kept as a pure helper (network-free) so the actual wiring of
-    ``settings.llm_enable_thinking`` into the request is unit-testable, while the
-    ``init_chat_model`` network call in :func:`_openai_model` stays uncovered.
+    The wire format depends on the server (``settings.llm_thinking_control``): vLLM
+    and llama-server read ``chat_template_kwargs`` through the Qwen3 template,
+    OpenRouter reads its own ``reasoning`` field, where only ``effort="none"``
+    disables thinking. Kept as a pure helper (network-free) so the wiring is
+    unit-testable, while the ``init_chat_model`` call in :func:`_openai_model`
+    stays uncovered.
     """
-    return {"chat_template_kwargs": {"enable_thinking": settings.llm_enable_thinking}}
+    thinking = settings.llm_enable_thinking
+    if settings.llm_thinking_control == "chat_template":
+        return {"chat_template_kwargs": {"enable_thinking": thinking}}
+    if settings.llm_thinking_control == "reasoning":
+        return {"reasoning": {"enabled": True} if thinking else {"effort": "none"}}
+    return {}
+
+
+def _structured_output_kwargs(settings: Settings) -> dict[str, Any]:
+    """Keyword arguments for every ``with_structured_output`` call in this package."""
+    return {"method": settings.llm_structured_output_method}
 
 
 def _openai_model_kwargs(settings: Settings) -> dict[str, Any]:
@@ -182,7 +195,6 @@ def _openai_model_kwargs(settings: Settings) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "base_url": settings.llm_base_url,
         "api_key": settings.llm_api_key,
-        "extra_body": _thinking_extra_body(settings),
         # Deterministic by default (model-definition.md: C1/C2 低温). Without this
         # ChatOpenAI sends its own 0.7 default, adding routing noise (#116 原因3).
         "temperature": settings.llm_temperature,
@@ -191,6 +203,11 @@ def _openai_model_kwargs(settings: Settings) -> dict[str, Any]:
         # timeout × 3 and hold a backpressure slot ~3× too long (#180 review).
         "max_retries": settings.llm_max_retries,
     }
+    extra_body = _thinking_extra_body(settings)
+    if settings.llm_provider_routing is not None:
+        extra_body["provider"] = settings.llm_provider_routing
+    if extra_body:
+        kwargs["extra_body"] = extra_body
     # Cap output length so C1 can't run to finish_reason=length and drop the tool
     # call (#116 原因2); omitted when unset so the server default applies.
     if settings.llm_max_tokens is not None:
@@ -224,7 +241,9 @@ def build_structured_model(schema: type, settings: Settings) -> Any:  # pragma: 
     refactor of :func:`_openai_model` cannot silently break them.
     """
 
-    return _openai_model(settings.llm_model, settings).with_structured_output(schema)
+    return _openai_model(settings.llm_model, settings).with_structured_output(
+        schema, **_structured_output_kwargs(settings)
+    )
 
 
 class VllmIntentModel:
@@ -236,7 +255,7 @@ class VllmIntentModel:
 
     def _structured(self) -> Any:  # pragma: no cover - builds a network client
         return _openai_model(self._settings.llm_model, self._settings).with_structured_output(
-            IntentSchema
+            IntentSchema, **_structured_output_kwargs(self._settings)
         )
 
     @staticmethod
@@ -310,7 +329,7 @@ class VllmSufficiencyModel:
 
     def _structured(self) -> Any:  # pragma: no cover - builds a network client
         return _openai_model(self._settings.llm_model, self._settings).with_structured_output(
-            SufficiencySchema
+            SufficiencySchema, **_structured_output_kwargs(self._settings)
         )
 
     @staticmethod
@@ -427,7 +446,7 @@ class VllmAnswerabilityModel:
 
     def _structured(self) -> Any:  # pragma: no cover - builds a network client
         return _openai_model(self._settings.llm_model, self._settings).with_structured_output(
-            AnswerabilitySchema
+            AnswerabilitySchema, **_structured_output_kwargs(self._settings)
         )
 
     @staticmethod
@@ -481,7 +500,7 @@ class VllmSelfAnswerModel:
 
     def _structured(self) -> Any:  # pragma: no cover - builds a network client
         return _openai_model(self._settings.llm_model, self._settings).with_structured_output(
-            SelfAnswerSchema
+            SelfAnswerSchema, **_structured_output_kwargs(self._settings)
         )
 
     @staticmethod
@@ -561,7 +580,9 @@ class VllmQuestionStructurer:
             self._settings.llm_model,
             self._settings,
             temperature=self._settings.llm_draft_temperature,
-        ).with_structured_output(QuestionStructureSchema)
+        ).with_structured_output(
+            QuestionStructureSchema, **_structured_output_kwargs(self._settings)
+        )
 
     @staticmethod
     def prompt(
