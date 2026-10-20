@@ -4,9 +4,9 @@ name: Deploy to DGX
 # lives ON the DGX (label: dgx), so the private Tailscale host is reached without
 # storing any SSH/Tailscale secret in GitHub. The deploy touches ONLY the backend
 # and frontend — vLLM (GPU) and Postgres are never restarted (see deploy/deploy.sh).
+# DGX はインターン終了で使えなくなったため、push では動かさない（tekijin-next #1）。
+# evo-x2 向けに書き直すまで、手動実行だけを残す。
 on:
-  push:
-    branches: [develop]
   workflow_dispatch: {}
 
 # Never run two deploys at once, and never cancel one mid-flight (a half-applied
