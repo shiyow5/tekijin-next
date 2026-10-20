@@ -4,6 +4,10 @@
 
 詳細な読み解きは `analysis/20_モデル実測結果.md`（非gitの検討資料）にある。ここには**数字と再現方法**を置く。
 
+> 🔁 **2026-10-21: evo-x2 の llama.cpp(Qwen3.6-35B-A3B UD-Q4_K_XL)で全グラフ評価を測り直した。**
+> json_schema 方式なら Hit@3(0.727 / 本番の既定 0.788)と人に回すべき質問の取りこぼしゼロが DGX と一致する。
+> → **[2026-10-21-evo-x2-llamacpp.md](2026-10-21-evo-x2-llamacpp.md)**
+>
 > 📊 **指標の定義と読み方** → [eval-metrics.md](eval-metrics.md)、**現行の実測値スコアカード** → [eval-scores.md](eval-scores.md)。
 > フルグラフ E2E（実 C1・self_answer ON）の実力値と、算法レバーの負の結果（[ADR-0008](../adr/0008-system2-hit3-ceiling-and-augmentation-negatives.md)）はそちら。
 

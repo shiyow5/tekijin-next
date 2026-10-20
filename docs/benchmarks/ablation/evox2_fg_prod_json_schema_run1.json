@@ -1,0 +1,1730 @@
+{
+  "config": {
+    "backend": "vllm",
+    "self_answer": true,
+    "query_expansion": false,
+    "question_fit": true,
+    "additive": true,
+    "additive_floor": 0.2,
+    "daily_knowledge": true,
+    "score_all_employees": false,
+    "branch_constraint": false,
+    "answerability": false,
+    "knowledge_floor": null,
+    "rows": 87,
+    "errors": 0,
+    "additive_fired_person": 10
+  },
+  "metrics": {
+    "n": 87,
+    "n_ranked": 66,
+    "n_routed": 72,
+    "n_abstain": 15,
+    "top1_accuracy": 0.5909090909090909,
+    "recall_at_3": 0.6338383838383839,
+    "hit_at_3": 0.7878787878787878,
+    "mrr": 0.6843434343434343,
+    "route_accuracy": 0.7777777777777778,
+    "abstain_accuracy": 0.0
+  },
+  "by_difficulty": {
+    "L1": {
+      "n": 10,
+      "n_ranked": 10,
+      "n_routed": 10,
+      "n_abstain": 0,
+      "top1_accuracy": 0.9,
+      "recall_at_3": 0.8666666666666666,
+      "hit_at_3": 0.9,
+      "mrr": 0.9,
+      "route_accuracy": 0.4,
+      "abstain_accuracy": 0.0
+    },
+    "L2": {
+      "n": 36,
+      "n_ranked": 36,
+      "n_routed": 36,
+      "n_abstain": 0,
+      "top1_accuracy": 0.5,
+      "recall_at_3": 0.625,
+      "hit_at_3": 0.7777777777777778,
+      "mrr": 0.6296296296296297,
+      "route_accuracy": 0.8055555555555556,
+      "abstain_accuracy": 0.0
+    },
+    "L3": {
+      "n": 26,
+      "n_ranked": 20,
+      "n_routed": 26,
+      "n_abstain": 0,
+      "top1_accuracy": 0.6,
+      "recall_at_3": 0.5333333333333333,
+      "hit_at_3": 0.75,
+      "mrr": 0.675,
+      "route_accuracy": 0.8846153846153846,
+      "abstain_accuracy": 0.0
+    },
+    "L4": {
+      "n": 15,
+      "n_ranked": 0,
+      "n_routed": 0,
+      "n_abstain": 15,
+      "top1_accuracy": 0.0,
+      "recall_at_3": 0.0,
+      "hit_at_3": 0.0,
+      "mrr": 0.0,
+      "route_accuracy": 0.0,
+      "abstain_accuracy": 0.0
+    }
+  },
+  "decision_recall": {
+    "n": 87,
+    "macro_recall": 0.49275362318840576,
+    "per_class": {
+      "self_answer": {
+        "support": 23,
+        "hits": 11,
+        "recall": 0.4782608695652174
+      },
+      "route": {
+        "support": 49,
+        "hits": 49,
+        "recall": 1.0
+      },
+      "abstain": {
+        "support": 15,
+        "hits": 0,
+        "recall": 0.0
+      }
+    }
+  },
+  "source_recall": {
+    "n": 23,
+    "n_cited": 4,
+    "recall": 0.15217391304347827,
+    "precision": 0.875,
+    "grounded_rate": 0.17391304347826086
+  },
+  "rows": [
+    {
+      "id": 1,
+      "gold_route": "document",
+      "route": "person",
+      "topics": [
+        "購買・仕入れ"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        35,
+        36,
+        19
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 2,
+      "gold_route": "document",
+      "route": "person",
+      "topics": [
+        "サーバー・インフラ運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        25,
+        33,
+        15
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 3,
+      "gold_route": "prior_answer",
+      "route": "person",
+      "topics": [
+        "SNS運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        22,
+        4,
+        5
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 4,
+      "gold_route": "prior_answer",
+      "route": "person",
+      "topics": [
+        "契約管理"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        21,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 5,
+      "gold_route": "document",
+      "route": "self_answered",
+      "topics": [
+        "ネットワーク・VPN"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 6,
+      "gold_route": "document",
+      "route": "document",
+      "topics": [
+        "人事・採用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        26,
+        27,
+        9
+      ],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 7,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "広報・PR"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        40,
+        38,
+        39
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 8,
+      "gold_route": "document",
+      "route": "document",
+      "topics": [
+        "経理・決算",
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        10,
+        29,
+        3
+      ],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 9,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "システム開発・API"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        16,
+        13,
+        14
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 10,
+      "gold_route": "prior_answer",
+      "route": "person",
+      "topics": [
+        "問い合わせ・ヘルプデスク運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        17,
+        34,
+        33
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 11,
+      "gold_route": "document",
+      "route": "person",
+      "topics": [
+        "社内IT・ヘルプデスク"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        24,
+        25,
+        6
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 12,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "基幹システム"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        2,
+        33
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 13,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "パフォーマンスチューニング"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        22,
+        3,
+        24
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 14,
+      "gold_route": "prior_answer",
+      "route": "person",
+      "topics": [
+        "ECサイト構築"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        15,
+        14,
+        16
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 15,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "モバイルアプリ開発"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        16,
+        13,
+        3
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 16,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "クラウド移行",
+        "サーバー・インフラ運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        15,
+        25,
+        7
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 17,
+      "gold_route": "prior_answer",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 18,
+      "gold_route": "document",
+      "route": "person",
+      "topics": [
+        "セキュリティ"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        6,
+        25,
+        33
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 19,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 20,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "CRM・営業支援"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 21,
+      "gold_route": "prior_answer",
+      "route": "person",
+      "topics": [
+        "Webマーケティング・広告"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        4,
+        5,
+        22
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 22,
+      "gold_route": "document",
+      "route": "document",
+      "topics": [
+        "総務・法務"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        31,
+        32,
+        12
+      ],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 23,
+      "gold_route": "document",
+      "route": "document",
+      "topics": [
+        "CRM・営業支援"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        1,
+        23,
+        35
+      ],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 24,
+      "gold_route": "document",
+      "route": "person",
+      "topics": [
+        "システム開発・API",
+        "サーバー・インフラ運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        25,
+        33,
+        15
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 25,
+      "gold_route": "prior_answer",
+      "route": "person",
+      "topics": [
+        "SNS運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        22,
+        4,
+        5
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 26,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "ECサイト構築"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        15,
+        14,
+        16
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 27,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "モバイルアプリ開発"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        16,
+        13,
+        15
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 28,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "クラウド移行",
+        "サーバー・インフラ運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        15,
+        25,
+        14
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 29,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "システム開発・API"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        13,
+        25,
+        33
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 30,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "契約管理"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        21,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 31,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "システム開発・API",
+        "サーバー・インフラ運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.8,
+      "ranked_experts": [
+        25,
+        33,
+        15
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 32,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "契約管理"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        1,
+        21,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 33,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.85,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 34,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "経理・決算"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        10,
+        32,
+        7
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 35,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.85,
+      "ranked_experts": [
+        2,
+        31,
+        20
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 36,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "パフォーマンスチューニング"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        16,
+        22,
+        15
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 37,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "購買・仕入れ"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        17,
+        18,
+        34
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 38,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "Webマーケティング・広告"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        23,
+        4,
+        5
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 39,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 40,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "データ基盤・分析"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        22,
+        15,
+        16
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 41,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "Webマーケティング・広告"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        4,
+        5,
+        23
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 42,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "総務・法務"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        31,
+        32,
+        12
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 43,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.8,
+      "ranked_experts": [
+        31,
+        20,
+        40
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 44,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "人事・採用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        26,
+        27,
+        9
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 45,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        12
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 46,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "購買・仕入れ"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        35,
+        36,
+        19
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 47,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "システム開発・API",
+        "サーバー・インフラ運用",
+        "社内IT・ヘルプデスク"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        25,
+        6,
+        15
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 48,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 49,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "社内IT・ヘルプデスク"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        21,
+        1
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 50,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 51,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "クラウド移行",
+        "サーバー・インフラ運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        15,
+        25,
+        14
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 52,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "人事・採用",
+        "広報・PR"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        40,
+        26,
+        27
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 53,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "ECサイト構築"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        15,
+        16,
+        12
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 54,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 55,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "問い合わせ・ヘルプデスク運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        17,
+        34,
+        33
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 56,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "モバイルアプリ開発",
+        "パフォーマンスチューニング"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        13,
+        16,
+        14
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 57,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "Webマーケティング・広告"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        4,
+        23,
+        5
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 58,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "SNS運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        22,
+        4,
+        5
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 59,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "セキュリティ"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        6,
+        25,
+        7
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 60,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "契約管理"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        32,
+        12,
+        31
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 61,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        2,
+        12
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 62,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 63,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "クラウド移行",
+        "セキュリティ"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        15,
+        25,
+        6
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 64,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "社内IT・ヘルプデスク"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        24,
+        17,
+        18
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 65,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "システム開発・API"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.85,
+      "ranked_experts": [
+        7,
+        6,
+        12
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 66,
+      "gold_route": "person",
+      "route": "person",
+      "topics": [
+        "CRM・営業支援"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        3,
+        21,
+        1
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 67,
+      "gold_route": "document",
+      "route": "document",
+      "topics": [
+        "サーバー・インフラ運用",
+        "ネットワーク・VPN"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        6,
+        25,
+        24
+      ],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 68,
+      "gold_route": "document",
+      "route": "document",
+      "topics": [
+        "ネットワーク・VPN",
+        "セキュリティ"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        6,
+        24,
+        3
+      ],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 69,
+      "gold_route": "document",
+      "route": "document",
+      "topics": [
+        "サーバー・インフラ運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        25,
+        33,
+        15
+      ],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 70,
+      "gold_route": "document",
+      "route": "self_answered",
+      "topics": [
+        "社内IT・ヘルプデスク"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 71,
+      "gold_route": "document",
+      "route": "self_answered",
+      "topics": [
+        "サーバー・インフラ運用"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 72,
+      "gold_route": "document",
+      "route": "self_answered",
+      "topics": [
+        "ネットワーク・VPN"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [],
+      "next": [],
+      "error": null
+    },
+    {
+      "id": 73,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "システム開発・API"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        7,
+        17,
+        1
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 74,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "総務・法務"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        32,
+        30,
+        1
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 75,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "基幹システム"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.8,
+      "ranked_experts": [
+        2,
+        3,
+        1
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 76,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "ネットワーク・VPN"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        16,
+        14
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 77,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.95,
+      "ranked_experts": [
+        1,
+        2,
+        12
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 78,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 79,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "システム開発・API"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        33,
+        1,
+        3
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 80,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        2,
+        40
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 81,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 82,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "契約管理"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        32,
+        12,
+        31
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 83,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 84,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        3,
+        1,
+        2
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 85,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "Webマーケティング・広告"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.85,
+      "ranked_experts": [
+        4,
+        25,
+        33
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 86,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "業務効率化コンサル"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.8,
+      "ranked_experts": [
+        1,
+        2,
+        31
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    },
+    {
+      "id": 87,
+      "gold_route": "none",
+      "route": "person",
+      "topics": [
+        "契約管理"
+      ],
+      "out_of_scope": false,
+      "intent_confidence": 0.9,
+      "ranked_experts": [
+        1,
+        3,
+        32
+      ],
+      "next": [
+        "send"
+      ],
+      "error": null
+    }
+  ]
+}
