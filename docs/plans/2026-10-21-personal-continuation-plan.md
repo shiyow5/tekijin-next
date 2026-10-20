@@ -2,7 +2,7 @@
 
 作成: 2026-10-21(同日改訂: API・クラウド案と費用試算、Discord、リポジトリの分け方を追加)
 
-この文書に出てくるIssue・PRの番号(#76、#517など)は、特に断りが無いかぎり旧リポジトリ [shiyow5/TEKIJIN](https://github.com/shiyow5/TEKIJIN) のものを指す。
+この文書に出てくるIssue・PRの番号(#76、#517など)は、特に断りが無いかぎり旧リポジトリ [shiyow5/TEKIJIN](https://github.com/shiyow5/TEKIJIN) のものを指す。旧リポジトリで開いていたIssueはこのリポジトリにコピーしてあり、新旧の番号の対応は #49 にまとめた。
 
 インターンが終わり、会社のDGX Spark・Slackワークスペース・チームが使えなくなった。この文書は、TEKIJINを個人の資源だけで動かし続けるための移行計画と、次の研究テーマの候補をまとめる。
 
@@ -202,7 +202,7 @@ C1は実行ごとに振れるので、3回流して幅で比べる。既定でON
 - 学習の中心は英語で、日本語を含むCJKは「扱えるが同じ精度ではない」
 - 自分のデータでfine-tuneできない。調整できるのは指示文と判定基準だけ
 
-同じ種類のモデルとして、OpenAIのDecisions API(10/6公開ベータ)、Microsoft-Decision-1、オープン実装のOpenJevやjevosが出ている。ただし、これらについては二次情報しか確かめられていない。
+同じ種類のモデルと、判断に転用できるOSS(リランカー、根拠判定、ゼロショット分類、判定用LLM)は、[判断専用モデルの比較調査](2026-10-21-decision-model-survey.md)で一次情報を確かめて比べた。最初に試すのは、Microsoft-Decision-1、Jev 1.14、OpenAIのDecisions API、Qwen3-Reranker、sokudan-ja-310mの5つである。
 
 ### 8.2 TEKIJINのどこに効くか
 
