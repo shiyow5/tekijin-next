@@ -1,0 +1,108 @@
+{
+  "config": {
+    "backend": "vllm",
+    "self_answer": true,
+    "query_expansion": false,
+    "question_fit": true,
+    "additive": true,
+    "additive_floor": 0.2,
+    "daily_knowledge": true,
+    "score_all_employees": false,
+    "branch_constraint": false,
+    "answerability": false,
+    "knowledge_floor": null,
+    "rows": 87,
+    "errors": 0,
+    "additive_fired_person": 15
+  },
+  "metrics": {
+    "n": 87,
+    "n_ranked": 66,
+    "n_routed": 72,
+    "n_abstain": 15,
+    "top1_accuracy": 0.5909090909090909,
+    "recall_at_3": 0.6085858585858586,
+    "hit_at_3": 0.7575757575757576,
+    "mrr": 0.6666666666666666,
+    "route_accuracy": 0.75,
+    "abstain_accuracy": 0.06666666666666667
+  },
+  "by_difficulty": {
+    "L1": {
+      "n": 10,
+      "n_ranked": 10,
+      "n_routed": 10,
+      "n_abstain": 0,
+      "top1_accuracy": 0.8,
+      "recall_at_3": 0.8,
+      "hit_at_3": 0.8,
+      "mrr": 0.8,
+      "route_accuracy": 0.3,
+      "abstain_accuracy": 0.0
+    },
+    "L2": {
+      "n": 36,
+      "n_ranked": 36,
+      "n_routed": 36,
+      "n_abstain": 0,
+      "top1_accuracy": 0.5277777777777778,
+      "recall_at_3": 0.587962962962963,
+      "hit_at_3": 0.7222222222222222,
+      "mrr": 0.6111111111111112,
+      "route_accuracy": 0.8055555555555556,
+      "abstain_accuracy": 0.0
+    },
+    "L3": {
+      "n": 26,
+      "n_ranked": 20,
+      "n_routed": 26,
+      "n_abstain": 0,
+      "top1_accuracy": 0.6,
+      "recall_at_3": 0.55,
+      "hit_at_3": 0.8,
+      "mrr": 0.7,
+      "route_accuracy": 0.8461538461538461,
+      "abstain_accuracy": 0.0
+    },
+    "L4": {
+      "n": 15,
+      "n_ranked": 0,
+      "n_routed": 0,
+      "n_abstain": 15,
+      "top1_accuracy": 0.0,
+      "recall_at_3": 0.0,
+      "hit_at_3": 0.0,
+      "mrr": 0.0,
+      "route_accuracy": 0.0,
+      "abstain_accuracy": 0.06666666666666667
+    }
+  },
+  "decision_recall": {
+    "n": 87,
+    "macro_recall": 0.49275362318840576,
+    "per_class": {
+      "self_answer": {
+        "support": 23,
+        "hits": 11,
+        "recall": 0.4782608695652174
+      },
+      "route": {
+        "support": 49,
+        "hits": 49,
+        "recall": 1.0
+      },
+      "abstain": {
+        "support": 15,
+        "hits": 0,
+        "recall": 0.0
+      }
+    }
+  },
+  "source_recall": {
+    "n": 23,
+    "n_cited": 6,
+    "recall": 0.21739130434782608,
+    "precision": 0.7361111111111112,
+    "grounded_rate": 0.2608695652173913
+  }
+}

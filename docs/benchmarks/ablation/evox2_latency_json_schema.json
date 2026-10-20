@@ -1,0 +1,42 @@
+{
+  "per_node": {
+    "c1_intent": {
+      "n": 12,
+      "mean_ms": 1890.3,
+      "p50_ms": 1905.3,
+      "p95_ms": 2216.0,
+      "min_ms": 1691.0,
+      "max_ms": 2216.0
+    },
+    "c2_sufficiency": {
+      "n": 12,
+      "mean_ms": 795.8,
+      "p50_ms": 847.7,
+      "p95_ms": 880.1,
+      "min_ms": 628.1,
+      "max_ms": 880.1
+    },
+    "c7_draft": {
+      "n": 12,
+      "mean_ms": 1664.8,
+      "p50_ms": 1586.3,
+      "p95_ms": 2568.2,
+      "min_ms": 1049.5,
+      "max_ms": 2568.2
+    },
+    "compose": {
+      "n": 12,
+      "mean_ms": 715.8,
+      "p50_ms": 664.1,
+      "p95_ms": 883.7,
+      "min_ms": 627.8,
+      "max_ms": 883.7
+    }
+  },
+  "person_route_estimate": {
+    "person_no_additive_p50_ms": 4339.3,
+    "person_with_additive_p50_ms": 5003.4,
+    "note": "C2 は #377 fast-path で routable ならスキップ。additive は floor(0.20)超のときのみ。"
+  },
+  "repeat": 3
+}
