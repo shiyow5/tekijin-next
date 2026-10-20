@@ -86,6 +86,29 @@ def _build_models(backend: str, settings, *, self_answer: bool, answerability: b
     return intent, sufficiency, draft, sa, ans
 
 
+def _row_record(
+    query,
+    values: dict,
+    next_nodes: tuple[str, ...],
+    route: str,
+    ranked: list,
+    error: str | None,
+) -> dict:
+    """1行分の診断記録(出力 JSON の ``rows``)。"""
+
+    return {
+        "id": query.id,
+        "gold_route": query.gold_route,
+        "route": route,
+        "topics": list(values.get("topics") or []),
+        "out_of_scope": values.get("out_of_scope"),
+        "intent_confidence": values.get("intent_confidence"),
+        "ranked_experts": list(ranked),
+        "next": list(next_nodes),
+        "error": error,
+    }
+
+
 def _terminal_route(
     values: dict, next_nodes: tuple[str, ...], *, critique_wired: bool
 ) -> str:
@@ -118,6 +141,12 @@ class GraphRanker:
         # #413: rows where the additive cited answer fired on a person route.
         self.additive_fired_person = 0
         self.person_rows = 0
+        # One record per row (written to the output JSON as ``rows``), so a metric
+        # that moves between machines or models can be traced back to the rows.
+        self.rows: list[dict] = []
+
+    def _record(self, query, values, next_nodes, route, ranked, *, error=None) -> None:
+        self.rows.append(_row_record(query, values, next_nodes, route, ranked, error))
 
     def __call__(self, query):
         from tekijin.eval.runner import RankResult
@@ -138,6 +167,7 @@ class GraphRanker:
         except Exception as exc:  # noqa: BLE001 — 1行の失敗で全体を止めない
             self.errors += 1
             print(f"  !! id={query.id} invoke失敗: {exc}", file=sys.stderr)
+            self._record(query, {}, (), "none", [], error=str(exc))
             return RankResult(ranked_experts=[], route="none", predicted_topics=[])
 
         route = _terminal_route(values, next_nodes, critique_wired=self._critique_wired)
@@ -159,6 +189,7 @@ class GraphRanker:
             if values.get("additive_answer_text"):
                 self.additive_fired_person += 1
         topics = list(values.get("topics") or [])
+        self._record(query, values, next_nodes, route, ranked)
         return RankResult(
             ranked_experts=ranked,
             route=route,
@@ -322,6 +353,7 @@ def main() -> None:
         "by_difficulty": {k: v.as_dict() for k, v in report.by_difficulty.items()},
         "decision_recall": report.decision_recall.as_dict(),
         "source_recall": report.source_recall.as_dict(),
+        "rows": ranker.rows,
     }
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
