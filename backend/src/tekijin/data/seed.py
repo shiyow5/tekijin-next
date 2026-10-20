@@ -339,10 +339,6 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover - exercised via CLI
-    sys.exit(main())
-
-
 def realign_identity_sequences(engine: Engine) -> None:
     """Move each identity sequence past the largest id its table already holds.
 
@@ -372,3 +368,7 @@ def realign_identity_sequences(engine: Engine) -> None:
                 ),
                 {"table": table},
             )
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised via CLI
+    sys.exit(main())
