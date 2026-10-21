@@ -1,7 +1,8 @@
 {
   "name": "sokudan",
   "judge": "sokudan",
-  "ms_per_pair": 126.9,
+  "load_s": 3.0,
+  "ms_per_pair": 92.8,
   "scores": {
     "1": 0.4942,
     "2": 0.3536,

@@ -1,7 +1,8 @@
 {
   "name": "reranker-4b",
   "judge": "reranker",
-  "ms_per_pair": 460.8,
+  "load_s": 2.8,
+  "ms_per_pair": 418.6,
   "scores": {
     "1": 0.7185943722724915,
     "2": 0.9820137619972229,

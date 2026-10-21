@@ -1,6 +1,7 @@
 {
   "name": "cosine",
   "judge": "cosine",
+  "load_s": 0.0,
   "ms_per_pair": 0.0,
   "scores": {
     "1": 0.2561978781937211,

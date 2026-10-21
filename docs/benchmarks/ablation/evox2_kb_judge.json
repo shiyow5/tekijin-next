@@ -24,13 +24,14 @@
           "abstain_false_fire": 0.0
         }
       },
-      "ms_per_pair": 0.0
+      "ms_per_pair": 0.0,
+      "load_s": 0.0
     },
     "qwen3.6-yesno": {
-      "auc": 0.6046,
+      "auc": 0.6026,
       "auc_ci95": [
-        0.4574,
-        0.747
+        0.4556,
+        0.7464
       ],
       "at_fpr": {
         "0.05": {
@@ -46,7 +47,8 @@
           "abstain_false_fire": 0.0
         }
       },
-      "ms_per_pair": 242.2
+      "ms_per_pair": 235.7,
+      "load_s": 0.1
     },
     "reranker-0.6b": {
       "auc": 0.5904,
@@ -68,7 +70,8 @@
           "abstain_false_fire": 0.0
         }
       },
-      "ms_per_pair": 378.1
+      "ms_per_pair": 323.0,
+      "load_s": 3.0
     },
     "reranker-4b": {
       "auc": 0.5948,
@@ -90,7 +93,8 @@
           "abstain_false_fire": 0.0
         }
       },
-      "ms_per_pair": 460.8
+      "ms_per_pair": 418.6,
+      "load_s": 2.8
     },
     "sokudan": {
       "auc": 0.4973,
@@ -112,7 +116,8 @@
           "abstain_false_fire": 0.0
         }
       },
-      "ms_per_pair": 126.9
+      "ms_per_pair": 92.8,
+      "load_s": 3.0
     }
   }
 }
