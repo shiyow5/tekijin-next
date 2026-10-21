@@ -1,0 +1,53 @@
+{
+  "n_approved": 221,
+  "topics_covered": [
+    "CRM・営業支援",
+    "SNS運用",
+    "Webマーケティング・広告",
+    "サーバー・インフラ運用",
+    "セキュリティ",
+    "ネットワーク・VPN",
+    "人事・採用",
+    "問い合わせ・ヘルプデスク運用",
+    "基幹システム",
+    "契約管理",
+    "広報・PR",
+    "業務効率化コンサル",
+    "社内IT・ヘルプデスク",
+    "経理・決算",
+    "総務・法務",
+    "購買・仕入れ"
+  ],
+  "by_floor": {
+    "0.15": {
+      "person_false_fire": 0.4082,
+      "data_fire": 0.5652,
+      "data_topic_match": 0.4348,
+      "abstain_false_fire": 0.1333
+    },
+    "0.2": {
+      "person_false_fire": 0.1224,
+      "data_fire": 0.4348,
+      "data_topic_match": 0.3913,
+      "abstain_false_fire": 0.0667
+    },
+    "0.25": {
+      "person_false_fire": 0.0408,
+      "data_fire": 0.2174,
+      "data_topic_match": 0.2174,
+      "abstain_false_fire": 0.0
+    },
+    "0.3": {
+      "person_false_fire": 0.0,
+      "data_fire": 0.0,
+      "data_topic_match": 0.0,
+      "abstain_false_fire": 0.0
+    },
+    "0.35": {
+      "person_false_fire": 0.0,
+      "data_fire": 0.0,
+      "data_topic_match": 0.0,
+      "abstain_false_fire": 0.0
+    }
+  }
+}

@@ -266,7 +266,7 @@ def score_reranker(pairs: list[dict], args) -> list[float]:
 
     tok = AutoTokenizer.from_pretrained(args.reranker_model, padding_side="left")
     dtype = torch.bfloat16 if args.reranker_dtype == "bf16" else torch.float32
-    model = AutoModelForCausalLM.from_pretrained(args.reranker_model, torch_dtype=dtype).eval()
+    model = AutoModelForCausalLM.from_pretrained(args.reranker_model, dtype=dtype).eval()
     yes_id = tok.convert_tokens_to_ids("yes")
     no_id = tok.convert_tokens_to_ids("no")
     prefix = (
