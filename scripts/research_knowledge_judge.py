@@ -212,15 +212,34 @@ def build_pairs(db_url: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# stage 2: scorers. Each returns one float per pair (higher = more answerable).
+# stage 2: scorers. Each loader does its one-time setup (model load, HTTP client) and returns
+# a function that scores one pair (higher = more answerable). run_scorer times the two apart so
+# the per-pair latency is comparable across judges.
 
 
-def score_cosine(pairs: list[dict], _args) -> list[float]:
-    return [p["cosine"] for p in pairs]
+def run_scorer(loader, pairs: list[dict], args) -> tuple[list[float], float, float]:
+    """Scores per pair, load seconds, and scoring ms per pair (after one warm-up call)."""
+
+    t0 = time.perf_counter()
+    score = loader(args)
+    load_s = time.perf_counter() - t0
+    first = next((p for p in pairs if p["unit"] is not None), None)
+    if first is not None:
+        score(first)  # warm-up: first forward pass / connection setup
+    t1 = time.perf_counter()
+    out = [score(p) if p["unit"] is not None else 0.0 for p in pairs]
+    ms_per_pair = 1000 * (time.perf_counter() - t1) / max(len(pairs), 1)
+    return out, load_s, ms_per_pair
 
 
-def score_llm(pairs: list[dict], args) -> list[float]:
+def load_cosine(_args):
+    return lambda p: p["cosine"]
+
+
+def load_llm(args):
     """Qwen3.6 behind an OpenAI-compatible server: P(yes) of the first answer token."""
+
+    import atexit
 
     import httpx
 
@@ -229,36 +248,44 @@ def score_llm(pairs: list[dict], args) -> list[float]:
         + CRITERION_JA
         + "答えは yes か no の一語だけで返してください。"
     )
-    out = []
-    with httpx.Client(base_url=args.llm_base_url, timeout=120) as client:
-        for p in pairs:
-            if p["unit"] is None:
-                out.append(0.0)
-                continue
-            user = (
-                f"ユーザーの質問:\n{p['query']}\n\n知識ケース:\n{p['unit']['text']}"
-                "\n\n直接答えられますか。yes か no で答えてください。"
-            )
-            body = {
-                "model": args.llm_model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "max_tokens": 1,
-                "temperature": 0,
-                "logprobs": True,
-                "top_logprobs": 20,
-                "chat_template_kwargs": {"enable_thinking": False},
-            }
-            r = client.post("/chat/completions", json=body)
-            r.raise_for_status()
-            content = r.json()["choices"][0]["logprobs"]["content"]
-            out.append(yes_no_score(content[0]["top_logprobs"]) if content else 0.5)
-    return out
+    client = httpx.Client(base_url=args.llm_base_url, timeout=120)
+    atexit.register(client.close)
+
+    def score(p: dict) -> float:
+        user = (
+            f"ユーザーの質問:\n{p['query']}\n\n知識ケース:\n{p['unit']['text']}"
+            "\n\n直接答えられますか。yes か no で答えてください。"
+        )
+        body = {
+            "model": args.llm_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": 1,
+            "temperature": 0,
+            "logprobs": True,
+            "top_logprobs": 20,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        r = client.post("/chat/completions", json=body)
+        r.raise_for_status()
+        content = r.json()["choices"][0]["logprobs"]["content"]
+        return yes_no_score(content[0]["top_logprobs"]) if content else 0.5
+
+    return score
 
 
-def score_reranker(pairs: list[dict], args) -> list[float]:
+def fit_reranker_ids(
+    prefix: Sequence[int], body: Sequence[int], suffix: Sequence[int], *, max_length: int
+) -> list[int]:
+    """Truncate only the variable body so the suffix (the yes/no decision position) survives."""
+
+    budget = max(max_length - len(prefix) - len(suffix), 0)
+    return [*prefix, *body[:budget], *suffix]
+
+
+def load_reranker(args):
     """Qwen3-Reranker: P(yes) over {yes, no} at the last position (the model card's recipe)."""
 
     import torch
@@ -269,51 +296,49 @@ def score_reranker(pairs: list[dict], args) -> list[float]:
     model = AutoModelForCausalLM.from_pretrained(args.reranker_model, dtype=dtype).eval()
     yes_id = tok.convert_tokens_to_ids("yes")
     no_id = tok.convert_tokens_to_ids("no")
-    prefix = (
+    prefix = tok.encode(
         "<|im_start|>system\nJudge whether the Document meets the requirements based on the "
         'Query and the Instruct provided. Note that the answer can only be "yes" or "no".'
-        "<|im_end|>\n<|im_start|>user\n"
+        "<|im_end|>\n<|im_start|>user\n",
+        add_special_tokens=False,
     )
-    suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-    out = []
-    with torch.no_grad():
-        for p in pairs:
-            if p["unit"] is None:
-                out.append(0.0)
-                continue
-            text = (
-                f"{prefix}<Instruct>: {CRITERION_EN}\n<Query>: {p['query']}\n"
-                f"<Document>: {p['unit']['text']}{suffix}"
-            )
-            enc = tok(text, return_tensors="pt", truncation=True, max_length=8192)
-            logits = model(**enc).logits[0, -1, [no_id, yes_id]].float()
-            out.append(float(torch.softmax(logits, dim=-1)[1]))
-    return out
+    suffix = tok.encode(
+        "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n", add_special_tokens=False
+    )
+
+    def score(p: dict) -> float:
+        body = tok.encode(
+            f"<Instruct>: {CRITERION_EN}\n<Query>: {p['query']}\n<Document>: {p['unit']['text']}",
+            add_special_tokens=False,
+        )
+        ids = fit_reranker_ids(prefix, body, suffix, max_length=8192)
+        with torch.no_grad():
+            logits = model(input_ids=torch.tensor([ids])).logits[0, -1, [no_id, yes_id]].float()
+        return float(torch.softmax(logits, dim=-1)[1])
+
+    return score
 
 
-def score_sokudan(pairs: list[dict], _args) -> list[float]:
+def load_sokudan(_args):
     """sokudan-ja-310m bool (temperature-calibrated P(true); monotone, so AUC is unaffected)."""
 
     import sokudan
 
     agent = sokudan.load("GeneLab/sokudan-ja-310m", backend="torch")
     question = {"answerable": {"type": "bool", "instructions": CRITERION_JA}}
-    out = []
-    for p in pairs:
-        if p["unit"] is None:
-            out.append(0.0)
-            continue
+
+    def score(p: dict) -> float:
         state = f"質問: {p['query']}\n\n知識ケース:\n{p['unit']['text']}"
-        res = agent.predict(state, question)
-        out.append(float(res["answers"]["answerable"]["noul"]))
-    return out
+        return float(agent.predict(state, question)["answers"]["answerable"]["noul"])
+
+    return score
 
 
 SCORERS = {
-    "cosine": score_cosine,
-    "llm": score_llm,
-    "reranker": score_reranker,
-    "sokudan": score_sokudan,
+    "cosine": load_cosine,
+    "llm": load_llm,
+    "reranker": load_reranker,
+    "sokudan": load_sokudan,
 }
 
 
@@ -361,6 +386,7 @@ def report(pairs: list[dict], score_files: Sequence[str]) -> dict:
         ordered = [by_id[int(i)] for i in sf["scores"]]
         summary = summarize(ordered, list(sf["scores"].values()))
         summary["ms_per_pair"] = sf.get("ms_per_pair")
+        summary["load_s"] = sf.get("load_s")
         out["judges"][sf["name"]] = summary
     return out
 
@@ -417,14 +443,13 @@ def main() -> None:
     with open(args.pairs, encoding="utf-8") as f:
         pairs = json.load(f)
     if args.cmd == "score":
-        start = time.perf_counter()
-        scores = SCORERS[args.judge](pairs, args)
-        elapsed = time.perf_counter() - start
+        scores, load_s, ms_per_pair = run_scorer(SCORERS[args.judge], pairs, args)
         name = args.name or args.judge
         payload = {
             "name": name,
             "judge": args.judge,
-            "ms_per_pair": round(1000 * elapsed / max(len(pairs), 1), 1),
+            "load_s": round(load_s, 1),
+            "ms_per_pair": round(ms_per_pair, 1),
             "scores": {str(p["id"]): s for p, s in zip(pairs, scores, strict=True)},
         }
         with open(args.out, "w", encoding="utf-8") as f:

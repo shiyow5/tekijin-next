@@ -95,3 +95,27 @@ def test_yes_no_score_from_top_logprobs() -> None:
     ]
     assert math.isclose(m.yes_no_score(top), 0.7 / 0.9)
     assert m.yes_no_score([{"token": "maybe", "logprob": 0.0}]) == 0.5
+
+
+def test_fit_reranker_ids_truncates_only_the_body() -> None:
+    m = _load()
+    prefix, body, suffix = [1, 2], list(range(100, 110)), [8, 9]
+    assert m.fit_reranker_ids(prefix, body, suffix, max_length=100) == [*prefix, *body, *suffix]
+    # over budget: the suffix (the yes/no decision position) must survive
+    ids = m.fit_reranker_ids(prefix, body, suffix, max_length=7)
+    assert ids == [1, 2, 100, 101, 102, 8, 9]
+
+
+def test_run_scorer_times_scoring_apart_from_loading() -> None:
+    m = _load()
+    loads: list[int] = []
+
+    def loader(_args):
+        loads.append(1)
+        return lambda p: p["cosine"] * 2
+
+    pairs = [{"cosine": 0.3, "unit": {"text": "x"}}, {"cosine": 0.0, "unit": None}]
+    scores, load_s, ms_per_pair = m.run_scorer(loader, pairs, None)
+    assert loads == [1]
+    assert scores == [0.6, 0.0]  # a pair without a unit never fires
+    assert load_s >= 0.0 and ms_per_pair >= 0.0
