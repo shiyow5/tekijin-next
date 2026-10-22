@@ -66,6 +66,7 @@ from tekijin.api.events import (
     reconnect_events,
     replay_terminal,
 )
+from tekijin.channels.notifier import get_notifier
 from tekijin.data.db import session_scope
 from tekijin.data.feedback import record_feedback
 from tekijin.data.handoff import employee_brief, question_consult_method, responder_reuse_stats
@@ -93,7 +94,6 @@ from tekijin.data.writes import (
 )
 from tekijin.knowledge.index import embed_knowledge_units
 from tekijin.retrieval.embedding import PASSAGE, Embedder
-from tekijin.slack.notify import schedule_channel_setup_and_draft
 
 logger = logging.getLogger(__name__)
 
@@ -756,7 +756,7 @@ class AgentService:
                         # `schedule_channel_setup_and_draft`'s docstring).
                         parties = thread_parties(session, primary)
                         if parties is not None:
-                            schedule_channel_setup_and_draft(
+                            get_notifier().announce_handoff_accepted(
                                 self._session_factory,
                                 thread_id=primary,
                                 parties=parties,
