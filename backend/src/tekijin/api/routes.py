@@ -44,6 +44,7 @@ from tekijin.auth.deps import (
     require_session_participant,
 )
 from tekijin.auth.principal import Principal
+from tekijin.channels.notifier import get_notifier
 from tekijin.config import get_settings
 from tekijin.data.consult import (
     accepted_responder_id,
@@ -79,7 +80,6 @@ from tekijin.data.writes import (
     record_offline_consult,
 )
 from tekijin.scorer.topics import TOPIC_VOCABULARY
-from tekijin.slack.notify import relay_to_channel, schedule_pending_handoff
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +320,7 @@ def handoff_draft(
             meta_asker = meta.get("asker_id")
             meta_responder = meta.get("responder_id")
             if rec_id is not None and meta_asker is not None and meta_responder is not None:
-                schedule_pending_handoff(
+                get_notifier().announce_handoff_request(
                     _service(request).session_factory,
                     session_id=req.session_id,
                     recommendation_id=int(rec_id),
@@ -1255,7 +1255,8 @@ def send_message(
     If this pair has a shared Slack channel (#hand-off-chat), the message is
     relayed into it as a background task after the response — Slack being
     slow or unreachable must never delay or fail sending the chat message
-    itself (:func:`relay_to_channel`, shared with the Slack-reply path, #388).
+    itself (``ChannelNotifier.relay_message``; the Slack side is
+    ``tekijin.slack.notify.relay_to_channel``, shared with the Slack-reply path, #388).
     """
 
     with _generic_500("POST /messages"):
@@ -1272,7 +1273,7 @@ def send_message(
             is_asker = req.sender_id == parties["asker_id"]
             sender_name = parties["asker_name"] if is_asker else parties["responder_name"]
             background_tasks.add_task(
-                relay_to_channel,
+                get_notifier().relay_message,
                 _service(request).session_factory,
                 employee_a=parties["asker_id"],
                 employee_b=parties["responder_id"],
