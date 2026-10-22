@@ -95,6 +95,8 @@ def discord_ask(
     except AskerNotFound:
         logger.warning("discord user %s maps to unknown employee %s", req.discord_user_id, asker_id)
         return DiscordAskResponse(kind="unlinked", web_url=web_url)
-    events = [(e.event or "", json.loads(e.data)) for e in service.stream_events(session_id)]
+    events = [
+        (e.event or "", json.loads(e.data or "{}")) for e in service.stream_events(session_id)
+    ]
     outcome = summarize_events(events)
     return DiscordAskResponse(**outcome.model_dump(), web_url=web_url)
