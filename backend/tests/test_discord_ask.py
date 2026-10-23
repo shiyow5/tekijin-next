@@ -123,7 +123,10 @@ def test_handoff_keeps_the_reference_citations() -> None:
         [
             (
                 "reference",
-                {"answer": "手順書を見てください。", "citations": [{"source_id": "doc_7", "kind": "document"}]},
+                {
+                    "answer": "手順書を見てください。",
+                    "citations": [{"source_id": "doc_7", "kind": "document"}],
+                },
             ),
             ("recommend", {"recommendations": [REC]}),
         ]
