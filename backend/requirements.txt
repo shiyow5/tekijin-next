@@ -54,3 +54,7 @@ pyjwt==2.10.1
 # Already pulled in transitively (fastapi/langchain-openai depend on it); pinned
 # explicitly here since this is now a direct dependency, not an incidental one.
 httpx==0.28.1
+
+# Discord bot process (#60, D1): `python -m tekijin.discord_bot`. The API itself never
+# imports it; only tekijin/discord_bot/__main__.py does.
+discord.py>=2.7,<3

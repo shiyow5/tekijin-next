@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from tekijin import __version__
 from tekijin.api.auth_routes import router as auth_router
+from tekijin.api.discord_routes import router as discord_router
 from tekijin.api.health import router as health_router
 from tekijin.api.rate_limit import SlidingWindowLimiter
 from tekijin.api.routes import router as api_router
@@ -134,4 +135,5 @@ def create_app(agent_service: AgentService | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(api_router)
     app.include_router(slack_router)
+    app.include_router(discord_router)
     return app

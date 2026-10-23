@@ -73,6 +73,7 @@ from tekijin.data.handoff import employee_brief, question_consult_method, respon
 from tekijin.data.messages import create_message, thread_parties
 from tekijin.data.writes import (
     create_answer,
+    detach_question_session,
     employee_exists,
     insert_shown_recommendations,
     latest_primary_recommendation,
@@ -1435,6 +1436,31 @@ class AgentService:
                 )
         except Exception:  # noqa: BLE001 - best-effort signal; never fail the queued re-run
             logger.exception("failed to record c1 correction feedback for session %s", session_id)
+
+    def discard_session(self, session_id: str) -> None:
+        """Drop a one-shot run that no one will continue (Discord ``/ask``, #60).
+
+        A run paused at an interrupt is never swept (``_sweep`` keeps every session
+        a human is waited on), so a caller that only reads the first segment must
+        end it explicitly. A pause at ``send`` has already persisted the rank-1
+        recommendation, which the responder's ``/inbox`` lists as pending; stamp it
+        ``outcome="unsent"`` (nobody was asked, like ``excluded``/``superseded``) so
+        it drops out. Then delete the checkpoint, unlink the question from it (its
+        ``/history`` result page would 404), and forget the registry entry and
+        lock, so repeated one-shot runs do not accumulate.
+        """
+
+        with self._lock(session_id):
+            snapshot = self._snapshot(session_id)
+            if tuple(snapshot.next)[:1] == ("send",):
+                self._record_outcome(session_id, snapshot.values, "unsent")
+            self._checkpointer.delete_thread(session_id)
+            with session_scope(self._session_factory) as session:
+                detach_question_session(session, session_id)
+            with self._registry_guard:
+                self._registry.pop(session_id, None)
+        with self._locks_guard:
+            self._locks.pop(session_id, None)
 
     # -- /events : stream ------------------------------------------------- #
     def is_streamable(self, session_id: str) -> bool:

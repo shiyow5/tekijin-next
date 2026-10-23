@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repository root, resolved relative to this file:
@@ -608,6 +609,25 @@ class Settings(BaseSettings):
     # correct even on a channel reused across hand-offs. A message with no anchor
     # (posted before capture was enabled) still falls back to ``current_thread_id``.
     slack_solve_capture_enabled: bool = False
+
+    # ---- Discord (#60, D1) ---------------------------------------------------- #
+    # Shared secret the Discord bot process sends in ``X-Tekijin-Bot-Secret`` when it
+    # calls ``POST /internal/discord/ask``. Empty (default) = the endpoint is 404, so
+    # Discord is OFF unless both this and the bot's token are configured.
+    discord_bot_secret: str = ""
+    # Discord user id -> employee id, as JSON (``{"123456789012345678": 10}``). A
+    # stop-gap until real account linking (D2): a Discord user not listed here is
+    # told to get linked instead of asking as anyone.
+    discord_user_map: dict[str, int] = Field(default_factory=dict)
+    # Web app URL the bot points to when a question needs the web (sending a
+    # hand-off, answering a clarification).
+    discord_web_url: str = "http://localhost:3000"
+    # Read only by the bot process (``python -m tekijin.discord_bot``), never by the API.
+    discord_bot_token: str = ""
+    discord_backend_url: str = "http://127.0.0.1:8000"
+    # Set while developing: commands sync to this one server instantly instead of
+    # globally (which can take up to an hour to show up).
+    discord_guild_id: int | None = None
 
     def slack_configured(self) -> bool:
         """True once the OAuth app credentials needed to start linking exist.

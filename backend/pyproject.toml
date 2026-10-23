@@ -46,6 +46,9 @@ omit = [
     # migrate CLI shell — thin wrapper around the tested apply_migrations();
     # exercised via `python -m tekijin.data.migrate`.
     "src/tekijin/data/migrate.py",
+    # Discord bot shell — discord.py client wiring around the tested ask_backend /
+    # format_reply; needs a bot token and a live Gateway connection.
+    "src/tekijin/discord_bot/__main__.py",
 ]
 
 [tool.coverage.report]
