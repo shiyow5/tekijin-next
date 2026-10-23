@@ -73,6 +73,7 @@ from tekijin.data.handoff import employee_brief, question_consult_method, respon
 from tekijin.data.messages import create_message, thread_parties
 from tekijin.data.writes import (
     create_answer,
+    detach_question_session,
     employee_exists,
     insert_shown_recommendations,
     latest_primary_recommendation,
@@ -1444,7 +1445,8 @@ class AgentService:
         end it explicitly. A pause at ``send`` has already persisted the rank-1
         recommendation, which the responder's ``/inbox`` lists as pending; stamp it
         ``outcome="unsent"`` (nobody was asked, like ``excluded``/``superseded``) so
-        it drops out. Then delete the checkpoint and forget the registry entry and
+        it drops out. Then delete the checkpoint, unlink the question from it (its
+        ``/history`` result page would 404), and forget the registry entry and
         lock, so repeated one-shot runs do not accumulate.
         """
 
@@ -1453,6 +1455,8 @@ class AgentService:
             if tuple(snapshot.next)[:1] == ("send",):
                 self._record_outcome(session_id, snapshot.values, "unsent")
             self._checkpointer.delete_thread(session_id)
+            with session_scope(self._session_factory) as session:
+                detach_question_session(session, session_id)
             with self._registry_guard:
                 self._registry.pop(session_id, None)
         with self._locks_guard:

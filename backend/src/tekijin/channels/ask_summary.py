@@ -36,6 +36,7 @@ def summarize_events(events: Iterable[tuple[str, dict[str, Any]]]) -> AskOutcome
     """
 
     reference = ""
+    reference_citations: list[SourceCitation] = []
     recommendations: list[Recommendation] = []
     for event, data in events:
         if event == "error":
@@ -48,10 +49,16 @@ def summarize_events(events: Iterable[tuple[str, dict[str, Any]]]) -> AskOutcome
             return AskOutcome(kind="answered", text=data.get("answer") or "")
         if event == "reference":
             reference = data.get("answer") or ""
+            reference_citations = [SourceCitation(**c) for c in data.get("citations") or []]
         elif event == "recommend":
             recommendations = [Recommendation(**r) for r in data.get("recommendations", [])]
     if recommendations:
-        return AskOutcome(kind="handoff", text=reference, recommendations=recommendations)
+        return AskOutcome(
+            kind="handoff",
+            text=reference,
+            citations=reference_citations,
+            recommendations=recommendations,
+        )
     return AskOutcome(kind="error")
 
 

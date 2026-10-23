@@ -157,6 +157,19 @@ def update_question_body(session: Session, question_id: str, body: str) -> None:
     session.execute(update(Question).where(Question.id == question_id).values(body=body))
 
 
+def detach_question_session(session: Session, session_id: str) -> None:
+    """Unlink the question(s) of a discarded run from its graph thread (#60).
+
+    ``/history`` links a question to its result page by ``session_id``; once the
+    checkpoint is deleted that page would 404, so the row becomes history-only
+    (``NULL``, like a seeded question).
+    """
+
+    session.execute(
+        update(Question).where(Question.session_id == session_id).values(session_id=None)
+    )
+
+
 def update_question_consult_method(session: Session, question_id: str, consult_method: str) -> None:
     """Record the asker's chosen consultation method ("direct" | "chat").
 

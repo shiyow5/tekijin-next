@@ -20,9 +20,10 @@ from tekijin.discord_bot.format import format_reply
 
 logger = logging.getLogger("tekijin.discord_bot")
 
-# A graph run (C1 -> retrieval -> C6 -> draft) takes seconds; Discord allows 15 minutes
-# for a follow-up after ``defer``, so this only guards against a hung backend.
-_BACKEND_TIMEOUT_S = 180.0
+# A graph run makes several LLM calls in sequence (C1, C2, the additive answer, the C7
+# draft), each allowed its own timeout, and the endpoint answers only at the end.
+# Discord accepts a follow-up for 15 minutes after ``defer``; wait almost that long.
+_BACKEND_TIMEOUT_S = 14 * 60.0
 
 
 def main() -> None:

@@ -34,7 +34,9 @@ def format_reply(outcome: dict[str, Any], *, web_url: str) -> str:
     if kind == "answered":
         return _join(text, _sources(outcome.get("citations") or []))
     if kind == "handoff":
-        return _handoff(text, outcome.get("recommendations") or [], web_url)
+        return _handoff(
+            text, outcome.get("citations") or [], outcome.get("recommendations") or [], web_url
+        )
     if kind == "followup":
         return _join(
             f"もう少し詳しく教えてください。\n> {text}",
@@ -55,16 +57,28 @@ def _sources(citations: list[dict[str, Any]]) -> str:
     return "出典\n" + "\n".join(lines)
 
 
-def _handoff(reference: str, recommendations: list[dict[str, Any]], web_url: str) -> str:
+def _handoff(
+    reference: str,
+    citations: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+    web_url: str,
+) -> str:
     people = ["この質問は、次の人に相談するのがよさそうです。"]
     for i, rec in enumerate(recommendations, start=1):
         dept = f"({rec['dept']})" if rec.get("dept") else ""
         reasons = "、".join(r.get("detail", "") for r in rec.get("reasons") or [])
         people.append(f"{i}. {rec.get('name', '')}{dept}" + (f": {reasons}" if reasons else ""))
+    sources = _sources(citations) if reference else ""
     tail = "\n\n".join(
-        ["\n".join(people), f"相談の依頼を送るには、Webで同じ質問をしてください: {web_url}"]
+        part
+        for part in (
+            sources,
+            "\n".join(people),
+            f"相談の依頼を送るには、Webで同じ質問をしてください: {web_url}",
+        )
+        if part
     )
-    head = f"参考になりそうな過去の回答\n> {reference}" if reference else ""
+    head = f"参考になりそうな情報\n> {reference}" if reference else ""
     return _join(head, tail)
 
 

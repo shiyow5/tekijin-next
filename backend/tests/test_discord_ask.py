@@ -118,6 +118,22 @@ def test_format_never_exceeds_discord_limit() -> None:
     assert len(text) <= DISCORD_MESSAGE_LIMIT
 
 
+def test_handoff_keeps_the_reference_citations() -> None:
+    out = summarize_events(
+        [
+            (
+                "reference",
+                {"answer": "手順書を見てください。", "citations": [{"source_id": "doc_7", "kind": "document"}]},
+            ),
+            ("recommend", {"recommendations": [REC]}),
+        ]
+    )
+    assert out.kind == "handoff"
+    assert [c.source_id for c in out.citations] == ["doc_7"]
+    text = format_reply(out.model_dump(), web_url=WEB)
+    assert "doc_7" in text and "社員1" in text
+
+
 def test_format_keeps_sources_and_web_link_when_clipping() -> None:
     long_answer = summarize_events(
         [

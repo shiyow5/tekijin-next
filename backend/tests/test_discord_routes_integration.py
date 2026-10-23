@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from tekijin.app import create_app
 from tekijin.config import get_settings
 from tekijin.data.inbox import pending_handoffs_for_responder
+from tekijin.models.tables import Question
 from test_api_integration import (  # noqa: F401 - autouse cleanup of committed api_ rows
     GOOD_Q,
     _cleanup_api_rows,
@@ -118,7 +119,10 @@ def test_unsent_handoff_is_discarded(discord_env, seed_counts, engine, fake_embe
     session = service.session_factory()
     try:
         pending = pending_handoffs_for_responder(session, 1)
+        linked = session.query(Question).filter(Question.session_id.like("discord_%")).count()
     finally:
         session.close()
     assert not [p for p in pending if p["session_id"].startswith("discord_")]
     assert not [sid for sid in service._registry if sid.startswith("discord_")]
+    # The checkpoint is gone, so /history must not link to a result page that 404s.
+    assert linked == 0
