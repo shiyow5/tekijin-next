@@ -69,29 +69,27 @@ def _handoff(
         reasons = "、".join(r.get("detail", "") for r in rec.get("reasons") or [])
         people.append(f"{i}. {rec.get('name', '')}{dept}" + (f": {reasons}" if reasons else ""))
     sources = _sources(citations) if reference else ""
-    tail = "\n\n".join(
-        part
-        for part in (
-            sources,
-            "\n".join(people),
-            f"相談の依頼を送るには、Webで同じ質問をしてください: {web_url}",
-        )
-        if part
-    )
+    middle = "\n\n".join(part for part in (sources, "\n".join(people)) if part)
     head = f"参考になりそうな情報\n> {reference}" if reference else ""
-    return _join(head, tail)
+    # The Web link is the only way to send the request, so it is never clipped;
+    # the reference is clipped first, then the source/people list.
+    link = f"相談の依頼を送るには、Webで同じ質問をしてください: {web_url}"
+    return _join(_join(head, middle, DISCORD_MESSAGE_LIMIT - len(link) - 2), link)
 
 
-def _join(head: str, tail: str) -> str:
-    """``head`` and ``tail`` separated by a blank line; only ``head`` is clipped."""
+def _join(head: str, tail: str, limit: int = DISCORD_MESSAGE_LIMIT) -> str:
+    """``head`` and ``tail`` separated by a blank line, within ``limit``.
+
+    ``head`` is clipped first; ``tail`` is clipped only when it alone does not fit.
+    """
 
     if not tail:
-        return _clip(head)
+        return _clip(head, limit)
     if not head:
-        return _clip(tail)
-    room = DISCORD_MESSAGE_LIMIT - len(tail) - 2
+        return _clip(tail, limit)
+    room = limit - len(tail) - 2
     if room <= 0:
-        return _clip(tail)
+        return _clip(tail, limit)
     return _clip(head, room) + "\n\n" + tail
 
 

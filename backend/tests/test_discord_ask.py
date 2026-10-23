@@ -161,6 +161,12 @@ def test_format_keeps_sources_and_web_link_when_clipping() -> None:
     assert len(text) <= DISCORD_MESSAGE_LIMIT
     assert "社員1" in text and WEB in text
 
+    wordy = {**REC, "reasons": [{"type": "self", "detail": "え" * 3000}]}
+    long_people = summarize_events([("recommend", {"recommendations": [wordy, wordy]})])
+    text = format_reply(long_people.model_dump(), web_url=WEB)
+    assert len(text) <= DISCORD_MESSAGE_LIMIT
+    assert text.endswith(WEB)
+
     long_followup = summarize_events([("followup", {"question": "う" * 5000})])
     text = format_reply(long_followup.model_dump(), web_url=WEB)
     assert len(text) <= DISCORD_MESSAGE_LIMIT
