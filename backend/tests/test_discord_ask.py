@@ -118,6 +118,36 @@ def test_format_never_exceeds_discord_limit() -> None:
     assert len(text) <= DISCORD_MESSAGE_LIMIT
 
 
+def test_format_keeps_sources_and_web_link_when_clipping() -> None:
+    long_answer = summarize_events(
+        [
+            (
+                "message",
+                {
+                    "status": "document",
+                    "message": "あ" * 5000,
+                    "doc_id": "doc_009",
+                },
+            )
+        ]
+    )
+    text = format_reply(long_answer.model_dump(), web_url=WEB)
+    assert len(text) <= DISCORD_MESSAGE_LIMIT
+    assert "doc_009" in text
+
+    long_ref = summarize_events(
+        [("reference", {"answer": "い" * 5000}), ("recommend", {"recommendations": [REC]})]
+    )
+    text = format_reply(long_ref.model_dump(), web_url=WEB)
+    assert len(text) <= DISCORD_MESSAGE_LIMIT
+    assert "社員1" in text and WEB in text
+
+    long_followup = summarize_events([("followup", {"question": "う" * 5000})])
+    text = format_reply(long_followup.model_dump(), web_url=WEB)
+    assert len(text) <= DISCORD_MESSAGE_LIMIT
+    assert WEB in text
+
+
 def _ask(handler) -> dict:
     async def run() -> dict:
         transport = httpx.MockTransport(handler)
@@ -154,3 +184,5 @@ def test_ask_backend_turns_failures_into_replies() -> None:
         raise httpx.ConnectError("down", request=request)
 
     assert _ask(unreachable) == {"kind": "error"}
+    assert _ask(lambda r: httpx.Response(200, text="<html>proxy</html>")) == {"kind": "error"}
+    assert _ask(lambda r: httpx.Response(200, json=["not", "an", "object"])) == {"kind": "error"}

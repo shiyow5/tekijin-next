@@ -42,4 +42,12 @@ async def ask_backend(
     if resp.status_code != 200:
         logger.warning("backend answered %s: %s", resp.status_code, resp.text[:200])
         return {"kind": "error"}
-    return resp.json()
+    try:
+        outcome = resp.json()
+    except ValueError:
+        logger.warning("backend answered 200 with a non-JSON body: %s", resp.text[:200])
+        return {"kind": "error"}
+    if not isinstance(outcome, dict):
+        logger.warning("backend answered 200 with a non-object body: %s", resp.text[:200])
+        return {"kind": "error"}
+    return outcome

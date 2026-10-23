@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from tekijin.app import create_app
 from tekijin.config import get_settings
+from tekijin.data.inbox import pending_handoffs_for_responder
 from test_api_integration import (  # noqa: F401 - autouse cleanup of committed api_ rows
     GOOD_Q,
     _cleanup_api_rows,
@@ -36,14 +37,17 @@ def discord_env(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
 
 
-def _bot_client(engine, embedder) -> TestClient:
-    service = _service(
+def _bot_service(engine, embedder):
+    return _service(
         engine,
         embedder,
         retriever=_FakeRetriever(people=[1, 2, 3], people_confidence=0.2),
         scorer=_FakeScorer(_recs(1, 2, 3)),
     )
-    return TestClient(create_app(agent_service=service))
+
+
+def _bot_client(engine, embedder) -> TestClient:
+    return TestClient(create_app(agent_service=_bot_service(engine, embedder)))
 
 
 def test_endpoint_is_hidden_without_a_secret(monkeypatch, engine, fake_embedder) -> None:
@@ -97,3 +101,24 @@ def test_blank_question_is_rejected(discord_env, engine, fake_embedder) -> None:
         headers={"X-Tekijin-Bot-Secret": SECRET},
     )
     assert resp.status_code == 422
+
+
+def test_unsent_handoff_is_discarded(discord_env, seed_counts, engine, fake_embedder) -> None:
+    """D1 cannot send the hand-off, so the recommended person must not see it as
+    pending, and the paused run must not linger (it would never be swept)."""
+
+    service = _bot_service(engine, fake_embedder)
+    resp = TestClient(create_app(agent_service=service)).post(
+        PATH,
+        json={"discord_user_id": "1001", "question": GOOD_Q},
+        headers={"X-Tekijin-Bot-Secret": SECRET},
+    )
+    assert resp.json()["kind"] == "handoff"
+
+    session = service.session_factory()
+    try:
+        pending = pending_handoffs_for_responder(session, 1)
+    finally:
+        session.close()
+    assert not [p for p in pending if p["session_id"].startswith("discord_")]
+    assert not [sid for sid in service._registry if sid.startswith("discord_")]

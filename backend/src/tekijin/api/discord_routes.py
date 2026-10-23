@@ -72,9 +72,11 @@ def discord_ask(
     """Run one question to the end of its first segment and return the outcome.
 
     The run is the same one ``POST /ask`` + ``GET /events`` drive for the web client;
-    this just consumes the events server-side. A run that pauses (a hand-off waiting
-    to be sent, or a clarification) stays paused and expires with the usual session
-    TTL — D1 points the asker to the web for those.
+    this just consumes the events server-side. D1 cannot continue a run that pauses
+    (a hand-off waiting to be sent, or a clarification), so the run is discarded
+    once read: the unsent recommendation must not reach the responder's inbox, and
+    a paused session would otherwise never be swept. The reply points the asker to
+    the web to ask again.
     """
 
     web_url = settings.discord_web_url
@@ -95,8 +97,18 @@ def discord_ask(
     except AskerNotFound:
         logger.warning("discord user %s maps to unknown employee %s", req.discord_user_id, asker_id)
         return DiscordAskResponse(kind="unlinked", web_url=web_url)
-    events = [
-        (e.event or "", json.loads(e.data or "{}")) for e in service.stream_events(session_id)
-    ]
+    try:
+        events = [
+            (e.event or "", json.loads(e.data or "{}")) for e in service.stream_events(session_id)
+        ]
+    finally:
+        _discard(service, session_id)
     outcome = summarize_events(events)
     return DiscordAskResponse(**outcome.model_dump(), web_url=web_url)
+
+
+def _discard(service: AgentService, session_id: str) -> None:
+    try:
+        service.discard_session(session_id)
+    except Exception:  # noqa: BLE001 - the answer is already computed; do not fail it
+        logger.exception("failed to discard discord session %s", session_id)

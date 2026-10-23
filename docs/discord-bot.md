@@ -5,7 +5,7 @@ Discordで `/ask 質問文` と打つと、TEKIJINが答えを返す。計画書
 | TEKIJINの判断 | Discordへの返事 |
 |---|---|
 | 知識・文書・過去の回答で答えた | 回答と出典 |
-| 人に相談するのがよい | 推薦された人(部署と理由)と、依頼を送るためのWebのURL |
+| 人に相談するのがよい | 推薦された人(部署と理由)と、WebのURL。依頼を送るには、Webで同じ質問をし直す |
 | 質問が足りない | 聞き返しの文と、`/ask` のし直しかWebで続ける案内 |
 | 答えられない | その旨 |
 
@@ -15,7 +15,7 @@ Discordで `/ask 質問文` と打つと、TEKIJINが答えを返す。計画書
 
 ボットはバックエンドとは別のプロセスで動く(`python -m tekijin.discord_bot`)。スラッシュコマンドはGateway経由で届くので、ボットのために公開URLを用意する必要は無い。メッセージ本文を読まないので、特権intent(MESSAGE_CONTENT)も要らない。
 
-ボットは受けた質問を、バックエンドの内部API `POST /internal/discord/ask` に送る。認証は共有シークレット(ヘッダ `X-Tekijin-Bot-Secret`)で行う。バックエンドはDiscordのユーザーIDを社員IDに置き換え、Webの質問と同じグラフを最後まで流し、結果を1つにまとめて返す。
+ボットは受けた質問を、バックエンドの内部API `POST /internal/discord/ask` に送る。認証は共有シークレット(ヘッダ `X-Tekijin-Bot-Secret`)で行う。バックエンドはDiscordのユーザーIDを社員IDに置き換え、Webの質問と同じグラフを最後まで流し、結果を1つにまとめて返す。D1では、取次ぎの送信や聞き返しの続きをDiscordから行えない。そこで、返事を作ったあとにその実行を打ち切る。推薦された人の受信箱には、まだ送っていない依頼は載らない。
 
 DiscordのユーザーIDと社員IDの対応は、D1では設定 `TEKIJIN_DISCORD_USER_MAP` に書く。対応表に無い人には「連携されていません」と返す。正式なアカウント連携はD2で作る。
 
@@ -43,7 +43,7 @@ DiscordのユーザーIDと社員IDの対応は、D1では設定 `TEKIJIN_DISCOR
    ```
 
    ```bash
-   cd backend && python -m tekijin.discord_bot
+   cd backend && PYTHONPATH=src python -m tekijin.discord_bot
    ```
 
    `TEKIJIN_DISCORD_GUILD_ID` を入れると、`/ask` はそのサーバーにすぐ出る。入れないと全サーバー向けの登録になり、表示まで最大1時間かかる。
