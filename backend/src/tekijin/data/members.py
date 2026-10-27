@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tekijin.models.tables import Employee, Identity, Organization
@@ -19,16 +20,29 @@ DISCORD = "discord"
 
 
 def get_or_create_org_for_guild(session: Session, guild_id: str, *, name: str) -> Organization:
-    """The organization for a Discord server, created on first use."""
+    """The organization for a Discord server, created on first use.
 
-    org = session.scalars(
+    Two first requests can race to create it; the loser's insert hits the unique
+    guild id, is rolled back to a savepoint, and both end up with the winner's row.
+    """
+
+    org = _org_for_guild(session, guild_id)
+    if org is not None:
+        return org
+    try:
+        with session.begin_nested():
+            session.add(Organization(name=name, discord_guild_id=guild_id))
+    except IntegrityError:
+        pass
+    org = _org_for_guild(session, guild_id)
+    assert org is not None  # inserted above, or by the concurrent winner
+    return org
+
+
+def _org_for_guild(session: Session, guild_id: str) -> Organization | None:
+    return session.scalars(
         select(Organization).where(Organization.discord_guild_id == guild_id)
     ).first()
-    if org is None:
-        org = Organization(name=name, discord_guild_id=guild_id)
-        session.add(org)
-        session.flush()
-    return org
 
 
 def resolve_discord_member(
@@ -42,39 +56,49 @@ def resolve_discord_member(
     """The member behind a Discord user, created on first sight.
 
     The display name is refreshed on every call so the name shown on hand-offs
-    follows what the person is called in the server today.
+    follows what the person is called in the server today. Overlapping first
+    commands from one user race like :func:`get_or_create_org_for_guild`: the
+    loser's member and identity are rolled back together to a savepoint.
     """
 
-    identity = session.scalars(
+    identity = _discord_identity(session, org, discord_user_id)
+    if identity is None:
+        try:
+            with session.begin_nested():
+                member = Employee(name=display_name or f"Discord {discord_user_id}", org_id=org.id)
+                session.add(member)
+                session.flush()
+                session.add(
+                    Identity(
+                        org_id=org.id,
+                        employee_id=member.id,
+                        provider=DISCORD,
+                        external_id=discord_user_id,
+                        display_name=display_name or None,
+                        linked_at=now,
+                    )
+                )
+            return member
+        except IntegrityError:
+            identity = _discord_identity(session, org, discord_user_id)
+            assert identity is not None  # created by the concurrent winner
+
+    member = session.get(Employee, identity.employee_id)
+    assert member is not None  # identities.employee_id is a foreign key
+    if display_name and identity.display_name != display_name:
+        identity.display_name = display_name
+        member.name = display_name
+    return member
+
+
+def _discord_identity(session: Session, org: Organization, discord_user_id: str) -> Identity | None:
+    return session.scalars(
         select(Identity).where(
             Identity.org_id == org.id,
             Identity.provider == DISCORD,
             Identity.external_id == discord_user_id,
         )
     ).first()
-    if identity is not None:
-        member = session.get(Employee, identity.employee_id)
-        if member is not None:
-            if display_name and identity.display_name != display_name:
-                identity.display_name = display_name
-                member.name = display_name
-            return member
-
-    member = Employee(name=display_name or f"Discord {discord_user_id}", org_id=org.id)
-    session.add(member)
-    session.flush()
-    session.add(
-        Identity(
-            org_id=org.id,
-            employee_id=member.id,
-            provider=DISCORD,
-            external_id=discord_user_id,
-            display_name=display_name or None,
-            linked_at=now,
-        )
-    )
-    session.flush()
-    return member
 
 
 def mark_joined(member: Employee, now: dt.datetime) -> None:

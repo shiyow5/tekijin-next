@@ -289,3 +289,63 @@ def _pool(engine) -> set[int]:
         return {e.id for e in Repository(session).list_employees()}
     finally:
         session.close()
+
+
+def test_nothing_is_served_without_a_configured_server(
+    monkeypatch, discord_env, engine, fake_embedder
+) -> None:
+    monkeypatch.delenv("TEKIJIN_DISCORD_GUILD_ID")
+    get_settings.cache_clear()
+    client = _bot_client(engine, fake_embedder)
+    ask = {"discord_user_id": "6006", "guild_id": "777", "question": GOOD_Q}
+    assert client.post(PATH, json=ask, headers=HEADERS).json()["kind"] == "unlinked"
+    join = {"discord_user_id": "6006", "guild_id": "777", "action": "join"}
+    assert client.post(MEMBER, json=join, headers=HEADERS).json()["status"] == "unlinked"
+
+
+def test_first_contact_survives_a_concurrent_insert(engine) -> None:
+    """The loser of a create race rolls back to its savepoint and adopts the
+    winner's rows instead of failing with an IntegrityError."""
+
+    import datetime as dt
+
+    from tekijin.data.db import get_sessionmaker
+    from tekijin.data.members import get_or_create_org_for_guild, resolve_discord_member
+
+    factory = get_sessionmaker(engine)
+    now = dt.datetime(2026, 10, 27, 12, 0)
+    winner, loser = factory(), factory()
+    try:
+        # Both look before either writes.
+        assert loser.scalars(select(Organization)).first() is None
+        org_w = get_or_create_org_for_guild(winner, "999", name="w")
+        resolve_discord_member(winner, org_w, "7007", display_name="w", now=now)
+        winner.commit()
+
+        # The loser's first lookup is forced to miss, as if it ran before the commit.
+        import tekijin.data.members as members
+
+        real_org, real_identity = members._org_for_guild, members._discord_identity
+        calls = {"org": 0, "identity": 0}
+
+        def stale_org(session, guild_id):
+            calls["org"] += 1
+            return None if calls["org"] == 1 else real_org(session, guild_id)
+
+        def stale_identity(session, org, user_id):
+            calls["identity"] += 1
+            return None if calls["identity"] == 1 else real_identity(session, org, user_id)
+
+        members._org_for_guild, members._discord_identity = stale_org, stale_identity
+        try:
+            org_l = get_or_create_org_for_guild(loser, "999", name="l")
+            member_l = resolve_discord_member(loser, org_l, "7007", display_name="w", now=now)
+        finally:
+            members._org_for_guild, members._discord_identity = real_org, real_identity
+        loser.commit()
+        assert org_l.id == org_w.id
+        assert loser.scalars(select(Identity).where(Identity.external_id == "7007")).one()
+        assert member_l.org_id == org_w.id
+    finally:
+        winner.close()
+        loser.close()

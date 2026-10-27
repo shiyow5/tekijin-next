@@ -251,15 +251,18 @@ def redeem_discord_login(req: DiscordRedeemRequest, request: Request) -> schemas
 def _guild_for(settings: Settings, user: DiscordUser) -> str | None:
     """The server the request belongs to, or ``None`` when it is not ours.
 
-    TEKIJIN serves the configured server only (one organization for now). A DM
-    carries no server, so it falls back to the configured one.
+    TEKIJIN serves the configured server only (one organization for now). With no
+    server configured nothing is ours: otherwise anyone in any server the bot was
+    added to could ``/tekijin join`` and sign in. A DM carries no server, so it
+    falls back to the configured one.
     """
 
-    configured = str(settings.discord_guild_id) if settings.discord_guild_id else None
-    guild_id = user.guild_id or configured
-    if guild_id is None or (configured is not None and guild_id != configured):
+    if not settings.discord_guild_id:
         return None
-    return guild_id
+    configured = str(settings.discord_guild_id)
+    if user.guild_id is not None and user.guild_id != configured:
+        return None
+    return configured
 
 
 def _member_id(service: AgentService, settings: Settings, user: DiscordUser) -> int | None:
