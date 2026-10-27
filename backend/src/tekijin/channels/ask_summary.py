@@ -25,6 +25,13 @@ class AskOutcome(BaseModel):
     text: str = ""
     citations: list[SourceCitation] = Field(default_factory=list)
     recommendations: list[Recommendation] = Field(default_factory=list)
+    # The ``document`` route: the cited document, and the person ranked as the
+    # "if this does not solve it" backstop. The endpoint fills the title/excerpt
+    # from the DB, since a chat reply cannot open the document the way the web can.
+    doc_id: str | None = None
+    fallback_name: str | None = None
+    document_title: str | None = None
+    document_excerpt: str | None = None
 
 
 def summarize_events(events: Iterable[tuple[str, dict[str, Any]]]) -> AskOutcome:
@@ -71,4 +78,11 @@ def _from_message(data: dict[str, Any]) -> AskOutcome:
     doc_id = data.get("doc_id")
     if doc_id and all(c.source_id != doc_id for c in citations):
         citations.append(SourceCitation(source_id=doc_id, kind="document"))
-    return AskOutcome(kind="answered", text=text, citations=citations)
+    fallback = data.get("fallback_responder") or {}
+    return AskOutcome(
+        kind="answered",
+        text=text,
+        citations=citations,
+        doc_id=doc_id if status == "document" else None,
+        fallback_name=fallback.get("name") if status == "document" else None,
+    )

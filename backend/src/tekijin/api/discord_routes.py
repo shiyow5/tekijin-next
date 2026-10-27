@@ -24,10 +24,15 @@ from pydantic import BaseModel, Field, field_validator
 from tekijin.api.service import AgentService, AskerNotFound, ServiceBusy
 from tekijin.channels.ask_summary import AskOutcome, summarize_events
 from tekijin.config import Settings, get_settings
+from tekijin.data.db import session_scope
+from tekijin.data.documents import get_document
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/internal/discord", include_in_schema=False)
+
+# How much of a cited document's body the reply quotes.
+_EXCERPT_LENGTH = 300
 
 # Discord caps a slash-command string option at 6000 characters; the web /ask has no
 # cap, but a chat command should not be a way to push arbitrarily large inputs.
@@ -103,8 +108,29 @@ def discord_ask(
         ]
     finally:
         _discard(service, session_id)
-    outcome = summarize_events(events)
+    outcome = _with_document_preview(service, summarize_events(events))
     return DiscordAskResponse(**outcome.model_dump(), web_url=web_url)
+
+
+def _with_document_preview(service: AgentService, outcome: AskOutcome) -> AskOutcome:
+    """Add the cited document's title and opening lines (the web opens the document
+    instead). A lookup failure only loses the preview, never the answer."""
+
+    if not outcome.doc_id:
+        return outcome
+    try:
+        with session_scope(service.session_factory) as session:
+            doc = get_document(session, outcome.doc_id)
+    except Exception:  # noqa: BLE001 - the preview is optional
+        logger.exception("failed to load document %s for a discord reply", outcome.doc_id)
+        return outcome
+    if doc is None:
+        return outcome
+    body = " ".join((doc.get("body") or "").split())
+    excerpt = body if len(body) <= _EXCERPT_LENGTH else body[: _EXCERPT_LENGTH - 1] + "…"
+    return outcome.model_copy(
+        update={"document_title": doc.get("title"), "document_excerpt": excerpt or None}
+    )
 
 
 def _discard(service: AgentService, session_id: str) -> None:
