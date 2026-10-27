@@ -44,7 +44,6 @@ from tekijin.models.tables import (
 )
 
 
-
 # Who may be recommended: still in the organization (#506) and not opted out (#66).
 _RECOMMENDABLE = (Employee.is_active.is_(True), Employee.opted_out_at.is_(None))
 
@@ -59,7 +58,7 @@ class Repository:
         """Everyone who can still be recommended (#506).
 
         This is the candidate pool the scorer runs over, so someone who has left
-        (or opted out with ``/tekijin optout``, #66) must not appear — a hand-off to them cannot be delivered, their Slack
+        must not appear — a hand-off to them cannot be delivered, their Slack
         link having been removed by the same departure. ``get_employee`` is
         deliberately NOT filtered: their name still has to resolve, or the
         questions and answers they left behind lose their author.

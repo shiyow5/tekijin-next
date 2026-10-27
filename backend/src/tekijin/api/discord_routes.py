@@ -35,13 +35,13 @@ from tekijin.channels.ask_summary import AskOutcome, summarize_events
 from tekijin.config import Settings, get_settings
 from tekijin.data.db import session_scope
 from tekijin.data.documents import get_document
-from tekijin.models.tables import Employee
 from tekijin.data.members import (
     get_or_create_org_for_guild,
     mark_joined,
     resolve_discord_member,
     set_opted_out,
 )
+from tekijin.models.tables import Employee
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ login_router = APIRouter(prefix="/auth/discord")
 
 _LOGIN_PURPOSE = "discord_login"
 _LOGIN_TTL = dt.timedelta(minutes=10)
+_LOGIN_INVALID = "ログインURLが無効か、期限が切れています。"
 
 # How much of a cited document's body the reply quotes.
 _EXCERPT_LENGTH = 300
@@ -221,15 +222,15 @@ def redeem_discord_login(req: DiscordRedeemRequest, request: Request) -> schemas
     try:
         payload = jwt.decode(req.token, settings.auth_secret, algorithms=["HS256"])
     except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail="ログインURLが無効か、期限が切れています。") from exc
+        raise HTTPException(status_code=401, detail=_LOGIN_INVALID) from exc
     if payload.get("purpose") != _LOGIN_PURPOSE or not _spend(request, str(payload.get("jti"))):
-        raise HTTPException(status_code=401, detail="ログインURLが無効か、期限が切れています。")
+        raise HTTPException(status_code=401, detail=_LOGIN_INVALID)
 
     service: AgentService = request.app.state.agent_service
     with service.session_factory() as session:
         member = session.get(Employee, int(payload["sub"]))
         if member is None or member.joined_at is None:
-            raise HTTPException(status_code=401, detail="ログインURLが無効か、期限が切れています。")
+            raise HTTPException(status_code=401, detail=_LOGIN_INVALID)
         principal = Principal(
             employee_id=member.id, name=member.name, dept=member.department, is_admin=False
         )
