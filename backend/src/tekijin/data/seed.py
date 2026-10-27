@@ -199,13 +199,18 @@ def _apply_schema_upgrades(engine: Engine) -> None:
         )
         # #66: members created from Discord have no email, and carry their
         # organization and their join / opt-out state.
-        conn.execute(text("ALTER TABLE employees ALTER COLUMN email DROP NOT NULL"))
+        # Guarded: a very old employees table may predate the email column.
         conn.execute(
             text(
-                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS "
-                "org_id INTEGER REFERENCES organizations(id)"
+                "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'employees' "
+                "AND column_name = 'email') THEN "
+                "ALTER TABLE employees ALTER COLUMN email DROP NOT NULL; END IF; END $$"
             )
         )
+        # No REFERENCES here: create_all builds the foreign key on a fresh DB, and
+        # an upgraded one is only ever written through the ORM.
+        conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS org_id INTEGER"))
         conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP"))
         conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS opted_out_at TIMESTAMP"))
         conn.execute(text("ALTER TABLE questions ADD COLUMN IF NOT EXISTS route VARCHAR(32)"))
