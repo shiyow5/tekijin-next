@@ -14,12 +14,22 @@ SECRET_HEADER = "X-Tekijin-Bot-Secret"
 _BUSY_TEXT = "現在混雑しています。少し待ってから、もう一度お試しください。"
 
 
+def discord_user(user_id: int, guild_id: int | None, display_name: str) -> dict[str, Any]:
+    """Who typed the command, in the shape every internal endpoint takes."""
+
+    return {
+        "discord_user_id": str(user_id),
+        "guild_id": str(guild_id) if guild_id is not None else None,
+        "display_name": display_name[:255],
+    }
+
+
 async def ask_backend(
     http: httpx.AsyncClient,
     *,
     base_url: str,
     secret: str,
-    discord_user_id: int,
+    user: dict[str, Any],
     question: str,
 ) -> dict[str, Any]:
     """Return the backend's outcome dict, or a ``no_answer``/``error`` stand-in.
@@ -28,10 +38,29 @@ async def ask_backend(
     a follow-up, so every failure becomes a reply the user can read.
     """
 
+    return await _post(http, base_url, secret, "ask", {**user, "question": question})
+
+
+async def member_backend(
+    http: httpx.AsyncClient,
+    *,
+    base_url: str,
+    secret: str,
+    user: dict[str, Any],
+    action: str,
+) -> dict[str, Any]:
+    """``/tekijin join|optout|optin``. Same never-raise contract as :func:`ask_backend`."""
+
+    return await _post(http, base_url, secret, "member", {**user, "action": action})
+
+
+async def _post(
+    http: httpx.AsyncClient, base_url: str, secret: str, path: str, body: dict[str, Any]
+) -> dict[str, Any]:
     try:
         resp = await http.post(
-            f"{base_url.rstrip('/')}/internal/discord/ask",
-            json={"discord_user_id": str(discord_user_id), "question": question},
+            f"{base_url.rstrip('/')}/internal/discord/{path}",
+            json=body,
             headers={SECRET_HEADER: secret},
         )
     except httpx.HTTPError:

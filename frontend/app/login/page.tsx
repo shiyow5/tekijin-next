@@ -7,7 +7,7 @@
  */
 
 import { useAuth } from "@/components/AuthProvider";
-import { ApiError, getSlackLoginUrl } from "@/lib/api-client";
+import { ApiError, getSlackLoginUrl, redeemDiscordLogin } from "@/lib/api-client";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 
@@ -45,6 +45,21 @@ export default function LoginPage() {
   // reaches a server (a query parameter would be written to the access log).
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    // `/tekijin join` in Discord (#66) sends a one-time token the same way; it is
+    // traded for a bearer token here rather than being one itself.
+    const discordLogin = params.get("discord_login");
+    if (discordLogin) {
+      window.history.replaceState({}, "", window.location.pathname);
+      redeemDiscordLogin(discordLogin)
+        .then((res) => adoptToken(res.access_token))
+        .then(() => router.replace("/"))
+        .catch(() =>
+          setError(
+            "ログインURLが無効か、期限が切れています。Discordで `/tekijin join` をもう一度打ってください。",
+          ),
+        );
+      return;
+    }
     const token = params.get("slack_token");
     if (!token) {
       setError(messageForSlackOutcome(new URLSearchParams(window.location.search).get("slack")));

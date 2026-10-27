@@ -17,6 +17,7 @@ import {
   postAnswer,
   postAsk,
   postSlackUnlink,
+  redeemDiscordLogin,
   regenerateHandoffDraft,
   requestDocumentFallback,
   resolveQuestion,
@@ -702,5 +703,20 @@ describe("postSlackUnlink", () => {
     expect(url).toBe(`${DEFAULT_API_BASE_URL}/slack/unlink`);
     expect(init?.method).toBe("POST");
     expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("redeemDiscordLogin", () => {
+  it("POSTs the one-time token to {base}/auth/discord/redeem and returns the login", async () => {
+    const login = { access_token: "jwt", token_type: "bearer" };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(login));
+
+    const result = await redeemDiscordLogin("once-1", { fetchImpl });
+
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${DEFAULT_API_BASE_URL}/auth/discord/redeem`);
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ token: "once-1" });
+    expect(result).toEqual(login);
   });
 });

@@ -43,6 +43,9 @@ from tekijin.models.tables import (
     Skill,
 )
 
+# Who may be recommended: still in the organization (#506) and not opted out (#66).
+_RECOMMENDABLE = (Employee.is_active.is_(True), Employee.opted_out_at.is_(None))
+
 
 class Repository:
     """Read-only data access over an active session."""
@@ -62,7 +65,7 @@ class Repository:
         """
 
         rows = self._session.scalars(
-            select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.id)
+            select(Employee).where(*_RECOMMENDABLE).order_by(Employee.id)
         ).all()
         return [EmployeeDTO.from_row(r) for r in rows]
 
@@ -74,7 +77,7 @@ class Repository:
         roster — filtering the roster alone left the real pool untouched.
         """
 
-        return set(self._session.scalars(select(Employee.id).where(Employee.is_active.is_(True))))
+        return set(self._session.scalars(select(Employee.id).where(*_RECOMMENDABLE)))
 
     def get_employee(self, employee_id: int) -> EmployeeDTO | None:
         row = self._session.get(Employee, employee_id)

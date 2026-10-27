@@ -13,8 +13,13 @@ import json
 import httpx
 
 from tekijin.channels.ask_summary import summarize_events
-from tekijin.discord_bot.backend import SECRET_HEADER, ask_backend
-from tekijin.discord_bot.format import DISCORD_MESSAGE_LIMIT, format_reply
+from tekijin.discord_bot.backend import (
+    SECRET_HEADER,
+    ask_backend,
+    discord_user,
+    member_backend,
+)
+from tekijin.discord_bot.format import DISCORD_MESSAGE_LIMIT, format_member_reply, format_reply
 
 WEB = "https://tekijin.example/"
 REC = {
@@ -109,7 +114,7 @@ def test_format_followup_and_unlinked_point_to_web() -> None:
     followup = summarize_events([("followup", {"question": "どの拠点ですか?"})])
     assert WEB in format_reply(followup.model_dump(), web_url=WEB)
     unlinked = format_reply({"kind": "unlinked", "text": ""}, web_url=WEB)
-    assert "連携" in unlinked
+    assert "使えません" in unlinked
 
 
 def test_format_never_exceeds_discord_limit() -> None:
@@ -208,12 +213,48 @@ def test_format_keeps_sources_and_web_link_when_clipping() -> None:
     assert WEB in text
 
 
+USER = discord_user(1001, 42, "たろう")
+
+
+def test_discord_user_handles_dms() -> None:
+    assert discord_user(7, None, "x")["guild_id"] is None
+
+
+def test_member_backend_posts_the_action() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"status": "opted_out"})
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            return await member_backend(
+                http, base_url="http://api", secret="k", user=USER, action="optout"
+            )
+
+    assert asyncio.run(run()) == {"status": "opted_out"}
+    assert seen["url"] == "http://api/internal/discord/member"
+    assert seen["body"]["action"] == "optout"
+
+
+def test_format_member_reply() -> None:
+    joined = format_member_reply({"status": "joined", "login_url": "https://w/login#t"})
+    assert "https://w/login#t" in joined and "10分" in joined
+    assert "optin" in format_member_reply({"status": "opted_out"})
+    assert "戻しました" in format_member_reply({"status": "opted_in"})
+    assert "使えません" in format_member_reply({"status": "unlinked"})
+    assert "エラー" in format_member_reply({"kind": "error"})
+    assert "エラー" in format_member_reply({"status": "joined"})
+
+
 def _ask(handler) -> dict:
     async def run() -> dict:
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(transport=transport) as http:
             return await ask_backend(
-                http, base_url="http://api/", secret="k", discord_user_id=1001, question="q"
+                http, base_url="http://api/", secret="k", user=USER, question="q"
             )
 
     return asyncio.run(run())
@@ -232,7 +273,12 @@ def test_ask_backend_sends_secret_and_user() -> None:
     assert seen == {
         "url": "http://api/internal/discord/ask",
         "secret": "k",
-        "body": {"discord_user_id": "1001", "question": "q"},
+        "body": {
+            "discord_user_id": "1001",
+            "guild_id": "42",
+            "display_name": "たろう",
+            "question": "q",
+        },
     }
 
 

@@ -15,8 +15,8 @@ import httpx
 from discord import app_commands
 
 from tekijin.config import get_settings
-from tekijin.discord_bot.backend import ask_backend
-from tekijin.discord_bot.format import format_reply
+from tekijin.discord_bot.backend import ask_backend, discord_user, member_backend
+from tekijin.discord_bot.format import format_member_reply, format_reply
 
 logger = logging.getLogger("tekijin.discord_bot")
 
@@ -26,14 +26,24 @@ logger = logging.getLogger("tekijin.discord_bot")
 _BACKEND_TIMEOUT_S = 14 * 60.0
 
 
+def _user(interaction: discord.Interaction) -> dict:
+    return discord_user(interaction.user.id, interaction.guild_id, interaction.user.display_name)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
-    if not settings.discord_bot_token or not settings.discord_bot_secret:
+    if (
+        not settings.discord_bot_token
+        or not settings.discord_bot_secret
+        or not settings.discord_guild_id
+    ):
         raise SystemExit(
-            "TEKIJIN_DISCORD_BOT_TOKEN と TEKIJIN_DISCORD_BOT_SECRET を設定してください"
+            "TEKIJIN_DISCORD_BOT_TOKEN・TEKIJIN_DISCORD_BOT_SECRET・"
+            "TEKIJIN_DISCORD_GUILD_ID を設定してください"
         )
 
+    guild_id = settings.discord_guild_id
     client = discord.Client(intents=discord.Intents.default())
     tree = app_commands.CommandTree(client)
     http = httpx.AsyncClient(timeout=_BACKEND_TIMEOUT_S)
@@ -46,22 +56,46 @@ def main() -> None:
             http,
             base_url=settings.discord_backend_url,
             secret=settings.discord_bot_secret,
-            discord_user_id=interaction.user.id,
+            user=_user(interaction),
             question=question,
         )
         reply = format_reply(outcome, web_url=outcome.get("web_url") or settings.discord_web_url)
         await interaction.followup.send(reply, ephemeral=True)
 
+    group = app_commands.Group(name="tekijin", description="TEKIJINへの参加と設定")
+
+    async def member_action(interaction: discord.Interaction, action: str) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        result = await member_backend(
+            http,
+            base_url=settings.discord_backend_url,
+            secret=settings.discord_bot_secret,
+            user=_user(interaction),
+            action=action,
+        )
+        await interaction.followup.send(format_member_reply(result), ephemeral=True)
+
+    @group.command(name="join", description="TEKIJINに参加し、Webのログイン用URLを受け取る")
+    async def join(interaction: discord.Interaction) -> None:
+        await member_action(interaction, "join")
+
+    @group.command(name="optout", description="詳しい人として推薦される対象から外れる")
+    async def optout(interaction: discord.Interaction) -> None:
+        await member_action(interaction, "optout")
+
+    @group.command(name="optin", description="詳しい人として推薦される対象に戻る")
+    async def optin(interaction: discord.Interaction) -> None:
+        await member_action(interaction, "optin")
+
+    tree.add_command(group)
+
     @client.event
     async def on_ready() -> None:
-        # A guild-scoped sync shows the command immediately; a global one can take
-        # up to an hour to appear, so use the guild id while developing.
-        if settings.discord_guild_id:
-            guild = discord.Object(id=settings.discord_guild_id)
-            tree.copy_global_to(guild=guild)
-            synced = await tree.sync(guild=guild)
-        else:
-            synced = await tree.sync()
+        # Only the configured server is served (#66), so sync there only: a
+        # guild-scoped sync also shows the commands immediately.
+        guild = discord.Object(id=guild_id)
+        tree.copy_global_to(guild=guild)
+        synced = await tree.sync(guild=guild)
         logger.info("logged in as %s; synced %d command(s)", client.user, len(synced))
 
     client.run(settings.discord_bot_token, log_handler=None)
