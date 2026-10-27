@@ -27,9 +27,7 @@ _BACKEND_TIMEOUT_S = 14 * 60.0
 
 
 def _user(interaction: discord.Interaction) -> dict:
-    return discord_user(
-        interaction.user.id, interaction.guild_id, interaction.user.display_name
-    )
+    return discord_user(interaction.user.id, interaction.guild_id, interaction.user.display_name)
 
 
 def main() -> None:

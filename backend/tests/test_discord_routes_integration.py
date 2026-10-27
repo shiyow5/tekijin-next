@@ -181,9 +181,7 @@ def test_document_preview_reads_title_and_opening(seed_counts, engine, fake_embe
 MEMBER = "/internal/discord/member"
 
 
-def test_first_ask_makes_the_user_a_member(
-    discord_env, seed_counts, engine, fake_embedder
-) -> None:
+def test_first_ask_makes_the_user_a_member(discord_env, seed_counts, engine, fake_embedder) -> None:
     service = _bot_service(engine, fake_embedder)
     client = TestClient(create_app(agent_service=service))
     body = {"discord_user_id": "1001", "display_name": "たろう", "question": GOOD_Q}
