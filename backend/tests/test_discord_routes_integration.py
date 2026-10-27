@@ -11,7 +11,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from tekijin.api.discord_routes import _with_document_preview
 from tekijin.app import create_app
+from tekijin.channels.ask_summary import AskOutcome
 from tekijin.config import get_settings
 from tekijin.data.inbox import pending_handoffs_for_responder
 from tekijin.models.tables import Question
@@ -126,3 +128,13 @@ def test_unsent_handoff_is_discarded(discord_env, seed_counts, engine, fake_embe
     assert not [sid for sid in service._registry if sid.startswith("discord_")]
     # The checkpoint is gone, so /history must not link to a result page that 404s.
     assert linked == 0
+
+
+def test_document_preview_reads_title_and_opening(seed_counts, engine, fake_embedder) -> None:
+    service = _bot_service(engine, fake_embedder)
+    out = _with_document_preview(service, AskOutcome(kind="answered", doc_id="doc_027"))
+    assert out.document_title
+    assert out.document_excerpt and len(out.document_excerpt) <= 300
+
+    missing = _with_document_preview(service, AskOutcome(kind="answered", doc_id="doc_none"))
+    assert missing.document_title is None

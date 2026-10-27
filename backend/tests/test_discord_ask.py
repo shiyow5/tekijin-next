@@ -137,6 +137,41 @@ def test_handoff_keeps_the_reference_citations() -> None:
     assert "doc_7" in text and "社員1" in text
 
 
+def test_document_route_names_the_document_and_points_hand_off_to_web() -> None:
+    out = summarize_events(
+        [
+            (
+                "message",
+                {
+                    "status": "document",
+                    "message": "社内文書に該当がありそうです(文書ID: doc_027)。",
+                    "doc_id": "doc_027",
+                    "fallback_responder": REC,
+                },
+            )
+        ]
+    )
+    assert (out.doc_id, out.fallback_name) == ("doc_027", "社員1")
+    reply = out.model_copy(
+        update={"document_title": "経理・決算FAQ", "document_excerpt": "月次決算は前倒しで。"}
+    )
+    text = format_reply(reply.model_dump(), web_url=WEB)
+    assert "経理・決算FAQ" in text and "月次決算は前倒しで。" in text and "doc_027" in text
+    assert "社員1" in text and WEB in text
+    assert "取り次げます" not in text
+
+    # Without a preview (lookup failed) the reply still names the document.
+    bare = format_reply(out.model_dump(), web_url=WEB)
+    assert "doc_027" in bare and WEB in bare
+
+
+def test_self_answer_has_no_document_fields() -> None:
+    out = summarize_events(
+        [("message", {"status": "self_answered", "message": "ok", "doc_id": "doc_1"})]
+    )
+    assert out.doc_id is None and out.fallback_name is None
+
+
 def test_format_keeps_sources_and_web_link_when_clipping() -> None:
     long_answer = summarize_events(
         [
