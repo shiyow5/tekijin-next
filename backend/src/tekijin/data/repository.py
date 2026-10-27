@@ -43,9 +43,9 @@ from tekijin.models.tables import (
     Skill,
 )
 
-
 # Who may be recommended: still in the organization (#506) and not opted out (#66).
 _RECOMMENDABLE = (Employee.is_active.is_(True), Employee.opted_out_at.is_(None))
+
 
 class Repository:
     """Read-only data access over an active session."""
