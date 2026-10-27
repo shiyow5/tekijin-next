@@ -43,6 +43,7 @@ def main() -> None:
             "TEKIJIN_DISCORD_GUILD_ID を設定してください"
         )
 
+    guild_id = settings.discord_guild_id
     client = discord.Client(intents=discord.Intents.default())
     tree = app_commands.CommandTree(client)
     http = httpx.AsyncClient(timeout=_BACKEND_TIMEOUT_S)
@@ -92,7 +93,7 @@ def main() -> None:
     async def on_ready() -> None:
         # Only the configured server is served (#66), so sync there only: a
         # guild-scoped sync also shows the commands immediately.
-        guild = discord.Object(id=settings.discord_guild_id)
+        guild = discord.Object(id=guild_id)
         tree.copy_global_to(guild=guild)
         synced = await tree.sync(guild=guild)
         logger.info("logged in as %s; synced %d command(s)", client.user, len(synced))

@@ -65,20 +65,20 @@ def resolve_discord_member(
     if identity is None:
         try:
             with session.begin_nested():
-                member = Employee(name=display_name or f"Discord {discord_user_id}", org_id=org.id)
-                session.add(member)
+                created = Employee(name=display_name or f"Discord {discord_user_id}", org_id=org.id)
+                session.add(created)
                 session.flush()
                 session.add(
                     Identity(
                         org_id=org.id,
-                        employee_id=member.id,
+                        employee_id=created.id,
                         provider=DISCORD,
                         external_id=discord_user_id,
                         display_name=display_name or None,
                         linked_at=now,
                     )
                 )
-            return member
+            return created
         except IntegrityError:
             identity = _discord_identity(session, org, discord_user_id)
             assert identity is not None  # created by the concurrent winner
