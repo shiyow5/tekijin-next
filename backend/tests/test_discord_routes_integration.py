@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from tekijin.api.discord_routes import _with_document_preview
 from tekijin.app import create_app
 from tekijin.channels.ask_summary import AskOutcome
 from tekijin.config import get_settings
 from tekijin.data.inbox import pending_handoffs_for_responder
-from tekijin.models.tables import Question
+from tekijin.models.tables import Employee, Identity, Organization, Question
 from test_api_integration import (  # noqa: F401 - autouse cleanup of committed api_ rows
     GOOD_Q,
     _cleanup_api_rows,
@@ -27,13 +28,50 @@ from test_api_integration import (  # noqa: F401 - autouse cleanup of committed 
 )
 
 SECRET = "s3cret-for-tests"
+GUILD = "424242424242"
+HEADERS = {"X-Tekijin-Bot-Secret": SECRET}
 PATH = "/internal/discord/ask"
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_discord_members(engine):
+    """Members created from Discord (org_id set) and everything they asked.
+
+    Runs its teardown BEFORE the imported ``_cleanup_api_rows`` (fixtures tear down
+    in reverse), so it removes the rows that reference these members itself.
+    """
+
+    yield
+    from sqlalchemy import text
+
+    from tekijin.data.db import get_sessionmaker
+
+    members = "SELECT id FROM employees WHERE org_id IS NOT NULL"
+    asked = f"SELECT id FROM questions WHERE asker_id IN ({members})"
+    session = get_sessionmaker(engine)()
+    try:
+        session.execute(
+            text(
+                "DELETE FROM messages WHERE recommendation_id IN "
+                f"(SELECT id FROM recommendations WHERE question_id IN ({asked}))"
+            )
+        )
+        session.execute(text("DELETE FROM feedback"))
+        session.execute(text(f"DELETE FROM recommendations WHERE question_id IN ({asked})"))
+        session.execute(text(f"DELETE FROM events WHERE question_id IN ({asked})"))
+        session.execute(text(f"DELETE FROM questions WHERE asker_id IN ({members})"))
+        session.execute(text("DELETE FROM identities"))
+        session.execute(text("DELETE FROM employees WHERE org_id IS NOT NULL"))
+        session.execute(text("DELETE FROM organizations"))
+        session.commit()
+    finally:
+        session.close()
 
 
 @pytest.fixture
 def discord_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TEKIJIN_DISCORD_BOT_SECRET", SECRET)
-    monkeypatch.setenv("TEKIJIN_DISCORD_USER_MAP", '{"1001": 10}')
+    monkeypatch.setenv("TEKIJIN_DISCORD_GUILD_ID", GUILD)
     monkeypatch.setenv("TEKIJIN_DISCORD_WEB_URL", "https://tekijin.example/")
     get_settings.cache_clear()
     yield
@@ -72,11 +110,11 @@ def test_wrong_or_missing_secret_is_rejected(discord_env, engine, fake_embedder)
     assert client.post(PATH, json=body, headers={"X-Tekijin-Bot-Secret": "no"}).status_code == 401
 
 
-def test_unmapped_user_is_told_to_link(discord_env, engine, fake_embedder) -> None:
+def test_another_server_is_refused(discord_env, engine, fake_embedder) -> None:
     resp = _bot_client(engine, fake_embedder).post(
         PATH,
-        json={"discord_user_id": "9999", "question": GOOD_Q},
-        headers={"X-Tekijin-Bot-Secret": SECRET},
+        json={"discord_user_id": "9999", "guild_id": "1", "question": GOOD_Q},
+        headers=HEADERS,
     )
     assert resp.status_code == 200
     assert resp.json()["kind"] == "unlinked"
@@ -138,3 +176,118 @@ def test_document_preview_reads_title_and_opening(seed_counts, engine, fake_embe
 
     missing = _with_document_preview(service, AskOutcome(kind="answered", doc_id="doc_none"))
     assert missing.document_title is None
+
+
+MEMBER = "/internal/discord/member"
+
+
+def test_first_ask_makes_the_user_a_member(
+    discord_env, seed_counts, engine, fake_embedder
+) -> None:
+    service = _bot_service(engine, fake_embedder)
+    client = TestClient(create_app(agent_service=service))
+    body = {"discord_user_id": "1001", "display_name": "たろう", "question": GOOD_Q}
+    assert client.post(PATH, json=body, headers=HEADERS).json()["kind"] == "handoff"
+    body["display_name"] = "たろう(新)"
+    client.post(PATH, json=body, headers=HEADERS)
+
+    session = service.session_factory()
+    try:
+        ids = session.scalars(
+            select(Identity).where(Identity.provider == "discord", Identity.external_id == "1001")
+        ).all()
+        assert len(ids) == 1
+        member = session.get(Employee, ids[0].employee_id)
+        org = session.get(Organization, ids[0].org_id)
+    finally:
+        session.close()
+    assert member.name == "たろう(新)" and member.email is None
+    assert org.discord_guild_id == GUILD and org.expertise_from_messages is False
+
+
+def test_join_issues_a_one_time_web_login(discord_env, engine, fake_embedder) -> None:
+    client = _bot_client(engine, fake_embedder)
+    resp = client.post(
+        MEMBER,
+        json={"discord_user_id": "2002", "display_name": "はなこ", "action": "join"},
+        headers=HEADERS,
+    )
+    body = resp.json()
+    assert body["status"] == "joined"
+    assert body["login_url"].startswith("https://tekijin.example/login#discord_login=")
+    token = body["login_url"].split("#discord_login=", 1)[1]
+
+    first = client.post("/auth/discord/redeem", json={"token": token})
+    assert first.status_code == 200
+    assert first.json()["principal"]["name"] == "はなこ"
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {first.json()['access_token']}"})
+    assert me.status_code == 200 and me.json()["name"] == "はなこ"
+
+    assert client.post("/auth/discord/redeem", json={"token": token}).status_code == 401
+    assert client.post("/auth/discord/redeem", json={"token": "nope"}).status_code == 401
+
+
+def test_redeem_requires_a_joined_member(discord_env, engine, fake_embedder) -> None:
+    """A login token for someone who never ran ``join`` (e.g. forged with the
+    right secret but for another member) does not sign in."""
+
+    from tekijin.api.discord_routes import _login_token
+
+    client = _bot_client(engine, fake_embedder)
+    client.post(
+        MEMBER,
+        json={"discord_user_id": "3003", "display_name": "x", "action": "optin"},
+        headers=HEADERS,
+    )
+    service_member = _member_by_discord_id(engine, "3003")
+    token = _login_token(get_settings(), service_member)
+    assert client.post("/auth/discord/redeem", json={"token": token}).status_code == 401
+
+
+def test_optout_leaves_the_candidate_pool(discord_env, engine, fake_embedder) -> None:
+    client = _bot_client(engine, fake_embedder)
+    user = {"discord_user_id": "4004", "display_name": "じろう"}
+    assert (
+        client.post(MEMBER, json={**user, "action": "optout"}, headers=HEADERS).json()["status"]
+        == "opted_out"
+    )
+    member_id = _member_by_discord_id(engine, "4004")
+    assert member_id not in _pool(engine)
+
+    assert (
+        client.post(MEMBER, json={**user, "action": "optin"}, headers=HEADERS).json()["status"]
+        == "opted_in"
+    )
+    assert member_id in _pool(engine)
+
+
+def test_member_actions_refuse_another_server(discord_env, engine, fake_embedder) -> None:
+    resp = _bot_client(engine, fake_embedder).post(
+        MEMBER,
+        json={"discord_user_id": "5005", "guild_id": "1", "action": "join"},
+        headers=HEADERS,
+    )
+    assert resp.json() == {"status": "unlinked", "login_url": None}
+
+
+def _member_by_discord_id(engine, discord_user_id: str) -> int:
+    from tekijin.data.db import get_sessionmaker
+
+    session = get_sessionmaker(engine)()
+    try:
+        return session.scalars(
+            select(Identity.employee_id).where(Identity.external_id == discord_user_id)
+        ).one()
+    finally:
+        session.close()
+
+
+def _pool(engine) -> set[int]:
+    from tekijin.data.db import get_sessionmaker
+    from tekijin.data.repository import Repository
+
+    session = get_sessionmaker(engine)()
+    try:
+        return {e.id for e in Repository(session).list_employees()}
+    finally:
+        session.close()

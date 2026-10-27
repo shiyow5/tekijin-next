@@ -34,7 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 class EmployeeDTO:
     id: int
     name: str
-    email: str
+    email: str | None
     department: str | None
     section: str | None
     position: str | None

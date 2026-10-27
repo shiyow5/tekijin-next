@@ -51,14 +51,46 @@ EMBEDDING_DIM: int = get_settings().embedding_dim
 # --------------------------------------------------------------------------- #
 # A. Input data layer
 # --------------------------------------------------------------------------- #
+class Organization(Base):
+    """One organization TEKIJIN serves (#66, ADR-0012).
+
+    For now an organization is one Discord server (``discord_guild_id``). The
+    first deployment holds a single row, but members and identities already carry
+    ``org_id`` so a second organization does not need a schema change.
+    ``expertise_from_messages`` gates using members' Discord messages as evidence
+    of what they know (Discord Developer Policy §16, see ADR-0012); off by default.
+    """
+
+    __tablename__ = "organizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255))
+    discord_guild_id: Mapped[str | None] = mapped_column(String(32), unique=True)
+    expertise_from_messages: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Employee(Base):
-    """Employee master record. The "who" every other table refers to."""
+    """A member of the organization. The "who" every other table refers to.
+
+    Still named ``employees`` from the company-only design; the rename to
+    ``members`` is planned for R3, together with dropping the company-only
+    columns (department, branch, ...). A member created from Discord has only a
+    name, an organization and an identity: ``email`` is optional.
+    """
 
     __tablename__ = "employees"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
-    email: Mapped[str] = mapped_column(String(255), unique=True)
+    email: Mapped[str | None] = mapped_column(String(255), unique=True)
+    org_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), index=True)
+    # ``/tekijin join``: the member registered and may sign in to the web UI.
+    joined_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+    # ``/tekijin optout``: never recommended, and evidence about them is dropped.
+    opted_out_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
     department: Mapped[str | None] = mapped_column(String(255))
     section: Mapped[str | None] = mapped_column(String(255))
     position: Mapped[str | None] = mapped_column(String(255))
@@ -77,6 +109,28 @@ class Employee(Base):
     # hand-off can no longer be delivered. Defaults to true — the synthetic
     # roster predates the column, and a default of false would empty the pool.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+
+
+class Identity(Base):
+    """A member's account on an external service (#66).
+
+    ``provider`` is ``discord`` for now (``slack``/``google``/``notion`` later;
+    Slack still uses ``slack_links`` until it is generalized). One external
+    account maps to exactly one member within an organization.
+    """
+
+    __tablename__ = "identities"
+    __table_args__ = (
+        UniqueConstraint("org_id", "provider", "external_id", name="uq_identities_external"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(16))
+    external_id: Mapped[str] = mapped_column(String(64))
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    linked_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class EmployeeProfile(Base):

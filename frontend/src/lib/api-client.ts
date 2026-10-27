@@ -534,6 +534,18 @@ export async function getSlackLoginUrl(
 }
 
 /**
+ * POST /auth/discord/redeem — trade the one-time token from `/tekijin join` (#66)
+ * for a bearer token. Unauthenticated by design; rejects with 401 when the token
+ * is unknown, expired, or already used.
+ */
+export function redeemDiscordLogin(
+  token: string,
+  options?: RequestOptions,
+): Promise<LoginResponse> {
+  return postJson<LoginResponse>("/auth/discord/redeem", { token }, options);
+}
+
+/**
  * POST /slack/link/complete — redeem the pending token the OAuth callback left
  * in the URL fragment, attaching that Slack account to the CALLER (#494).
  *

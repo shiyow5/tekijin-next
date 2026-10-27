@@ -18,11 +18,31 @@ _SOURCE_LABELS = {
 _FIXED_REPLIES = {
     "no_answer": "答えられる情報が見つかりませんでした。",
     "error": "処理中にエラーが起きました。しばらくしてから、もう一度お試しください。",
-    "unlinked": (
-        "このDiscordアカウントは、TEKIJINの社員とまだ連携されていません。"
-        "管理者に連携を依頼してください。"
-    ),
+    "unlinked": "このサーバーでは、TEKIJINを使えません。",
 }
+
+
+def format_member_reply(result: dict[str, Any]) -> str:
+    """The reply to ``/tekijin join|optout|optin``."""
+
+    status = result.get("status")
+    if status == "joined" and result.get("login_url"):
+        return (
+            "TEKIJINに参加しました。次のURLからWebにログインできます。"
+            "10分以内に1回だけ使えます。ほかの人には送らないでください。\n"
+            f"{result['login_url']}\n\n"
+            "期限が切れたら、もう一度 `/tekijin join` を打ってください。"
+        )
+    if status == "opted_out":
+        return (
+            "あなたを、TEKIJINが詳しい人として推薦する対象から外しました。"
+            "戻すときは `/tekijin optin` を打ってください。"
+        )
+    if status == "opted_in":
+        return "あなたを、TEKIJINが詳しい人として推薦する対象に戻しました。"
+    if status == "unlinked":
+        return _FIXED_REPLIES["unlinked"]
+    return _FIXED_REPLIES["error"]
 
 
 def format_reply(outcome: dict[str, Any], *, web_url: str) -> str:

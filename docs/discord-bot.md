@@ -1,6 +1,6 @@
-# Discordボットの立ち上げ(D1: /ask)
+# Discordボットの立ち上げ
 
-Discordで `/ask 質問文` と打つと、TEKIJINが答えを返す。計画書 6章のD1にあたる(Issue #60)。返事は質問した本人にだけ見える。質問には顧客名や社内のトラブルが入りうるうえ、打ったチャンネルを誰が見ているか分からないからだ。
+Discordで `/ask 質問文` と打つと、TEKIJINが答えを返す(Issue #60)。`/tekijin join` などでTEKIJINへの参加や設定ができる(Issue #66)。返事は質問した本人にだけ見える。質問には顧客名や社内のトラブルが入りうるうえ、打ったチャンネルを誰が見ているか分からないからだ。
 
 | TEKIJINの判断 | Discordへの返事 |
 |---|---|
@@ -15,9 +15,15 @@ Discordで `/ask 質問文` と打つと、TEKIJINが答えを返す。計画書
 
 ボットはバックエンドとは別のプロセスで動く(`python -m tekijin.discord_bot`)。スラッシュコマンドはGateway経由で届くので、ボットのために公開URLを用意する必要は無い。メッセージ本文を読まないので、特権intent(MESSAGE_CONTENT)も要らない。
 
-ボットは受けた質問を、バックエンドの内部API `POST /internal/discord/ask` に送る。認証は共有シークレット(ヘッダ `X-Tekijin-Bot-Secret`)で行う。バックエンドはDiscordのユーザーIDを社員IDに置き換え、Webの質問と同じグラフを最後まで流し、結果を1つにまとめて返す。D1では、取次ぎの送信や聞き返しの続きをDiscordから行えない。そこで、返事を作ったあとにその実行を打ち切る。推薦された人の受信箱には、まだ送っていない依頼は載らない。
+ボットは受けた質問を、バックエンドの内部API `POST /internal/discord/ask` に送る。認証は共有シークレット(ヘッダ `X-Tekijin-Bot-Secret`)で行う。バックエンドはDiscordのユーザーをTEKIJINのメンバーに対応づけ、Webの質問と同じグラフを最後まで流し、結果を1つにまとめて返す。今は、取次ぎの送信や聞き返しの続きをDiscordから行えない。そこで、返事を作ったあとにその実行を打ち切る。推薦された人の受信箱には、まだ送っていない依頼は載らない。
 
-DiscordのユーザーIDと社員IDの対応は、D1では設定 `TEKIJIN_DISCORD_USER_MAP` に書く。対応表に無い人には「連携されていません」と返す。正式なアカウント連携はD2で作る。
+TEKIJINは、`TEKIJIN_DISCORD_GUILD_ID` で指定した1つのサーバーを1つの組織として受け持つ。ほかのサーバーからの呼び出しには「このサーバーでは使えません」と返す。サーバーのメンバーは、初めて `/ask` などを打った時点で自動でTEKIJINのメンバーになる。対応表を書く必要は無い。
+
+| コマンド | 内容 |
+|---|---|
+| `/tekijin join` | 参加を登録し、Webにログインするための一回限りのURL(10分)を本人だけに返す |
+| `/tekijin optout` | 詳しい人として推薦される対象から外れる |
+| `/tekijin optin` | 推薦される対象に戻る |
 
 ## 手順
 
@@ -28,25 +34,24 @@ DiscordのユーザーIDと社員IDの対応は、D1では設定 `TEKIJIN_DISCOR
 
    ```dotenv
    TEKIJIN_DISCORD_BOT_SECRET=<3で作った値>
-   TEKIJIN_DISCORD_USER_MAP={"123456789012345678": 10}
    TEKIJIN_DISCORD_WEB_URL=http://localhost:3000
+   TEKIJIN_DISCORD_GUILD_ID=<サーバーID>
    ```
 
-   DiscordのユーザーIDは、Discordの設定で開発者モードを有効にし、ユーザーを右クリックして「ユーザーIDをコピー」で取れる。
+   サーバーIDは、Discordの設定で開発者モードを有効にし、サーバー名を右クリックして「サーバーIDをコピー」で取れる。既存のDBには、先に `cd backend && PYTHONPATH=src python -m tekijin.data.migrate` で新しい列とテーブルを足す(データは消えない)。
 
 5. ボットのプロセスに、4と同じ値に加えて次を渡して起動する。
 
    ```dotenv
    TEKIJIN_DISCORD_BOT_TOKEN=<1で発行したトークン>
    TEKIJIN_DISCORD_BACKEND_URL=http://127.0.0.1:8000
-   TEKIJIN_DISCORD_GUILD_ID=<サーバーID>
    ```
 
    ```bash
    cd backend && PYTHONPATH=src python -m tekijin.discord_bot
    ```
 
-   `TEKIJIN_DISCORD_GUILD_ID` を入れると、`/ask` はそのサーバーにすぐ出る。入れないと全サーバー向けの登録になり、表示まで最大1時間かかる。
+   `TEKIJIN_DISCORD_GUILD_ID` を入れると、コマンドはそのサーバーにすぐ出る。
 
 `.env` は `chmod 600` にしておく。トークンとシークレットはコミットしない。
 

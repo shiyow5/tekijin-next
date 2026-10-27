@@ -197,6 +197,19 @@ def _apply_schema_upgrades(engine: Engine) -> None:
                 "is_active BOOLEAN NOT NULL DEFAULT true"
             )
         )
+        # #66: members created from Discord have no email, and carry their
+        # organization and their join / opt-out state.
+        conn.execute(text("ALTER TABLE employees ALTER COLUMN email DROP NOT NULL"))
+        conn.execute(
+            text(
+                "ALTER TABLE employees ADD COLUMN IF NOT EXISTS "
+                "org_id INTEGER REFERENCES organizations(id)"
+            )
+        )
+        conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP"))
+        conn.execute(
+            text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS opted_out_at TIMESTAMP")
+        )
         conn.execute(text("ALTER TABLE questions ADD COLUMN IF NOT EXISTS route VARCHAR(32)"))
         # Self-resolution UX signal (#159): the asker marked the question solved
         # without a live hand-off. Older DBs get it here; fresh ones via create_all.

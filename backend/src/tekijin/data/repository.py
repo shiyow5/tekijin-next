@@ -44,6 +44,10 @@ from tekijin.models.tables import (
 )
 
 
+
+# Who may be recommended: still in the organization (#506) and not opted out (#66).
+_RECOMMENDABLE = (Employee.is_active.is_(True), Employee.opted_out_at.is_(None))
+
 class Repository:
     """Read-only data access over an active session."""
 
@@ -55,14 +59,14 @@ class Repository:
         """Everyone who can still be recommended (#506).
 
         This is the candidate pool the scorer runs over, so someone who has left
-        must not appear — a hand-off to them cannot be delivered, their Slack
+        (or opted out with ``/tekijin optout``, #66) must not appear — a hand-off to them cannot be delivered, their Slack
         link having been removed by the same departure. ``get_employee`` is
         deliberately NOT filtered: their name still has to resolve, or the
         questions and answers they left behind lose their author.
         """
 
         rows = self._session.scalars(
-            select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.id)
+            select(Employee).where(*_RECOMMENDABLE).order_by(Employee.id)
         ).all()
         return [EmployeeDTO.from_row(r) for r in rows]
 
@@ -74,7 +78,7 @@ class Repository:
         roster — filtering the roster alone left the real pool untouched.
         """
 
-        return set(self._session.scalars(select(Employee.id).where(Employee.is_active.is_(True))))
+        return set(self._session.scalars(select(Employee.id).where(*_RECOMMENDABLE)))
 
     def get_employee(self, employee_id: int) -> EmployeeDTO | None:
         row = self._session.get(Employee, employee_id)
