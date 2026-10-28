@@ -23,6 +23,7 @@ import datetime as dt
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -158,6 +159,33 @@ class SourceItem(Base):
     content_hash: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ChannelMessage(Base):
+    """One message posted in the organization's Discord server (#76, R2).
+
+    Ids are Discord snowflakes, which grow with time, so the largest id per channel
+    is where reading the history resumes. A message in a thread keeps its parent
+    channel in ``channel_id`` and the thread in ``thread_id``. Times are naive UTC,
+    as Discord gives them; grouping into days converts to Japan time.
+    """
+
+    __tablename__ = "channel_messages"
+    __table_args__ = (
+        UniqueConstraint("org_id", "message_id", name="uq_channel_messages_message"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    message_id: Mapped[int] = mapped_column(BigInteger)
+    channel_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    channel_name: Mapped[str] = mapped_column(String(255))
+    thread_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    thread_name: Mapped[str | None] = mapped_column(String(255))
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, index=True)
+    edited_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
 
 
 class Chunk(Base):
