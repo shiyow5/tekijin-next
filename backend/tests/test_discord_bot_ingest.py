@@ -436,3 +436,21 @@ def test_reread_forgets_the_message_and_rewinds_its_stream() -> None:
     assert batcher.take_rewinds() == {77: 49}
     batcher.add({"message_id": 50, "channel_id": 10, "thread_id": 77}, history=True)
     assert batcher.pending == 1
+
+
+def test_backfill_flushes_through_the_given_function() -> None:
+    """The bot holds back sending while paused after a reconnect (Codex #77)."""
+
+    calls: list = []
+
+    async def paused_flush() -> None:
+        calls.append("held")
+
+    sent = _Recorder()
+    batcher = Batcher(sent, _Recorder(), max_batch=1)
+    channel = _History(10, [_message(5, channel=_channel(10)), _message(6, channel=_channel(10))])
+    asyncio.run(
+        backfill([channel], cursors={}, batcher=batcher, excluded=set(), flush=paused_flush)
+    )
+    assert calls == ["held", "held"]
+    assert sent.calls == [] and batcher.pending == 2

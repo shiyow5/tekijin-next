@@ -58,6 +58,8 @@ _BACKEND_TIMEOUT_S = 14 * 60.0
 _FLUSH_INTERVAL_S = 10.0
 # How long to wait before asking the backend again where history left off.
 _CURSOR_RETRY_S = 30.0
+# How long to wait before reading history again when part of it could not be listed.
+_HISTORY_RETRY_S = 60.0
 
 
 def _user(interaction: discord.Interaction) -> dict:
@@ -238,7 +240,18 @@ def main() -> None:
         if payload.guild_id == guild_id:
             batcher.delete(payload.message_ids)
 
-    async def read_history() -> None:
+    # Set when the Gateway reconnects while history is being read: another pass
+    # must follow, from the points where history left off as of the reconnect.
+    rerun = asyncio.Event()
+
+    async def flush_if_ready() -> None:
+        if ready.is_set():
+            await batcher.flush()
+
+    async def history_pass() -> bool:
+        """One pass over the server's history. False when part of it could not be
+        listed for a passing reason and the pass should be repeated."""
+
         stored = await fetch_until_ready(
             lambda: get_cursors(http, guild_id=guild_id, **backend), retry_after=_CURSOR_RETRY_S
         )
@@ -246,7 +259,7 @@ def main() -> None:
         guild = client.get_guild(guild_id)
         if guild is None:
             logger.warning("skipped reading history: the bot is not in the configured server")
-            return
+            return True
         # Where queued messages had to be refused, read again from before them.
         cursors = merge_cursors(stored, batcher.take_rewinds())
         me = guild.me
@@ -261,6 +274,7 @@ def main() -> None:
             *guild.forums,
         ]
         seen = {c.id for c in channels}
+        complete = True
         for channel in parents:
             # Public archives, then private ones: all of them when the bot may
             # manage threads, otherwise those it has joined.
@@ -274,8 +288,11 @@ def main() -> None:
                         if thread.id not in seen:
                             seen.add(thread.id)
                             channels.append(thread)
-                except discord.DiscordException:
+                except discord.Forbidden:
                     continue  # no permission for this listing
+                except discord.DiscordException:
+                    logger.warning("listing archived threads failed; will retry", exc_info=True)
+                    complete = False
         queued = await backfill(
             channels,
             cursors=cursors,
@@ -284,9 +301,21 @@ def main() -> None:
             after=discord.Object,
             # No permission is final; anything else (a timeout, a 5xx) is retried.
             is_permanent=lambda exc: isinstance(exc, discord.Forbidden),
+            flush=flush_if_ready,
         )
-        await batcher.flush()
+        await flush_if_ready()
         logger.info("read history: %d message(s) from %d channel(s)", queued, len(channels))
+        return complete
+
+    async def read_history() -> None:
+        while True:
+            complete = await history_pass()
+            if rerun.is_set():
+                rerun.clear()
+                continue
+            if complete:
+                return
+            await asyncio.sleep(_HISTORY_RETRY_S)
 
     @client.event
     async def on_ready() -> None:
@@ -297,20 +326,29 @@ def main() -> None:
         synced = await tree.sync(guild=guild)
         logger.info("logged in as %s; synced %d command(s)", client.user, len(synced))
         # on_ready fires again after a reconnect. The flush loop runs once; history
-        # is read again (unless still being read), which costs only what was missed.
-        # Sending waits until the point where history left off has been read again,
-        # so messages arriving now cannot move it past what was posted meanwhile.
+        # is read again, which costs only what was missed meanwhile.
         if "flush" not in tasks:
             tasks["flush"] = asyncio.create_task(
                 batcher.run(_FLUSH_INTERVAL_S, start_history, ready=ready)
             )
-        start_history(pause=True)
+        start_history(reconnected=True)
 
-    def start_history(pause: bool = False) -> None:
-        if "history" not in tasks or tasks["history"].done():
-            if pause:
-                ready.clear()
-            tasks["history"] = asyncio.create_task(read_history())
+    def start_history(reconnected: bool = False) -> None:
+        """Read history, or — after a reconnect — make sure it is read again.
+
+        After a reconnect nothing is sent until the points where history left off
+        have been read again, so messages arriving now cannot move them past what
+        was posted while the bot was away. If a pass is already running, another
+        one follows it rather than the request being dropped.
+        """
+
+        if reconnected:
+            ready.clear()
+        if "history" in tasks and not tasks["history"].done():
+            if reconnected:
+                rerun.set()
+            return
+        tasks["history"] = asyncio.create_task(read_history())
 
     client.run(settings.discord_bot_token, log_handler=None)
 

@@ -288,6 +288,7 @@ async def backfill(
     excluded: set[int],
     after: Callable[[int], Any] | None = None,
     is_permanent: Callable[[Exception], bool] = lambda exc: False,
+    flush: Callable[[], Awaitable[Any]] | None = None,
 ) -> int:
     """Read each channel's history after where ingestion left off.
 
@@ -297,9 +298,12 @@ async def backfill(
     ``discord.Object``). A channel the bot may not read (``is_permanent``) is
     skipped. Any other failure leaves a rewind for that channel, so it is read
     again from the same point once sending works: giving up would let live
-    messages move its cursor past the unread part. Returns how many messages were
-    queued.
+    messages move its cursor past the unread part. ``flush`` sends what has been
+    queued so far (default: the batcher's flush); the bot passes one that holds
+    back while sending is paused. Returns how many messages were queued.
     """
+
+    send = flush if flush is not None else batcher.flush
 
     queued = 0
     for channel in channels:
@@ -316,7 +320,7 @@ async def backfill(
                 batcher.add(payload, history=True)
                 queued += 1
                 if batcher.pending >= batcher.max_batch:
-                    await batcher.flush()
+                    await send()
         except Exception as exc:  # noqa: BLE001 - one channel must not stop the rest
             if is_permanent(exc):
                 logger.info("cannot read the history of channel %s; skipped", channel.id)
