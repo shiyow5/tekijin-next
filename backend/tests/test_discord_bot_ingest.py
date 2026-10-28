@@ -520,3 +520,35 @@ def test_post_stream_deletes() -> None:
     assert seen == [
         ("http://api/internal/discord/streams/delete", {"guild_id": "42", "stream_ids": [77]})
     ]
+
+
+def test_nothing_comes_back_into_a_deleted_stream() -> None:
+    """A late edit fetch must not recreate a deleted thread (Codex #77)."""
+
+    sent = _Recorder()
+    batcher = Batcher(sent, _Recorder(), send_stream_deletes=_Recorder())
+    token = batcher.begin_edit(5)
+    batcher.delete_streams([77, 11])
+    asyncio.run(batcher.flush())
+    batcher.add({"message_id": 5, "channel_id": 10, "thread_id": 77}, token=token)
+    batcher.add({"message_id": 6, "channel_id": 11, "thread_id": 90}, history=True)
+    batcher.add({"message_id": 7, "channel_id": 12, "thread_id": None})
+    asyncio.run(batcher.flush())
+    assert [m["message_id"] for call in sent.calls for m in call] == [7]
+
+
+def test_a_pause_stops_a_flush_between_batches() -> None:
+    """A reconnect clears the gate while a flush is under way (Codex #77)."""
+
+    gate = asyncio.Event()
+    gate.set()
+
+    async def send(items: list) -> bool:
+        gate.clear()  # the Gateway reconnects while this batch is in flight
+        return True
+
+    batcher = Batcher(send, _Recorder(), max_batch=1, gate=gate)
+    for n in (1, 2):
+        batcher.add({"message_id": n, "channel_id": 10, "thread_id": None})
+    assert asyncio.run(batcher.flush()) is False
+    assert batcher.pending == 1  # the second batch waits for the gate

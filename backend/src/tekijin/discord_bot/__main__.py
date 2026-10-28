@@ -98,11 +98,13 @@ def main() -> None:
     async def send_stream_deletes(stream_ids: list[int]) -> bool:
         return await post_stream_deletes(http, guild_id=guild_id, stream_ids=stream_ids, **backend)
 
-    batcher = Batcher(send_messages, send_deletes, send_stream_deletes=send_stream_deletes)
-    # Strong references: the event loop keeps only weak ones to running tasks.
-    tasks: dict[str, asyncio.Task] = {}
     # Clear until the bot knows where history left off; nothing is stored meanwhile.
     ready = asyncio.Event()
+    batcher = Batcher(
+        send_messages, send_deletes, send_stream_deletes=send_stream_deletes, gate=ready
+    )
+    # Strong references: the event loop keeps only weak ones to running tasks.
+    tasks: dict[str, asyncio.Task] = {}
 
     @tree.command(name="ask", description="TEKIJINに質問する")
     @app_commands.describe(question="質問の内容")

@@ -136,6 +136,7 @@ class Batcher:
         send_stream_deletes: SendDeletes | None = None,
         max_batch: int = 50,
         max_pending: int = 5000,
+        gate: asyncio.Event | None = None,
     ) -> None:
         self._send_messages = send_messages
         self._send_deletes = send_deletes
@@ -149,6 +150,10 @@ class Batcher:
         # message id -> its latest live generation (0: never seen live).
         self._generations: OrderedDict[int, int] = OrderedDict()
         self._counter = 0
+        # Channels and threads deleted in Discord: nothing from them is taken again.
+        self._deleted_streams: set[int] = set()
+        # Sending stops, even between the batches of one flush, while this is clear.
+        self._gate = gate
         self._lock = asyncio.Lock()
 
     @property
@@ -176,6 +181,10 @@ class Batcher:
         from history (``history``)."""
 
         message_id = int(payload["message_id"])
+        if stream_id(payload) in self._deleted_streams or (
+            payload["channel_id"] in self._deleted_streams
+        ):
+            return  # its channel or thread is gone (a fetch that came back late)
         if history and message_id in self._generations:
             return  # a snapshot older than what was seen live
         if token is not None and self._generation(message_id) != token:
@@ -210,6 +219,7 @@ class Batcher:
             self._messages,
             lambda item: stream_id(item[1]) not in ids and item[1]["channel_id"] not in ids,
         )
+        self._deleted_streams.update(ids)
         self._streams.extend((0, stream) for stream in ids)
         for stream in ids:
             self._rewinds.pop(stream, None)
@@ -261,6 +271,8 @@ class Batcher:
         message_id_of: Callable[[Any], int] | None,
     ) -> bool:
         while queue:
+            if self._gate is not None and not self._gate.is_set():
+                return False  # paused (after a reconnect); the rest waits
             batch = [queue.popleft() for _ in range(min(self._max_batch, len(queue)))]
             if await send([item for _, item in batch]):
                 continue
@@ -293,7 +305,10 @@ class Batcher:
             if ready is not None and not ready.is_set():
                 continue
             if not await self.flush():
-                logger.warning("could not forward %d message change(s); will retry", self.pending)
+                if ready is None or ready.is_set():
+                    logger.warning(
+                        "could not forward %d message change(s); will retry", self.pending
+                    )
             elif self._rewinds and on_rewind is not None:
                 on_rewind()
 
