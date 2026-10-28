@@ -284,9 +284,14 @@ def main() -> None:
         cursors = merge_cursors(stored, batcher.take_rewinds())
         me = guild.me
         # Text channels, and the text chat every voice and stage channel has.
+        candidates: list[discord.abc.GuildChannel] = [
+            *guild.text_channels,
+            *guild.voice_channels,
+            *guild.stage_channels,
+        ]
         channels: list = [
             c
-            for c in [*guild.text_channels, *guild.voice_channels, *guild.stage_channels]
+            for c in candidates
             if c.permissions_for(me).read_message_history and c.permissions_for(me).view_channel
         ]
         channels.extend(guild.threads)
