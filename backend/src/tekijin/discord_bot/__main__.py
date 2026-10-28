@@ -339,6 +339,10 @@ def main() -> None:
 
     @client.event
     async def on_ready() -> None:
+        # Pause sending before anything else: during the awaits below, a new
+        # message could otherwise be stored and move the point where history
+        # left off past what was posted while the bot was away.
+        ready.clear()
         # Only the configured server is served (#66), so sync there only: a
         # guild-scoped sync also shows the commands immediately.
         guild = discord.Object(id=guild_id)

@@ -87,7 +87,9 @@ def edit_action(message: Any, excluded: set[int]) -> tuple[str, Any] | None:
     payload = message_payload(message)
     if payload is not None:
         return None if is_excluded(payload, excluded) else ("upsert", payload)
-    if message.guild is None:
+    if message.guild is None or message.author.bot:
+        return None
+    if message.type.name not in _CONVERSATION_TYPES:
         return None
     return ("delete", message.id)
 
@@ -210,6 +212,16 @@ class Batcher:
             generation = token if token is not None else self._bump(message_id)
             self._discard(message_id)
             self._deletes.append((generation, message_id))
+
+    def delete_from_history(self, message_id: int) -> None:
+        """History shows the message without text (an edit removed it while the
+        bot was not watching). Like any history snapshot, it never overrides a
+        message seen live."""
+
+        if message_id in self._generations:
+            return
+        self._discard(message_id)
+        self._deletes.append((0, message_id))
 
     def delete_streams(self, stream_ids: Iterable[int]) -> None:
         """A channel or thread was deleted: forget everything stored from it."""
@@ -390,10 +402,15 @@ async def backfill(
         start = after(cursor) if (cursor is not None and after is not None) else cursor
         try:
             async for message in channel.history(limit=None, after=start, oldest_first=True):
-                payload = message_payload(message)
-                if payload is None or is_excluded(payload, excluded):
+                action = edit_action(message, excluded)
+                if action is None:
                     continue
-                batcher.add(payload, history=True)
+                kind, value = action
+                if kind == "delete":
+                    # Its text is gone; if it was stored before, it must go too.
+                    batcher.delete_from_history(value)
+                    continue
+                batcher.add(value, history=True)
                 queued += 1
                 if batcher.pending >= batcher.max_batch:
                     await send()

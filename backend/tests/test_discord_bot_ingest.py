@@ -555,3 +555,21 @@ def test_a_pause_stops_a_flush_between_batches() -> None:
         batcher.add({"message_id": n, "channel_id": 10, "thread_id": None})
     assert asyncio.run(batcher.flush()) is False
     assert batcher.pending == 1  # the second batch waits for the gate
+
+
+def test_backfill_removes_text_an_edit_took_away() -> None:
+    """Recovery reads the message after its text was removed (Codex #77)."""
+
+    deleted = _Recorder()
+    batcher = Batcher(_Recorder(), deleted)
+    batcher.add({"message_id": 9, "channel_id": 10, "thread_id": None})
+    batcher.reread(10, 9)  # the edit could not be fetched
+    asyncio.run(batcher.flush())
+    channel = _History(10, [_message(9, content="", channel=_channel(10)), _message(8, bot=True)])
+    asyncio.run(backfill([channel], cursors={}, batcher=batcher, excluded=set()))
+    asyncio.run(batcher.flush())
+    assert deleted.calls == [[9]]
+    # A message seen live is not overridden by such a snapshot.
+    batcher.add({"message_id": 20, "channel_id": 10, "thread_id": None})
+    batcher.delete_from_history(20)
+    assert batcher.pending == 1

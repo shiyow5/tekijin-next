@@ -20,6 +20,7 @@ from tekijin.api.service import AgentService
 from tekijin.auth.deps import require_principal
 from tekijin.auth.principal import Principal
 from tekijin.config import get_settings
+from tekijin.data.conversations import DISCORD, delete_conversation
 from tekijin.data.db import session_scope
 from tekijin.data.sources import (
     MANUAL,
@@ -212,5 +213,9 @@ def delete_source(
             raise HTTPException(status_code=404, detail="資料が見つかりません。")
         if not principal.is_admin and item.author_id != principal.employee_id:
             raise HTTPException(status_code=403, detail="追加した本人だけが削除できます。")
-        delete_source_item(session, item_id=item_id, org_id=org_id)
+        if item.provider == DISCORD:
+            # Its messages go too, or the next message would rebuild it (#76).
+            delete_conversation(session, org_id=org_id, external_id=item.external_id)
+        else:
+            delete_source_item(session, item_id=item_id, org_id=org_id)
     return SourceDeleteResponse()

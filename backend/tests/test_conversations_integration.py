@@ -16,6 +16,7 @@ from sqlalchemy import select, text
 from tekijin.data.conversations import (
     IncomingMessage,
     channel_cursors,
+    delete_conversation,
     delete_messages,
     delete_streams,
     ingest_messages,
@@ -214,3 +215,17 @@ def test_deleting_a_channel_takes_its_threads_and_days(engine, fake_embedder, or
         session.commit()
         assert deleted == 2
         assert set(_items(session)) == {"channel:11:2026-10-28"}
+
+
+def test_deleting_a_conversation_takes_its_messages(engine, fake_embedder, org_id) -> None:
+    """Deleted from the web, a conversation must not come back (Codex #77)."""
+
+    with get_sessionmaker(engine)() as session:
+        _ingest(session, fake_embedder, org_id, [_msg(9001, "消したい", at=NOON)])
+        session.commit()
+        assert delete_conversation(session, org_id=org_id, external_id="channel:10:2026-10-28") == 1
+        session.commit()
+        assert _items(session) == {}
+        _ingest(session, fake_embedder, org_id, [_msg(9002, "新しい", at=NOON)])
+        session.commit()
+        assert _items(session)["channel:10:2026-10-28"].body == "アリス: 新しい"

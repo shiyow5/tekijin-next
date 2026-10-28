@@ -216,6 +216,29 @@ def delete_streams(
     )
 
 
+def delete_conversation(session: Session, *, org_id: int, external_id: str) -> int:
+    """Delete a conversation's stored messages along with the conversation itself.
+
+    Deleting only the ``source_items`` row would not last: the next message on
+    that day (or in that thread) rebuilds the conversation from every stored
+    message. Returns how many messages were deleted.
+    """
+
+    rows = session.scalars(
+        select(ChannelMessage).where(ChannelMessage.org_id == org_id, *_key_filter(external_id))
+    ).all()
+    for row in rows:
+        session.delete(row)
+    session.execute(
+        delete(SourceItem).where(
+            SourceItem.org_id == org_id,
+            SourceItem.provider == DISCORD,
+            SourceItem.external_id == external_id,
+        )
+    )
+    return len(rows)
+
+
 def channel_cursors(session: Session, *, org_id: int) -> dict[int, int]:
     """The last stored message id per channel or thread, where history resumes."""
 
