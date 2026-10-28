@@ -17,6 +17,7 @@ import { PageBackLink } from "@/components/PageBackLink";
 import { ApiError, deleteSource, getSources, postSource } from "@/lib/api-client";
 import type { SourceCreateResponse, SourceItem } from "@/lib/api-types";
 import { formatDateJst } from "@/lib/datetime";
+import Link from "next/link";
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from "react";
 
 // Mirrors the API's limit (api/source_routes.py).
@@ -68,7 +69,11 @@ function SourceRow({
   return (
     <li className="flex flex-col gap-xs rounded-xl border border-outline-variant bg-surface-container-lowest p-md">
       <div className="flex items-start justify-between gap-sm">
-        <h3 className="min-w-0 break-words font-bold text-base text-on-surface">{title}</h3>
+        <h3 className="min-w-0 break-words font-bold text-base text-on-surface">
+          <Link href={`/sources/${item.id}`} className="hover:underline">
+            {title}
+          </Link>
+        </h3>
         {item.can_delete ? (
           <button
             type="button"

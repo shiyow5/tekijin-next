@@ -770,6 +770,11 @@ export interface SourceItem {
   can_delete: boolean;
 }
 
+/** GET /sources/{id} — one source with its full body (#74). */
+export interface SourceDetail extends SourceItem {
+  body: string;
+}
+
 export interface SourceListResponse {
   items: SourceItem[];
   /** All of the organization's sources, for paging past one response. */

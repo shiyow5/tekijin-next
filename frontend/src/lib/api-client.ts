@@ -53,6 +53,7 @@ import type {
   SlackUnlinkResponse,
   SourceCreateRequest,
   SourceCreateResponse,
+  SourceDetail,
   SourceListResponse,
   TopicVocabularyResponse,
 } from "@/lib/api-types";
@@ -680,4 +681,9 @@ export function postSource(
 /** DELETE /sources/{id} — only the member who added it (or the admin) may (#72). */
 export function deleteSource(id: number, options: RequestOptions = {}): Promise<unknown> {
   return deleteJson<unknown>(`/sources/${id}`, options);
+}
+
+/** GET /sources/{id} — one of the organization's sources with its body (#74). */
+export function getSource(id: number, options: RequestOptions = {}): Promise<SourceDetail> {
+  return getJson<SourceDetail>(`/sources/${id}`, options);
 }

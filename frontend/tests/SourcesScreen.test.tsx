@@ -57,6 +57,10 @@ describe("SourcesScreen (#72)", () => {
     render(<SourcesScreen />);
 
     expect(await screen.findByText("会計の引継ぎ")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "会計の引継ぎ" })).toHaveAttribute(
+      "href",
+      "/sources/1",
+    );
     expect(screen.getByText("（題名なし）")).toBeInTheDocument();
     expect(screen.getByText(/アリス/)).toBeInTheDocument();
     const link = screen.getByRole("link", { name: "元の文書を開く" });
