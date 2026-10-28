@@ -379,7 +379,12 @@ def test_add_stores_a_note_and_resending_a_url_updates_it(
 
     client = _bot_client(engine, fake_embedder)
     user = _join(client)
-    note = {**user, "title": "会計の引継ぎ", "text": "通帳 印鑑 部室 金庫", "url": "https://ex.com/a"}
+    note = {
+        **user,
+        "title": "会計の引継ぎ",
+        "text": "通帳 印鑑 部室 金庫",
+        "url": "https://ex.com/a",
+    }
     first = client.post(ADD, json=note, headers=HEADERS).json()
     assert first == {"status": "added", "chunks": 1}
     same = client.post(ADD, json=note, headers=HEADERS).json()
