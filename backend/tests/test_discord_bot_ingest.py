@@ -270,7 +270,9 @@ def test_backfill_rereads_a_channel_after_a_passing_failure() -> None:
 
     batcher = Batcher(_Recorder(), _Recorder())
     asyncio.run(
-        backfill([Flaky(10, []), Flaky(11, [])], cursors={"10": 40}, batcher=batcher, excluded=set())
+        backfill(
+            [Flaky(10, []), Flaky(11, [])], cursors={"10": 40}, batcher=batcher, excluded=set()
+        )
     )
     assert batcher.take_rewinds() == {10: 40, 11: 0}
     # Rewound to 0 = read from the start, even if a live message stored a cursor since.
