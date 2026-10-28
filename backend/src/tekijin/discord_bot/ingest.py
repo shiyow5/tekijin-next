@@ -292,7 +292,7 @@ class Batcher:
             current = [
                 (generation, item)
                 for generation, item in batch
-                if message_id_of is None or self._generation(message_id_of(item)) == generation
+                if message_id_of is None or not self._overtaken(message_id_of(item), generation)
             ]
             queue.extendleft(reversed(current))
             return False
@@ -326,6 +326,14 @@ class Batcher:
 
     def _generation(self, message_id: int) -> int:
         return self._generations.get(message_id, 0)
+
+    def _overtaken(self, message_id: int, generation: int) -> bool:
+        """A newer change replaced this operation. A message whose generation was
+        forgotten (beyond the memory limit) had no newer change since: one would
+        have brought it back to the front."""
+
+        latest = self._generations.get(message_id)
+        return latest is not None and latest != generation
 
     def _bump(self, message_id: int) -> int:
         self._counter += 1

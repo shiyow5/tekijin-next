@@ -573,3 +573,24 @@ def test_backfill_removes_text_an_edit_took_away() -> None:
     batcher.add({"message_id": 20, "channel_id": 10, "thread_id": None})
     batcher.delete_from_history(20)
     assert batcher.pending == 1
+
+
+def test_a_forgotten_generation_does_not_drop_a_queued_deletion() -> None:
+    """Many other messages must not make a queued deletion look overtaken (Codex #77)."""
+
+    import tekijin.discord_bot.ingest as ingest
+
+    deleted = _Recorder(fail=1)
+    batcher = Batcher(_Recorder(), deleted)
+    batcher.delete([1])
+    original = ingest._LIVE_MEMORY
+    ingest._LIVE_MEMORY = 3
+    try:
+        for n in range(100, 110):  # pushes message 1 out of the remembered generations
+            batcher.begin_edit(n)
+    finally:
+        ingest._LIVE_MEMORY = original
+    assert asyncio.run(batcher.flush()) is False
+    assert batcher.pending == 1
+    assert asyncio.run(batcher.flush()) is True
+    assert deleted.calls == [[1]]

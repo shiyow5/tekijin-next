@@ -283,9 +283,10 @@ def main() -> None:
         # Where queued messages had to be refused, read again from before them.
         cursors = merge_cursors(stored, batcher.take_rewinds())
         me = guild.me
+        # Text channels, and the text chat every voice and stage channel has.
         channels: list = [
             c
-            for c in guild.text_channels
+            for c in [*guild.text_channels, *guild.voice_channels, *guild.stage_channels]
             if c.permissions_for(me).read_message_history and c.permissions_for(me).view_channel
         ]
         channels.extend(guild.threads)
@@ -347,8 +348,12 @@ def main() -> None:
         # guild-scoped sync also shows the commands immediately.
         guild = discord.Object(id=guild_id)
         tree.copy_global_to(guild=guild)
-        synced = await tree.sync(guild=guild)
-        logger.info("logged in as %s; synced %d command(s)", client.user, len(synced))
+        try:
+            synced = await tree.sync(guild=guild)
+            logger.info("logged in as %s; synced %d command(s)", client.user, len(synced))
+        except discord.DiscordException:
+            # The commands stay as last synced; ingestion must still resume below.
+            logger.warning("could not sync the commands", exc_info=True)
         # on_ready fires again after a reconnect. The flush loop runs once; history
         # is read again, which costs only what was missed meanwhile.
         if "flush" not in tasks:
