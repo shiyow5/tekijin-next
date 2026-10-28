@@ -41,6 +41,7 @@ from tekijin.data.members import (
     resolve_discord_member,
     set_opted_out,
 )
+from tekijin.data.sources import upsert_source_item
 from tekijin.models.tables import Employee
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,34 @@ class DiscordMemberResponse(BaseModel):
     status: Literal["joined", "opted_out", "opted_in", "unlinked"]
     # ``join`` only: open within 10 minutes, once.
     login_url: str | None = None
+
+
+# ``/tekijin add`` (#70). Discord's option cap is 6000; a longer document is better
+# added from the web, which takes a file.
+_MAX_ADD_LENGTH = 4000
+
+
+class DiscordAddRequest(DiscordUser):
+    text: str = Field(min_length=1, max_length=_MAX_ADD_LENGTH)
+    title: str | None = Field(default=None, max_length=200)
+    url: str | None = Field(default=None, max_length=2000, pattern=r"^https?://\S+$")
+
+    @field_validator("text")
+    @classmethod
+    def _text_nonempty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def _title_or_none(cls, value: str | None) -> str | None:
+        return (value or "").strip() or None
+
+
+class DiscordAddResponse(BaseModel):
+    status: Literal["added", "updated", "unchanged", "not_joined", "unlinked"]
+    chunks: int = 0
 
 
 class DiscordRedeemRequest(BaseModel):
@@ -212,6 +241,45 @@ def discord_member(
         status="joined",
         login_url=f"{settings.discord_web_url.rstrip('/')}/login#discord_login={token}",
     )
+
+
+@router.post("/add", response_model=DiscordAddResponse)
+def discord_add(
+    req: DiscordAddRequest,
+    request: Request,
+    settings: Settings = Depends(require_bot_secret),
+) -> DiscordAddResponse:
+    """``/tekijin add``: store a note a joined member sends (#70).
+
+    With a URL, the note stands for the document there, so sending the same URL
+    again updates it. Without one, every add is a new note.
+    """
+
+    service: AgentService = request.app.state.agent_service
+    guild_id = _guild_for(settings, req)
+    if guild_id is None:
+        return DiscordAddResponse(status="unlinked")
+    now = service.now()
+    with session_scope(service.session_factory) as session:
+        org = get_or_create_org_for_guild(session, guild_id, name=f"Discord {guild_id}")
+        member = resolve_discord_member(
+            session, org, req.discord_user_id, display_name=req.display_name, now=now
+        )
+        if member.joined_at is None:
+            return DiscordAddResponse(status="not_joined")
+        result = upsert_source_item(
+            session,
+            service.embedder,
+            org_id=org.id,
+            provider="manual",
+            external_id=f"url:{req.url}" if req.url else f"note:{uuid.uuid4().hex}",
+            title=req.title,
+            body=req.text,
+            url=req.url,
+            author_id=member.id,
+            now=now,
+        )
+    return DiscordAddResponse(status=result.status, chunks=result.chunks)
 
 
 @login_router.post("/redeem", response_model=schemas.LoginResponse)

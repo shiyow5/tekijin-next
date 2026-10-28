@@ -285,6 +285,12 @@ class AgentService:
     def session_factory(self) -> sessionmaker[Session]:
         return self._session_factory
 
+    @property
+    def embedder(self) -> Embedder:
+        """The passage/query embedder, shared with ingestion (#70)."""
+
+        return self._embedder
+
     def now(self) -> dt.datetime:
         """The service's clock (injected in tests) — for route-level timestamps."""
 

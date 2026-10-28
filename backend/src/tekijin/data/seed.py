@@ -318,7 +318,10 @@ def _apply_schema_upgrades(engine: Engine) -> None:
                 "  cur text;\n"
                 "BEGIN\n"
                 "  FOREACH tbl IN ARRAY ARRAY['employee_profiles','questions',"
-                "'answers','documents','daily_reports'] LOOP\n"
+                "'answers','documents','daily_reports','chunks'] LOOP\n"
+                # #70: a table newer than the DB (chunks) is skipped; create_all
+                # builds it at the current width.
+                "    CONTINUE WHEN to_regclass(tbl) IS NULL;\n"
                 "    SELECT format_type(atttypid, atttypmod) INTO cur\n"
                 "      FROM pg_attribute\n"
                 "      WHERE attrelid = tbl::regclass AND attname = 'embedding'\n"

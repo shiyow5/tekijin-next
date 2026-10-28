@@ -1,4 +1,4 @@
-"""The bot's only call into the backend: ``POST /internal/discord/ask`` (Discord D1, #60)."""
+"""The bot's calls into the backend's ``/internal/discord/*`` endpoints (#60, #66, #70)."""
 
 from __future__ import annotations
 
@@ -52,6 +52,26 @@ async def member_backend(
     """``/tekijin join|optout|optin``. Same never-raise contract as :func:`ask_backend`."""
 
     return await _post(http, base_url, secret, "member", {**user, "action": action})
+
+
+async def add_backend(
+    http: httpx.AsyncClient,
+    *,
+    base_url: str,
+    secret: str,
+    user: dict[str, Any],
+    text: str,
+    title: str | None,
+    url: str | None,
+) -> dict[str, Any]:
+    """``/tekijin add`` (#70). Same never-raise contract as :func:`ask_backend`."""
+
+    body: dict[str, Any] = {**user, "text": text}
+    if title:
+        body["title"] = title
+    if url:
+        body["url"] = url
+    return await _post(http, base_url, secret, "add", body)
 
 
 async def _post(

@@ -15,11 +15,17 @@ import httpx
 from tekijin.channels.ask_summary import summarize_events
 from tekijin.discord_bot.backend import (
     SECRET_HEADER,
+    add_backend,
     ask_backend,
     discord_user,
     member_backend,
 )
-from tekijin.discord_bot.format import DISCORD_MESSAGE_LIMIT, format_member_reply, format_reply
+from tekijin.discord_bot.format import (
+    DISCORD_MESSAGE_LIMIT,
+    format_add_reply,
+    format_member_reply,
+    format_reply,
+)
 
 WEB = "https://tekijin.example/"
 REC = {
@@ -237,6 +243,41 @@ def test_member_backend_posts_the_action() -> None:
     assert asyncio.run(run()) == {"status": "opted_out"}
     assert seen["url"] == "http://api/internal/discord/member"
     assert seen["body"]["action"] == "optout"
+
+
+def test_add_backend_posts_the_note() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"status": "added", "chunks": 1})
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            return await add_backend(
+                http,
+                base_url="http://api",
+                secret="k",
+                user=USER,
+                text="本文",
+                title=None,
+                url="https://ex.com/a",
+            )
+
+    assert asyncio.run(run()) == {"status": "added", "chunks": 1}
+    assert seen["url"] == "http://api/internal/discord/add"
+    assert seen["body"]["text"] == "本文" and seen["body"]["url"] == "https://ex.com/a"
+    assert "title" not in seen["body"]
+
+
+def test_format_add_reply() -> None:
+    assert "追加しました" in format_add_reply({"status": "added", "chunks": 2})
+    assert "更新しました" in format_add_reply({"status": "updated", "chunks": 1})
+    assert "変わっていない" in format_add_reply({"status": "unchanged", "chunks": 1})
+    assert "/tekijin join" in format_add_reply({"status": "not_joined"})
+    assert "使えません" in format_add_reply({"status": "unlinked"})
+    assert "エラー" in format_add_reply({"kind": "error"})
 
 
 def test_format_member_reply() -> None:

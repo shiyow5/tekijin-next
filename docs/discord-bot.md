@@ -24,6 +24,7 @@ TEKIJINは、`TEKIJIN_DISCORD_GUILD_ID` で指定した1つのサーバーを1�
 | `/tekijin join` | 参加を登録し、Webにログインするための一回限りのURL(10分)を本人だけに返す |
 | `/tekijin optout` | 詳しい人として推薦される対象から外れる |
 | `/tekijin optin` | 推薦される対象に戻る |
+| `/tekijin add` | 文章をTEKIJINの知識に追加する。参加した人だけが使える。題名と、元の文書の置き場所のURLは任意で、同じURLを送り直すと更新になる(Issue #70) |
 
 ## 手順
 

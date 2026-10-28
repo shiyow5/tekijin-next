@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from tekijin.api.discord_routes import _with_document_preview
 from tekijin.app import create_app
@@ -60,6 +60,8 @@ def _cleanup_discord_members(engine):
         session.execute(text(f"DELETE FROM recommendations WHERE question_id IN ({asked})"))
         session.execute(text(f"DELETE FROM events WHERE question_id IN ({asked})"))
         session.execute(text(f"DELETE FROM questions WHERE asker_id IN ({members})"))
+        session.execute(text("DELETE FROM chunks"))
+        session.execute(text("DELETE FROM source_items"))
         session.execute(text("DELETE FROM identities"))
         session.execute(text("DELETE FROM employees WHERE org_id IS NOT NULL"))
         session.execute(text("DELETE FROM organizations"))
@@ -349,3 +351,76 @@ def test_first_contact_survives_a_concurrent_insert(engine) -> None:
     finally:
         winner.close()
         loser.close()
+
+
+ADD = "/internal/discord/add"
+
+
+def _join(client, discord_user_id: str = "3003") -> dict:
+    user = {"discord_user_id": discord_user_id, "display_name": "会計係"}
+    client.post(MEMBER, json={**user, "action": "join"}, headers=HEADERS)
+    return user
+
+
+def test_add_requires_a_joined_member(discord_env, engine, fake_embedder) -> None:
+    client = _bot_client(engine, fake_embedder)
+    body = {"discord_user_id": "3004", "display_name": "未参加", "text": "部室 鍵"}
+    assert client.post(ADD, json=body, headers=HEADERS).json() == {
+        "status": "not_joined",
+        "chunks": 0,
+    }
+
+
+def test_add_stores_a_note_and_resending_a_url_updates_it(
+    discord_env, engine, fake_embedder
+) -> None:
+    from tekijin.data.db import get_sessionmaker
+    from tekijin.models.tables import Chunk, SourceItem
+
+    client = _bot_client(engine, fake_embedder)
+    user = _join(client)
+    note = {
+        **user,
+        "title": "会計の引継ぎ",
+        "text": "通帳 印鑑 部室 金庫",
+        "url": "https://ex.com/a",
+    }
+    first = client.post(ADD, json=note, headers=HEADERS).json()
+    assert first == {"status": "added", "chunks": 1}
+    same = client.post(ADD, json=note, headers=HEADERS).json()
+    assert same["status"] == "unchanged"
+    changed = client.post(ADD, json={**note, "text": "通帳 印鑑 会計 ロッカー"}, headers=HEADERS)
+    assert changed.json()["status"] == "updated"
+    # Without a URL every add is a new note.
+    plain = {**user, "text": "合宿 宿 予約"}
+    assert client.post(ADD, json=plain, headers=HEADERS).json()["status"] == "added"
+    assert client.post(ADD, json=plain, headers=HEADERS).json()["status"] == "added"
+
+    with get_sessionmaker(engine)() as session:
+        items = session.scalars(select(SourceItem).order_by(SourceItem.id)).all()
+        assert len(items) == 3
+        assert items[0].url == "https://ex.com/a" and items[0].body == "通帳 印鑑 会計 ロッカー"
+        assert items[0].author_id == _member_by_discord_id(engine, "3003")
+        assert items[1].title is None
+        assert session.scalar(select(func.count()).select_from(Chunk)) == 3
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"text": "   "},
+        {"text": "x" * 4001},
+        {"text": "ok", "url": "javascript:alert(1)"},
+        {"text": "ok", "title": "t" * 201},
+    ],
+)
+def test_add_rejects_bad_input(discord_env, engine, fake_embedder, extra) -> None:
+    client = _bot_client(engine, fake_embedder)
+    user = _join(client)
+    assert client.post(ADD, json={**user, **extra}, headers=HEADERS).status_code == 422
+
+
+def test_add_refuses_another_server(discord_env, engine, fake_embedder) -> None:
+    client = _bot_client(engine, fake_embedder)
+    body = {"discord_user_id": "3005", "guild_id": "1", "text": "部室 鍵"}
+    assert client.post(ADD, json=body, headers=HEADERS).json()["status"] == "unlinked"
