@@ -16,6 +16,12 @@ import httpx
 from discord import app_commands
 
 from tekijin.config import get_settings
+from tekijin.discord_bot.attachments import (
+    AddInputError,
+    check_attachment,
+    compose_add,
+    decode_attachment,
+)
 from tekijin.discord_bot.backend import add_backend, ask_backend, discord_user, member_backend
 from tekijin.discord_bot.format import format_add_reply, format_member_reply, format_reply
 
@@ -88,26 +94,48 @@ def main() -> None:
     async def optin(interaction: discord.Interaction) -> None:
         await member_action(interaction, "optin")
 
-    @group.command(name="add", description="文章をTEKIJINの知識に追加する(参加した人のみ)")
+    @group.command(name="add", description="文章やファイルをTEKIJINの知識に追加する(参加した人のみ)")
     @app_commands.describe(
-        text="追加する文章(4000字まで)",
-        title="題名(任意)",
+        text="追加する文章(4000字まで。ファイルだけでもよい)",
+        file="テキスト(.txt)かMarkdown(.md)のファイル(200KBまで)",
+        title="題名(任意。無ければファイル名)",
         url="元の文書の置き場所のURL(任意。同じURLを送り直すと更新になる)",
     )
     async def add(
         interaction: discord.Interaction,
-        text: app_commands.Range[str, 1, 4000],
+        text: app_commands.Range[str, 1, 4000] | None = None,
+        file: discord.Attachment | None = None,
         title: app_commands.Range[str, 1, 200] | None = None,
         url: app_commands.Range[str, 1, 2000] | None = None,
     ) -> None:
         await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            file_text = None
+            if file is not None:
+                check_attachment(file.filename, file.size)
+                file_text = decode_attachment(await file.read())
+            body, note_title = compose_add(
+                text=text,
+                title=title,
+                file_name=file.filename if file is not None else None,
+                file_text=file_text,
+            )
+        except AddInputError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        except discord.HTTPException:
+            logger.warning("could not download the attachment", exc_info=True)
+            await interaction.followup.send(
+                "ファイルを読み込めませんでした。もう一度お試しください。", ephemeral=True
+            )
+            return
         result = await add_backend(
             http,
             base_url=settings.discord_backend_url,
             secret=settings.discord_bot_secret,
             user=_user(interaction),
-            text=text,
-            title=title,
+            text=body,
+            title=note_title,
             url=url,
         )
         await interaction.followup.send(format_add_reply(result), ephemeral=True)

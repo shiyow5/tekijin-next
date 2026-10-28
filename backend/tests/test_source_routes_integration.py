@@ -175,3 +175,16 @@ def test_the_list_pages(client, orgs) -> None:
     rest = client.get("/sources", params={"offset": 2, "limit": 2}, headers=alice).json()
     assert [i["id"] for i in rest["items"]] == [ids[0]]
     assert client.get("/sources", params={"limit": 101}, headers=alice).status_code == 422
+
+
+def test_detail_shows_the_body_within_the_organization(client, orgs) -> None:
+    item_id = client.post("/sources", json=NOTE, headers=_as(orgs["alice"])).json()["id"]
+
+    detail = client.get(f"/sources/{item_id}", headers=_as(orgs["bob"]))
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["body"] == "通帳 印鑑 金庫"
+    assert (body["title"], body["author_name"], body["can_delete"]) == ("会計の引継ぎ", "アリス", False)
+    assert client.get(f"/sources/{item_id}", headers=_as(orgs["alice"])).json()["can_delete"]
+    assert client.get(f"/sources/{item_id}", headers=_as(orgs["carol"])).status_code == 404
+    assert client.get("/sources/999999", headers=_as(orgs["alice"])).status_code == 404

@@ -409,7 +409,7 @@ def test_add_stores_a_note_and_resending_a_url_updates_it(
     "extra",
     [
         {"text": "   "},
-        {"text": "x" * 4001},
+        {"text": "x" * 20001},
         {"text": "ok", "url": "javascript:alert(1)"},
         {"text": "ok", "title": "t" * 201},
     ],

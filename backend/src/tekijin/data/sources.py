@@ -235,6 +235,26 @@ def list_source_items(
     ]
 
 
+def get_source_item(
+    session: Session, *, item_id: int, org_id: int
+) -> tuple[SourceItemSummary, str] | None:
+    """One item and its body, or ``None`` when it is not in this organization."""
+
+    item = session.get(SourceItem, item_id)
+    if item is None or item.org_id != org_id:
+        return None
+    summary = SourceItemSummary(
+        id=item.id,
+        provider=item.provider,
+        title=item.title,
+        url=item.url,
+        author_id=item.author_id,
+        updated_at=item.updated_at,
+        chunks=_count_chunks(session, item.id),
+    )
+    return summary, item.body
+
+
 def delete_source_item(session: Session, *, item_id: int, org_id: int) -> bool:
     """Delete one item and its chunks. False when it is not in this organization."""
 
