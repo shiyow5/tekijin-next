@@ -164,7 +164,7 @@ def test_out_of_scope_is_deflected(seed_counts, session, fake_embedder) -> None:
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1]))
     state = agent.invoke(_init("今日の天気とランチのおすすめを教えて"), _cfg("oos"))
     assert state["out_of_scope"] is True
-    assert "業務の範囲外" in state["answer"]
+    assert "お答えできません" in state["answer"]
     assert "recommendations" not in state or not state.get("recommendations")
 
 

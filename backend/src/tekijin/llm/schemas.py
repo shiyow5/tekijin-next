@@ -50,7 +50,7 @@ class IntentSchema(BaseModel):
     question_type: str = Field(
         default="製品QA", description="製品QA/見積/技術相談/事務手続き/雑談/業務外 のいずれか"
     )
-    out_of_scope: bool = Field(default=False, description="業務外・悪意ある入力なら true")
+    out_of_scope: bool = Field(default=False, description="組織と結びつかない雑談・悪意ある入力なら true")
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="意図理解の確信度")
     # #83: an explicitly requested location is a CONDITION to satisfy, not a
     # preference to add points for — C6 treats it as a filter. So it must be

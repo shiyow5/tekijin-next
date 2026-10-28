@@ -161,7 +161,7 @@ def decide_route(
         and people_conf < person_weak_sim
         and answer_conf < prior_answer_sim
     ):
-        reason = f"社内文書が強く該当（類似度 {document_conf:.2f}）。文書の場所を示します。"
+        reason = f"組織の文書が強く該当（類似度 {document_conf:.2f}）。文書の場所を示します。"
         return RouteDecision(DOCUMENT, reason, document_conf)
     if candidate_people:
         return RouteDecision(
