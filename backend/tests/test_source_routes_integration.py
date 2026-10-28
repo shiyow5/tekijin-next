@@ -155,7 +155,9 @@ def test_only_the_author_or_the_admin_can_replace_a_url(client, orgs) -> None:
     assert same.json()["status"] == "unchanged"
     assert client.delete(f"/sources/{item_id}", headers=_as(orgs["bob"])).status_code == 403
 
-    admin = client.post("/sources", json={**NOTE, "body": "管理者が直した"}, headers=_admin_headers())
+    admin = client.post(
+        "/sources", json={**NOTE, "body": "管理者が直した"}, headers=_admin_headers()
+    )
     assert admin.json()["status"] == "updated"
     listed = client.get("/sources", headers=_as(orgs["alice"])).json()["items"]
     assert listed[0]["author_name"] == "アリス" and listed[0]["can_delete"] is True
