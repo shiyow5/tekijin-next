@@ -109,7 +109,7 @@ def test_batcher_sends_in_batches_and_deletes_after_messages() -> None:
     sent, deleted = _Recorder(), _Recorder()
     batcher = Batcher(sent, deleted, max_batch=2)
     for n in range(5):
-        batcher.add({"message_id": n})
+        batcher.add({"message_id": n, "channel_id": 10, "thread_id": None})
     batcher.delete([9, 8])
 
     assert asyncio.run(batcher.flush()) is True
@@ -118,17 +118,20 @@ def test_batcher_sends_in_batches_and_deletes_after_messages() -> None:
     assert batcher.pending == 0
 
 
+MSG1 = {"message_id": 1, "channel_id": 10, "thread_id": None}
+
+
 def test_batcher_keeps_what_failed_for_the_next_flush() -> None:
     sent, deleted = _Recorder(fail=1), _Recorder()
     batcher = Batcher(sent, deleted, max_batch=10)
-    batcher.add({"message_id": 1})
+    batcher.add(MSG1)
     batcher.delete([2])
 
     assert asyncio.run(batcher.flush()) is False
     assert batcher.pending == 2
     assert deleted.calls == []  # deletions wait until the messages before them are in
     assert asyncio.run(batcher.flush()) is True
-    assert sent.calls == [[{"message_id": 1}]] and deleted.calls == [[2]]
+    assert sent.calls == [[MSG1]] and deleted.calls == [[2]]
 
 
 def test_a_full_queue_refuses_new_messages_and_remembers_where_to_reread() -> None:
