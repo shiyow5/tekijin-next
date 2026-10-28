@@ -133,6 +133,49 @@ class Identity(Base):
     linked_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class SourceItem(Base):
+    """One thing ingested from outside, whatever its origin (#70, R2).
+
+    ``provider`` says where it came from: ``manual`` (``/tekijin add`` or the web),
+    and later ``discord``, ``google``, ``notion``. ``external_id`` identifies it there,
+    so re-ingesting the same thing updates this row instead of adding a copy.
+    ``content_hash`` lets a re-send of an unchanged body skip re-embedding.
+    """
+
+    __tablename__ = "source_items"
+    __table_args__ = (
+        UniqueConstraint("org_id", "provider", "external_id", name="uq_source_items_external"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(16))
+    external_id: Mapped[str] = mapped_column(String(2048))
+    url: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str | None] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text)
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), index=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Chunk(Base):
+    """A passage of a :class:`SourceItem`, embedded on its own (#70, R2)."""
+
+    __tablename__ = "chunks"
+    __table_args__ = (UniqueConstraint("source_item_id", "seq", name="uq_chunks_seq"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    source_item_id: Mapped[int] = mapped_column(
+        ForeignKey("source_items.id", ondelete="CASCADE"), index=True
+    )
+    seq: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+
+
 class EmployeeProfile(Base):
     """Free-text self-description of an employee (one row per employee)."""
 

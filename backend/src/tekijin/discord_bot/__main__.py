@@ -1,6 +1,7 @@
 """Run the TEKIJIN Discord bot: ``python -m tekijin.discord_bot`` (Discord D1, #60).
 
-Registers one slash command, ``/ask``. Slash commands arrive over the Gateway as
+Registers ``/ask`` and the ``/tekijin`` group (``join``, ``optout``, ``optin``, ``add``).
+Slash commands arrive over the Gateway as
 interactions, so no privileged intent (MESSAGE_CONTENT) and no public URL are needed.
 The reply is ephemeral (only the asker sees it): a question can name customers or
 internal trouble, and the channel it was typed in may be wide.
@@ -15,8 +16,8 @@ import httpx
 from discord import app_commands
 
 from tekijin.config import get_settings
-from tekijin.discord_bot.backend import ask_backend, discord_user, member_backend
-from tekijin.discord_bot.format import format_member_reply, format_reply
+from tekijin.discord_bot.backend import add_backend, ask_backend, discord_user, member_backend
+from tekijin.discord_bot.format import format_add_reply, format_member_reply, format_reply
 
 logger = logging.getLogger("tekijin.discord_bot")
 
@@ -86,6 +87,30 @@ def main() -> None:
     @group.command(name="optin", description="詳しい人として推薦される対象に戻る")
     async def optin(interaction: discord.Interaction) -> None:
         await member_action(interaction, "optin")
+
+    @group.command(name="add", description="文章をTEKIJINの知識に追加する(参加した人のみ)")
+    @app_commands.describe(
+        text="追加する文章(4000字まで)",
+        title="題名(任意)",
+        url="元の文書の置き場所のURL(任意。同じURLを送り直すと更新になる)",
+    )
+    async def add(
+        interaction: discord.Interaction,
+        text: app_commands.Range[str, 1, 4000],
+        title: app_commands.Range[str, 1, 200] | None = None,
+        url: app_commands.Range[str, 1, 2000] | None = None,
+    ) -> None:
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        result = await add_backend(
+            http,
+            base_url=settings.discord_backend_url,
+            secret=settings.discord_bot_secret,
+            user=_user(interaction),
+            text=text,
+            title=title,
+            url=url,
+        )
+        await interaction.followup.send(format_add_reply(result), ephemeral=True)
 
     tree.add_command(group)
 

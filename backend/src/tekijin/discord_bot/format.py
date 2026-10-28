@@ -1,4 +1,4 @@
-"""Turn an ``/internal/discord/ask`` outcome into one Discord message (Discord D1, #60)."""
+"""Turn the backend's answers into Discord messages (#60, #66, #70)."""
 
 from __future__ import annotations
 
@@ -40,6 +40,25 @@ def format_member_reply(result: dict[str, Any]) -> str:
         )
     if status == "opted_in":
         return "あなたを、TEKIJINが詳しい人として推薦する対象に戻しました。"
+    if status == "unlinked":
+        return _FIXED_REPLIES["unlinked"]
+    return _FIXED_REPLIES["error"]
+
+
+def format_add_reply(result: dict[str, Any]) -> str:
+    """The reply to ``/tekijin add`` (#70)."""
+
+    status = result.get("status")
+    if status in ("added", "updated"):
+        verb = "追加しました" if status == "added" else "更新しました"
+        return (
+            f"TEKIJINの知識に{verb}({result.get('chunks', 0)}個の断片に分けました)。"
+            "質問への答えに使われるのは、検索に組み込む次の段階からです。"
+        )
+    if status == "unchanged":
+        return "同じ内容がすでに登録されています。中身は変わっていないので、そのままにしました。"
+    if status == "not_joined":
+        return "知識を追加するには、先に `/tekijin join` でTEKIJINに参加してください。"
     if status == "unlinked":
         return _FIXED_REPLIES["unlinked"]
     return _FIXED_REPLIES["error"]
