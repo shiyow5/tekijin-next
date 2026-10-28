@@ -409,3 +409,30 @@ def test_a_refused_live_message_can_come_back_from_history() -> None:
     asyncio.run(batcher.flush())
     batcher.add({"message_id": 2, "channel_id": 10, "thread_id": None}, history=True)
     assert batcher.pending == 1
+
+
+def test_a_refused_edit_comes_back_from_history() -> None:
+    """The edited message was seen live before; history must still update it (Codex #77)."""
+
+    sent = _Recorder()
+    batcher = Batcher(sent, _Recorder(), max_pending=1)
+    old = {"message_id": 1, "channel_id": 10, "thread_id": None, "content": "旧"}
+    batcher.add(old)
+    asyncio.run(batcher.flush())
+    batcher.add({"message_id": 2, "channel_id": 10, "thread_id": None})
+    batcher.add({**old, "content": "新"})  # refused: the queue is full
+    assert batcher.take_rewinds() == {10: 0}
+    asyncio.run(batcher.flush())
+
+    batcher.add({**old, "content": "新"}, history=True)
+    asyncio.run(batcher.flush())
+    assert sent.calls[-1] == [{**old, "content": "新"}]
+
+
+def test_reread_forgets_the_message_and_rewinds_its_stream() -> None:
+    batcher = Batcher(_Recorder(), _Recorder())
+    batcher.add({"message_id": 50, "channel_id": 10, "thread_id": 77})
+    batcher.reread(77, 50)
+    assert batcher.take_rewinds() == {77: 49}
+    batcher.add({"message_id": 50, "channel_id": 10, "thread_id": 77}, history=True)
+    assert batcher.pending == 1

@@ -208,8 +208,16 @@ def main() -> None:
                 payload.channel_id
             )
             message = await channel.fetch_message(payload.message_id)  # type: ignore[union-attr]
+        except discord.NotFound:
+            batcher.delete([payload.message_id])  # gone since the edit
+            return
+        except discord.Forbidden:
+            return  # the bot may not read this channel
         except discord.DiscordException:
+            # Passing trouble: read it from history once sending works again, or
+            # the text before the edit would stay searchable.
             logger.warning("could not read edited message %s", payload.message_id, exc_info=True)
+            batcher.reread(payload.channel_id, payload.message_id)
             return
         action = edit_action(message, excluded)
         if action is None:

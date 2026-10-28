@@ -167,8 +167,9 @@ class Batcher:
         _remove(self._deletes, lambda queued: queued == message_id)
         _remove(self._messages, lambda queued: queued["message_id"] == message_id)
         if len(self._messages) >= self._max_pending:
-            # Not remembered as seen live: reading history again must bring it back.
-            self.rewind(stream_id(payload), int(message_id) - 1)
+            # Read history again from just before it: what history then holds is
+            # the latest version, including an edit refused here.
+            self.reread(stream_id(payload), int(message_id))
             return
         self._messages.append(payload)
         if not history:
@@ -182,6 +183,16 @@ class Batcher:
         self._deletes.extend(ids)
         for message_id in ids:
             self._remember(message_id)
+
+    def reread(self, stream: int, message_id: int) -> None:
+        """A live change to ``message_id`` could not be taken: get it from history.
+
+        The message is forgotten as seen live, or history's version — newer than
+        what was stored — would be ignored as a stale snapshot.
+        """
+
+        self._live.pop(message_id, None)
+        self.rewind(stream, message_id - 1)
 
     def rewind(self, stream: int, after: int) -> None:
         """Read ``stream``'s history again from after message ``after`` (0: from the start)."""
