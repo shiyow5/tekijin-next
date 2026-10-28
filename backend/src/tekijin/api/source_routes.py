@@ -83,7 +83,9 @@ def _org_id(session: Session, principal: Principal) -> int:
     if principal.employee_id is not None:
         member = session.get(Employee, principal.employee_id)
         if member is None or member.org_id is None:
-            raise HTTPException(status_code=403, detail="組織に属していないため、資料を扱えません。")
+            raise HTTPException(
+                status_code=403, detail="組織に属していないため、資料を扱えません。"
+            )
         return member.org_id
     guild_id = get_settings().discord_guild_id
     org = (
@@ -109,11 +111,10 @@ def list_sources(
         org_id = _org_id(session, principal)
         items = list_source_items(session, org_id=org_id)
         author_ids = {i.author_id for i in items if i.author_id is not None}
-        names = dict(
-            session.execute(
-                select(Employee.id, Employee.name).where(Employee.id.in_(author_ids))
-            ).tuples()
-        )
+        rows = session.execute(
+            select(Employee.id, Employee.name).where(Employee.id.in_(author_ids))
+        ).all()
+        names = {member_id: name for member_id, name in rows}
     return SourceListResponse(
         items=[
             SourceListItem(
