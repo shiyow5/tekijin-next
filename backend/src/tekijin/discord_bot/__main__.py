@@ -248,12 +248,13 @@ def main() -> None:
         for channel in parents:
             # Public archives, then private ones: all of them when the bot may
             # manage threads, otherwise those it has joined.
-            listings = [{}, {"private": True}, {"private": True, "joined": True}]
-            for options in listings:
-                if options and not isinstance(channel, discord.TextChannel):
-                    break  # forum posts are never private threads
+            listings = [channel.archived_threads(limit=None)]
+            if isinstance(channel, discord.TextChannel):  # forum posts are never private
+                listings.append(channel.archived_threads(limit=None, private=True))
+                listings.append(channel.archived_threads(limit=None, private=True, joined=True))
+            for listing in listings:
                 try:
-                    async for thread in channel.archived_threads(limit=None, **options):
+                    async for thread in listing:
                         if thread.id not in seen:
                             seen.add(thread.id)
                             channels.append(thread)
