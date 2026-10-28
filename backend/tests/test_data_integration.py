@@ -701,7 +701,7 @@ def test_apply_schema_upgrades_migrates_old_db(database_url: str) -> None:
     """
 
     schema = "mig_upgrade_test"
-    tables = ("employee_profiles", "questions", "answers", "documents")
+    tables = ("employee_profiles", "questions", "answers", "documents", "chunks")
 
     admin = get_engine(database_url)
     try:
@@ -827,6 +827,10 @@ def test_apply_schema_upgrades_migrates_old_db(database_url: str) -> None:
         _apply_schema_upgrades(eng)
         with eng.connect() as conn:
             assert embedding_type(conn, "documents") == "vector(2048)"
+        # #70: a DB older than the chunks table is upgraded without error.
+        with eng.begin() as conn:
+            conn.execute(text("DROP TABLE chunks"))
+        _apply_schema_upgrades(eng)
     finally:
         eng.dispose()
         admin = get_engine(database_url)

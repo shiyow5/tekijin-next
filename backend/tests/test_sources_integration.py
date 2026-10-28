@@ -14,6 +14,7 @@ from sqlalchemy import func, select, text
 
 from tekijin.data.db import get_sessionmaker
 from tekijin.data.sources import (
+    content_hash,
     delete_source_item,
     list_source_items,
     search_chunks,
@@ -156,3 +157,32 @@ def test_a_blank_body_is_rejected(engine, fake_embedder, org_and_member):
     org_id, _, _ = org_and_member
     with get_sessionmaker(engine)() as session, pytest.raises(ValueError):
         _add(session, fake_embedder, org_id, body=" \n ")
+
+
+def test_a_concurrent_update_cannot_mix_two_requests(engine, fake_embedder, org_and_member):
+    """Another request updates the item while this one is embedding (Codex #71)."""
+
+    org_id, _, _ = org_and_member
+    factory = get_sessionmaker(engine)
+    with factory() as session:
+        _add(session, fake_embedder, org_id, title="元の題名", body="元の 本文")
+        session.commit()
+
+    class RacingEmbedder:
+        """Commits a title-only update from another session mid-embedding."""
+
+        def encode(self, texts, *, kind="passage"):
+            with factory() as other:
+                _add(other, fake_embedder, org_id, title="別の題名", body="元の 本文")
+                other.commit()
+            return fake_embedder.encode(texts, kind=kind)
+
+    with factory() as session:
+        result = _add(session, RacingEmbedder(), org_id, title="元の題名", body="新しい 本文")
+        session.commit()
+        assert result.status == "updated"
+        item = session.get(SourceItem, result.item_id)
+        assert (item.title, item.body) == ("元の題名", "新しい 本文")
+        assert item.content_hash == content_hash("元の題名", "新しい 本文")
+        chunks = session.scalars(select(Chunk.text).where(Chunk.source_item_id == item.id)).all()
+        assert chunks == ["新しい 本文"]

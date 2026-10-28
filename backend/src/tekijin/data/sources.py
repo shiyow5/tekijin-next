@@ -89,6 +89,14 @@ def upsert_source_item(
     status: UpsertStatus = "updated"
     if item is None:
         item, status = _insert(session, org_id, provider, external_id), "added"
+    # Lock and reload the row before writing. A concurrent update of the same item
+    # waits here, and every field below is compared with the row as it is NOW: had
+    # the stale copy read above been kept, a field another request changed in the
+    # meantime would look unchanged to the ORM and survive, leaving a title from one
+    # request next to the body, hash and chunks of another.
+    item = _lock(session, item.id)
+    if item.content_hash == digest:
+        return UpsertResult("unchanged", item.id, _count_chunks(session, item.id))
     item.title, item.body, item.url = title, body, url
     item.author_id, item.content_hash, item.updated_at = author_id, digest, now
     session.execute(delete(Chunk).where(Chunk.source_item_id == item.id))
@@ -108,6 +116,15 @@ def _find(session: Session, org_id: int, provider: str, external_id: str) -> Sou
             SourceItem.external_id == external_id,
         )
     ).first()
+
+
+def _lock(session: Session, item_id: int) -> SourceItem:
+    return session.scalars(
+        select(SourceItem)
+        .where(SourceItem.id == item_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one()
 
 
 def _insert(session: Session, org_id: int, provider: str, external_id: str) -> SourceItem:
