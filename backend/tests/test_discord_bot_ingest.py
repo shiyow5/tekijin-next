@@ -11,7 +11,15 @@ from types import SimpleNamespace
 import httpx
 
 from tekijin.discord_bot.backend import SECRET_HEADER, get_cursors, post_deletes, post_messages
-from tekijin.discord_bot.ingest import Batcher, backfill, is_excluded, message_payload, parse_ids
+from tekijin.discord_bot.ingest import (
+    Batcher,
+    backfill,
+    edit_action,
+    is_excluded,
+    merge_cursors,
+    message_payload,
+    parse_ids,
+)
 
 AT = dt.datetime(2026, 10, 28, 3, 0, tzinfo=dt.UTC)
 
@@ -116,11 +124,70 @@ def test_batcher_keeps_what_failed_for_the_next_flush() -> None:
     assert sent.calls == [[{"message_id": 1}]] and deleted.calls == [[2]]
 
 
-def test_batcher_drops_the_oldest_beyond_its_limit() -> None:
-    batcher = Batcher(_Recorder(), _Recorder(), max_batch=10, max_pending=3)
-    for n in range(5):
-        batcher.add({"message_id": n})
-    assert batcher.pending == 3
+def test_a_full_queue_refuses_new_messages_and_remembers_where_to_reread() -> None:
+    """Dropping a message must stay recoverable from history (Codex #77)."""
+
+    batcher = Batcher(_Recorder(), _Recorder(), max_batch=10, max_pending=2)
+    for n in (5, 6):
+        batcher.add({"message_id": n, "channel_id": 10, "thread_id": None})
+    batcher.add({"message_id": 9, "channel_id": 10, "thread_id": None})
+    batcher.add({"message_id": 8, "channel_id": 10, "thread_id": None})
+    batcher.add({"message_id": 30, "channel_id": 10, "thread_id": 77})
+    assert batcher.pending == 2 and batcher.needs_rewind
+    assert batcher.take_rewinds() == {10: 7, 77: 29}
+    assert not batcher.needs_rewind
+    # Deletions are never refused.
+    batcher.delete(range(100))
+    assert batcher.pending == 102
+
+
+def test_messages_added_while_sending_are_not_lost() -> None:
+    """A batch is taken off the queue before it is sent (Codex #77)."""
+
+    holder: dict = {}
+
+    async def send(items: list) -> bool:
+        holder.setdefault("calls", []).append([m["message_id"] for m in items])
+        if len(holder["calls"]) == 1:
+            holder["batcher"].add({"message_id": 4, "channel_id": 10, "thread_id": None})
+        return True
+
+    batcher = Batcher(send, _Recorder(), max_batch=2, max_pending=3)
+    holder["batcher"] = batcher
+    for n in (1, 2, 3):
+        batcher.add({"message_id": n, "channel_id": 10, "thread_id": None})
+
+    assert asyncio.run(batcher.flush()) is True
+    assert holder["calls"] == [[1, 2], [3, 4]]
+
+
+def test_run_flushes_and_asks_to_reread_after_refusals() -> None:
+    sent = _Recorder()
+    batcher = Batcher(sent, _Recorder(), max_pending=1)
+    batcher.add({"message_id": 1, "channel_id": 10, "thread_id": None})
+    batcher.add({"message_id": 2, "channel_id": 10, "thread_id": None})
+    rereads: list = []
+
+    async def run_once() -> None:
+        task = asyncio.create_task(batcher.run(0.01, lambda: rereads.append(True)))
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+    asyncio.run(run_once())
+    assert sent.calls[0] == [{"message_id": 1, "channel_id": 10, "thread_id": None}]
+    assert rereads
+
+
+def test_merge_cursors_moves_back_only_stored_streams() -> None:
+    assert merge_cursors({"10": 9, "11": 3}, {10: 4, 11: 7, 12: 1}) == {"10": 4, "11": 3}
+
+
+def test_edit_action() -> None:
+    assert edit_action(_message(content="直した"), set())[0] == "upsert"
+    # Text removed by the edit: what was stored must go.
+    assert edit_action(_message(7, content=""), set()) == ("delete", 7)
+    assert edit_action(_message(content="x"), {10}) is None
+    assert edit_action(_message(content="", guild=None), set()) is None
 
 
 class _History:

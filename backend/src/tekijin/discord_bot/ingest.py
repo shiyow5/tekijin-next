@@ -65,13 +65,57 @@ def is_excluded(payload: dict[str, Any], excluded: set[int]) -> bool:
     return payload["channel_id"] in excluded or payload.get("thread_id") in excluded
 
 
+def stream_id(payload: dict[str, Any]) -> int:
+    """The channel or thread whose history a message belongs to."""
+
+    thread_id = payload.get("thread_id")
+    return int(thread_id) if thread_id is not None else int(payload["channel_id"])
+
+
+def edit_action(message: Any, excluded: set[int]) -> tuple[str, Any] | None:
+    """What an edited message means for the backend.
+
+    An edit that leaves text is stored again. An edit that removes all the text
+    (an attachment kept, say) must remove what was stored, or the old words stay
+    searchable; deleting an id that was never stored is harmless.
+    """
+
+    payload = message_payload(message)
+    if payload is not None:
+        return None if is_excluded(payload, excluded) else ("upsert", payload)
+    if message.guild is None:
+        return None
+    return ("delete", message.id)
+
+
+def merge_cursors(stored: dict[str, int], rewinds: dict[int, int]) -> dict[str, int]:
+    """The backend's cursors, moved back where queued messages were dropped.
+
+    A stream with no stored cursor is read from its beginning anyway.
+    """
+
+    merged = dict(stored)
+    for stream, rewind in rewinds.items():
+        key = str(stream)
+        if key in merged:
+            merged[key] = min(merged[key], rewind)
+    return merged
+
+
 class Batcher:
     """Collects messages and deletions and sends them to the backend in batches.
 
     Sending one request per message would rebuild a conversation for every line
-    typed; batching every few seconds rebuilds it once. What fails to send stays
-    queued for the next flush. The queue is bounded: if the backend is down for
-    long, the oldest messages are dropped (a restart reads them back from history).
+    typed; batching every few seconds rebuilds it once. Each batch is taken off
+    the queue before it is sent and put back if sending fails, so messages that
+    arrive meanwhile are never mistaken for the batch.
+
+    The message queue is bounded. When the backend is down long enough to fill it,
+    new messages are refused and the batcher remembers, per channel or thread, to
+    read history again from just before the first refused one (:meth:`take_rewinds`).
+    The backend's cursor alone cannot bring them back: a later message that did get
+    stored moves the cursor past them. Deletions are kept unbounded — they are only
+    ids, and history cannot replay a deletion.
     """
 
     def __init__(
@@ -85,8 +129,10 @@ class Batcher:
         self._send_messages = send_messages
         self._send_deletes = send_deletes
         self._max_batch = max_batch
-        self._messages: deque[dict[str, Any]] = deque(maxlen=max_pending)
-        self._deletes: deque[int] = deque(maxlen=max_pending)
+        self._max_pending = max_pending
+        self._messages: deque[dict[str, Any]] = deque()
+        self._deletes: deque[int] = deque()
+        self._rewinds: dict[int, int] = {}
         self._lock = asyncio.Lock()
 
     @property
@@ -97,11 +143,26 @@ class Batcher:
     def max_batch(self) -> int:
         return self._max_batch
 
+    @property
+    def needs_rewind(self) -> bool:
+        return bool(self._rewinds)
+
     def add(self, payload: dict[str, Any]) -> None:
+        if len(self._messages) >= self._max_pending:
+            stream = stream_id(payload)
+            before = int(payload["message_id"]) - 1
+            self._rewinds[stream] = min(self._rewinds.get(stream, before), before)
+            return
         self._messages.append(payload)
 
     def delete(self, message_ids: Iterable[int]) -> None:
         self._deletes.extend(message_ids)
+
+    def take_rewinds(self) -> dict[int, int]:
+        """Where history must be read again, cleared once taken."""
+
+        rewinds, self._rewinds = self._rewinds, {}
+        return rewinds
 
     async def flush(self) -> bool:
         """Send everything queued. False when the backend refused or was away.
@@ -111,29 +172,29 @@ class Batcher:
         """
 
         async with self._lock:
-            while self._messages:
-                batch = [
-                    self._messages[i] for i in range(min(self._max_batch, len(self._messages)))
-                ]
-                if not await self._send_messages(batch):
-                    return False
-                for _ in batch:
-                    self._messages.popleft()
-            while self._deletes:
-                ids = [self._deletes[i] for i in range(min(self._max_batch, len(self._deletes)))]
-                if not await self._send_deletes(ids):
-                    return False
-                for _ in ids:
-                    self._deletes.popleft()
-            return True
+            if not await _drain(self._messages, self._send_messages, self._max_batch):
+                return False
+            return await _drain(self._deletes, self._send_deletes, self._max_batch)
 
-    async def run(self, interval: float) -> None:
-        """Flush every ``interval`` seconds, forever."""
+    async def run(self, interval: float, on_rewind: Callable[[], None] | None = None) -> None:
+        """Flush every ``interval`` seconds, forever. After a successful flush with
+        refused messages to recover, ``on_rewind`` is called to read history again."""
 
         while True:
             await asyncio.sleep(interval)
             if not await self.flush():
                 logger.warning("could not forward %d message change(s); will retry", self.pending)
+            elif self._rewinds and on_rewind is not None:
+                on_rewind()
+
+
+async def _drain(queue: deque, send: Callable[[list], Awaitable[bool]], size: int) -> bool:
+    while queue:
+        batch = [queue.popleft() for _ in range(min(size, len(queue)))]
+        if not await send(batch):
+            queue.extendleft(reversed(batch))
+            return False
+    return True
 
 
 async def backfill(

@@ -37,7 +37,15 @@ from tekijin.discord_bot.backend import (
     post_messages,
 )
 from tekijin.discord_bot.format import format_add_reply, format_member_reply, format_reply
-from tekijin.discord_bot.ingest import Batcher, backfill, is_excluded, message_payload, parse_ids
+from tekijin.discord_bot.ingest import (
+    Batcher,
+    backfill,
+    edit_action,
+    is_excluded,
+    merge_cursors,
+    message_payload,
+    parse_ids,
+)
 
 logger = logging.getLogger("tekijin.discord_bot")
 
@@ -198,7 +206,14 @@ def main() -> None:
         except discord.DiscordException:
             logger.warning("could not read edited message %s", payload.message_id, exc_info=True)
             return
-        forward(message)
+        action = edit_action(message, excluded)
+        if action is None:
+            return
+        kind, value = action
+        if kind == "upsert":
+            batcher.add(value)
+        else:
+            batcher.delete([value])
 
     @client.event
     async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
@@ -212,10 +227,12 @@ def main() -> None:
 
     async def read_history() -> None:
         guild = client.get_guild(guild_id)
-        cursors = await get_cursors(http, guild_id=guild_id, **backend)
-        if guild is None or cursors is None:
+        stored = await get_cursors(http, guild_id=guild_id, **backend)
+        if guild is None or stored is None:
             logger.warning("skipped reading history: server or cursors unavailable")
             return
+        # Where queued messages had to be refused, read again from before them.
+        cursors = merge_cursors(stored, batcher.take_rewinds())
         me = guild.me
         channels: list = [
             c
@@ -227,11 +244,21 @@ def main() -> None:
             *guild.text_channels,
             *guild.forums,
         ]
+        seen = {c.id for c in channels}
         for channel in parents:
-            try:
-                channels.extend([t async for t in channel.archived_threads(limit=None)])
-            except discord.DiscordException:
-                continue  # no permission to list this channel's archived threads
+            # Public archives, then private ones: all of them when the bot may
+            # manage threads, otherwise those it has joined.
+            listings = [{}, {"private": True}, {"private": True, "joined": True}]
+            for options in listings:
+                if options and not isinstance(channel, discord.TextChannel):
+                    break  # forum posts are never private threads
+                try:
+                    async for thread in channel.archived_threads(limit=None, **options):
+                        if thread.id not in seen:
+                            seen.add(thread.id)
+                            channels.append(thread)
+                except discord.DiscordException:
+                    continue  # no permission for this listing
         queued = await backfill(
             channels, cursors=cursors, batcher=batcher, excluded=excluded, after=discord.Object
         )
@@ -249,7 +276,10 @@ def main() -> None:
         # on_ready fires again after a reconnect. The flush loop runs once; history
         # is read again (unless still being read), which costs only what was missed.
         if "flush" not in tasks:
-            tasks["flush"] = asyncio.create_task(batcher.run(_FLUSH_INTERVAL_S))
+            tasks["flush"] = asyncio.create_task(batcher.run(_FLUSH_INTERVAL_S, start_history))
+        start_history()
+
+    def start_history() -> None:
         if "history" not in tasks or tasks["history"].done():
             tasks["history"] = asyncio.create_task(read_history())
 
