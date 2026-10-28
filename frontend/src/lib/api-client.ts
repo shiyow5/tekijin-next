@@ -51,6 +51,9 @@ import type {
   SlackAuthorizeUrlResponse,
   SlackStatusResponse,
   SlackUnlinkResponse,
+  SourceCreateRequest,
+  SourceCreateResponse,
+  SourceListResponse,
   TopicVocabularyResponse,
 } from "@/lib/api-types";
 import { getAuthToken } from "@/lib/auth-token";
@@ -645,4 +648,36 @@ export async function advanceSession(
     // Best-effort: the outcome is already persisted; the asker's own reconnecting
     // stream is the backup consumer. Never surface this to the responder.
   }
+}
+
+/**
+ * GET /sources — one page of the signed-in member's organization's documents,
+ * newest first, with the total for paging (#72). 403 when the member belongs to
+ * no organization.
+ */
+export function getSources(
+  options: RequestOptions & { offset?: number; limit?: number } = {},
+): Promise<SourceListResponse> {
+  const { offset, limit, ...requestOptions } = options;
+  const params = new URLSearchParams();
+  if (offset !== undefined) params.set("offset", String(offset));
+  if (limit !== undefined) params.set("limit", String(limit));
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return getJson<SourceListResponse>(`/sources${query}`, requestOptions);
+}
+
+/**
+ * POST /sources — add a document by hand (#72). With a URL, re-sending the same
+ * URL updates the document instead of adding a copy.
+ */
+export function postSource(
+  request: SourceCreateRequest,
+  options: RequestOptions = {},
+): Promise<SourceCreateResponse> {
+  return postJson<SourceCreateResponse>("/sources", request, options);
+}
+
+/** DELETE /sources/{id} — only the member who added it (or the admin) may (#72). */
+export function deleteSource(id: number, options: RequestOptions = {}): Promise<unknown> {
+  return deleteJson<unknown>(`/sources/${id}`, options);
 }

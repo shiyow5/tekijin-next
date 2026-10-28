@@ -424,3 +424,13 @@ def test_add_refuses_another_server(discord_env, engine, fake_embedder) -> None:
     client = _bot_client(engine, fake_embedder)
     body = {"discord_user_id": "3005", "guild_id": "1", "text": "部室 鍵"}
     assert client.post(ADD, json=body, headers=HEADERS).json()["status"] == "unlinked"
+
+
+def test_add_cannot_replace_another_members_url(discord_env, engine, fake_embedder) -> None:
+    client = _bot_client(engine, fake_embedder)
+    owner = _join(client, "3101")
+    other = _join(client, "3102")
+    note = {"text": "通帳 印鑑", "url": "https://ex.com/owned"}
+    assert client.post(ADD, json={**owner, **note}, headers=HEADERS).json()["status"] == "added"
+    replaced = client.post(ADD, json={**other, **note, "text": "書き換え"}, headers=HEADERS)
+    assert replaced.json()["status"] == "not_owner"
