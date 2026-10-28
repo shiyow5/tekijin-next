@@ -9,7 +9,6 @@ the list; only the member who added a source, or the admin, can delete it.
 from __future__ import annotations
 
 import datetime as dt
-
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request

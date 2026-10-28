@@ -244,9 +244,7 @@ export function SourcesScreen() {
             追加する
           </button>
         </div>
-        {notice ? (
-          <output className="text-on-surface text-sm">{notice}</output>
-        ) : null}
+        {notice ? <output className="text-on-surface text-sm">{notice}</output> : null}
         {formError ? (
           <p role="alert" className="text-error text-sm">
             {formError}
