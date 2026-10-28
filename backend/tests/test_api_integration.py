@@ -1294,7 +1294,7 @@ def test_answerability_reject_suppresses_recommend_and_persists_nothing(
     assert names[-1] == "message"
     message = next(data for e, data in events if e == "message")
     assert message["status"] == "no_expert"
-    assert "社内の実績が見つかりません" in message["message"]
+    assert "詳しいメンバーの記録が、組織の中に見つかりませんでした" in message["message"]
 
     check = get_sessionmaker(engine)()
     try:

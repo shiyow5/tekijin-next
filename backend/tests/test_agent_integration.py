@@ -314,7 +314,7 @@ def test_answerability_rejects_to_no_expert_terminal(seed_counts, session, fake_
     assert state["route"] == PERSON
     assert state["answerability_confidence"] == 15 and state["answerable"] is False
     assert not _is_paused(agent, cfg)  # terminal — no send interrupt, no hand-off
-    assert "社内の実績が見つかりません" in state["answer"]
+    assert "詳しいメンバーの記録が、組織の中に見つかりませんでした" in state["answer"]
     assert state.get("draft") is None  # never drafted a hand-off
 
 
