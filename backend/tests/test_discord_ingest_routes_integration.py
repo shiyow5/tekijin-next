@@ -126,3 +126,20 @@ def test_the_secret_is_required(client, monkeypatch) -> None:
 def test_bad_batches_are_rejected(client, messages) -> None:
     body = {"guild_id": GUILD, "messages": messages}
     assert client.post("/internal/discord/messages", json=body, headers=HEADERS).status_code == 422
+
+
+def test_deleted_threads_are_forgotten(client, engine) -> None:
+    body = {"guild_id": GUILD, "messages": [_message(7501, "x", thread_id=99, thread_name="t")]}
+    client.post("/internal/discord/messages", json=body, headers=HEADERS)
+    resp = client.post(
+        "/internal/discord/streams/delete",
+        json={"guild_id": GUILD, "stream_ids": [99]},
+        headers=HEADERS,
+    )
+    assert resp.json() == {"status": "ok", "deleted": 1}
+    assert _titles(engine) == []
+    other = {"guild_id": "1", "stream_ids": [99]}
+    assert client.post("/internal/discord/streams/delete", json=other, headers=HEADERS).json() == {
+        "status": "unlinked",
+        "deleted": 0,
+    }

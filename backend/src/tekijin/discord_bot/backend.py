@@ -105,6 +105,21 @@ async def post_deletes(
     return result.get("status") == "ok"
 
 
+async def post_stream_deletes(
+    http: httpx.AsyncClient, *, base_url: str, secret: str, guild_id: int, stream_ids: list[int]
+) -> bool:
+    """Forget deleted channels or threads (#76). False when it was not applied."""
+
+    result = await _post(
+        http,
+        base_url,
+        secret,
+        "streams/delete",
+        {"guild_id": str(guild_id), "stream_ids": stream_ids},
+    )
+    return result.get("status") == "ok"
+
+
 async def get_cursors(
     http: httpx.AsyncClient, *, base_url: str, secret: str, guild_id: int
 ) -> dict[str, int] | None:

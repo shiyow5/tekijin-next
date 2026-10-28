@@ -186,6 +186,36 @@ def delete_messages(
     return len(rows)
 
 
+def delete_streams(
+    session: Session,
+    embedder: Embedder,
+    *,
+    org_id: int,
+    guild_id: str,
+    stream_ids: Iterable[int],
+    now: dt.datetime,
+) -> int:
+    """A channel or thread was deleted in Discord: forget its messages and the
+    conversations made from them (a deleted channel takes its threads with it).
+    Returns how many stored messages were deleted."""
+
+    ids = list(stream_ids)
+    rows = session.scalars(
+        select(ChannelMessage).where(
+            ChannelMessage.org_id == org_id,
+            (ChannelMessage.channel_id.in_(ids)) | (ChannelMessage.thread_id.in_(ids)),
+        )
+    ).all()
+    return delete_messages(
+        session,
+        embedder,
+        org_id=org_id,
+        guild_id=guild_id,
+        message_ids=[row.message_id for row in rows],
+        now=now,
+    )
+
+
 def channel_cursors(session: Session, *, org_id: int) -> dict[int, int]:
     """The last stored message id per channel or thread, where history resumes."""
 

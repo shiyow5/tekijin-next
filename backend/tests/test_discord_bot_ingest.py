@@ -10,7 +10,13 @@ from types import SimpleNamespace
 
 import httpx
 
-from tekijin.discord_bot.backend import SECRET_HEADER, get_cursors, post_deletes, post_messages
+from tekijin.discord_bot.backend import (
+    SECRET_HEADER,
+    get_cursors,
+    post_deletes,
+    post_messages,
+    post_stream_deletes,
+)
 from tekijin.discord_bot.ingest import (
     Batcher,
     backfill,
@@ -454,3 +460,63 @@ def test_backfill_flushes_through_the_given_function() -> None:
     )
     assert calls == ["held", "held"]
     assert sent.calls == [] and batcher.pending == 2
+
+
+def test_a_failed_operation_overtaken_in_flight_is_not_put_back() -> None:
+    """Text removed, the deletion fails in flight, the text comes back (Codex #77)."""
+
+    holder: dict = {}
+
+    async def failing_delete(ids: list) -> bool:
+        holder["batcher"].add({"message_id": 1, "channel_id": 10, "thread_id": None, "v": 2})
+        return False
+
+    sent = _Recorder()
+    batcher = Batcher(sent, failing_delete)
+    holder["batcher"] = batcher
+    batcher.delete([1])
+    assert asyncio.run(batcher.flush()) is False
+    # The overtaken deletion is gone; only the restored text remains.
+    assert batcher.pending == 1
+    asyncio.run(batcher.flush())
+    assert sent.calls[-1] == [{"message_id": 1, "channel_id": 10, "thread_id": None, "v": 2}]
+
+
+def test_a_fetched_edit_overtaken_by_a_deletion_is_dropped() -> None:
+    """The edit fetch returns after the message was deleted (Codex #77)."""
+
+    batcher = Batcher(_Recorder(), _Recorder())
+    token = batcher.begin_edit(1)
+    batcher.delete([1])  # arrives while the fetch is in flight
+    batcher.add({"message_id": 1, "channel_id": 10, "thread_id": None}, token=token)
+    batcher.delete([1], token=token)
+    assert batcher.pending == 1  # just the newer deletion
+
+    fresh = batcher.begin_edit(2)
+    batcher.add({"message_id": 2, "channel_id": 10, "thread_id": None}, token=fresh)
+    assert batcher.pending == 2
+
+
+def test_deleted_streams_drop_their_queue_and_are_sent_last() -> None:
+    sent, deleted, streams = _Recorder(), _Recorder(), _Recorder()
+    batcher = Batcher(sent, deleted, send_stream_deletes=streams)
+    batcher.add({"message_id": 1, "channel_id": 10, "thread_id": 77})
+    batcher.add({"message_id": 2, "channel_id": 11, "thread_id": None})
+    batcher.add({"message_id": 3, "channel_id": 77, "thread_id": None})
+    batcher.delete_streams([77])
+    asyncio.run(batcher.flush())
+    assert [m["message_id"] for m in sent.calls[0]] == [2]
+    assert streams.calls == [[77]]
+
+
+def test_post_stream_deletes() -> None:
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(200, json={"status": "ok"})
+
+    assert _call(handler, post_stream_deletes, stream_ids=[77]) is True
+    assert seen == [
+        ("http://api/internal/discord/streams/delete", {"guild_id": "42", "stream_ids": [77]})
+    ]

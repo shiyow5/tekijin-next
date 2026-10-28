@@ -21,6 +21,7 @@ from tekijin.data.conversations import (
     IncomingMessage,
     channel_cursors,
     delete_messages,
+    delete_streams,
     ingest_messages,
 )
 from tekijin.data.db import session_scope
@@ -63,6 +64,12 @@ class DiscordMessagesResponse(BaseModel):
 class DiscordDeleteRequest(BaseModel):
     guild_id: str = Field(pattern=_SNOWFLAKE)
     message_ids: list[int] = Field(max_length=_MAX_DELETIONS)
+
+
+class DiscordStreamsDeleteRequest(BaseModel):
+    guild_id: str = Field(pattern=_SNOWFLAKE)
+    # Deleted channels or threads.
+    stream_ids: list[int] = Field(max_length=_MAX_DELETIONS)
 
 
 class DiscordDeleteResponse(BaseModel):
@@ -151,6 +158,30 @@ def discord_delete_messages(
             org_id=org.id,
             guild_id=req.guild_id,
             message_ids=req.message_ids,
+            now=service.now(),
+        )
+    return DiscordDeleteResponse(status="ok", deleted=deleted)
+
+
+@router.post("/streams/delete", response_model=DiscordDeleteResponse)
+def discord_delete_streams(
+    req: DiscordStreamsDeleteRequest,
+    request: Request,
+    settings: Settings = Depends(require_bot_secret),
+) -> DiscordDeleteResponse:
+    """Forget every message of channels or threads deleted in Discord."""
+
+    if not _ours(settings, req.guild_id):
+        return DiscordDeleteResponse(status="unlinked")
+    service = _service(request)
+    with session_scope(service.session_factory) as session:
+        org = get_or_create_org_for_guild(session, req.guild_id, name=f"Discord {req.guild_id}")
+        deleted = delete_streams(
+            session,
+            service.embedder,
+            org_id=org.id,
+            guild_id=req.guild_id,
+            stream_ids=req.stream_ids,
             now=service.now(),
         )
     return DiscordDeleteResponse(status="ok", deleted=deleted)

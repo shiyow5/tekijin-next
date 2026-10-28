@@ -107,12 +107,18 @@ def merge_cursors(stored: dict[str, int], rewinds: dict[int, int]) -> dict[str, 
 
 
 class Batcher:
-    """Collects messages and deletions and sends them to the backend in batches.
+    """Collects message changes and sends them to the backend in batches.
 
     Sending one request per message would rebuild a conversation for every line
-    typed; batching every few seconds rebuilds it once. Each batch is taken off
-    the queue before it is sent and put back if sending fails, so messages that
-    arrive meanwhile are never mistaken for the batch.
+    typed; batching every few seconds rebuilds it once.
+
+    Every live change to a message (posted, edited, deleted) gets a new generation
+    number, and each queued operation carries the generation it was made at. An
+    operation older than its message's latest generation is never sent again:
+    a failed batch is put back without the operations overtaken while it was in
+    flight, and the result of fetching an edit (:meth:`begin_edit`) is dropped if
+    a newer change came first. A message read from history has no generation; it
+    never overrides a message seen live.
 
     The message queue is bounded. When the backend is down long enough to fill it,
     new messages are refused and the batcher remembers, per channel or thread, to
@@ -127,22 +133,27 @@ class Batcher:
         send_messages: SendMessages,
         send_deletes: SendDeletes,
         *,
+        send_stream_deletes: SendDeletes | None = None,
         max_batch: int = 50,
         max_pending: int = 5000,
     ) -> None:
         self._send_messages = send_messages
         self._send_deletes = send_deletes
+        self._send_stream_deletes = send_stream_deletes
         self._max_batch = max_batch
         self._max_pending = max_pending
-        self._messages: deque[dict[str, Any]] = deque()
-        self._deletes: deque[int] = deque()
+        self._messages: deque[tuple[int, dict[str, Any]]] = deque()
+        self._deletes: deque[tuple[int, int]] = deque()
+        self._streams: deque[tuple[int, int]] = deque()
         self._rewinds: dict[int, int] = {}
-        self._live: OrderedDict[int, None] = OrderedDict()
+        # message id -> its latest live generation (0: never seen live).
+        self._generations: OrderedDict[int, int] = OrderedDict()
+        self._counter = 0
         self._lock = asyncio.Lock()
 
     @property
     def pending(self) -> int:
-        return len(self._messages) + len(self._deletes)
+        return len(self._messages) + len(self._deletes) + len(self._streams)
 
     @property
     def max_batch(self) -> int:
@@ -152,37 +163,56 @@ class Batcher:
     def needs_rewind(self) -> bool:
         return bool(self._rewinds)
 
-    def add(self, payload: dict[str, Any], *, history: bool = False) -> None:
-        """Queue a message. ``history`` marks one read from a channel's history.
+    def begin_edit(self, message_id: int) -> int:
+        """Start fetching an edited message; pass the result to :meth:`add` or
+        :meth:`delete` with this token, which drops it if a newer change came."""
 
-        A live change is the latest word on a message: a pending deletion of it is
-        cancelled (the text came back) and a newer version replaces an older one.
-        A message from history is only a snapshot, possibly taken before a live
-        edit or deletion arrived, so it never overrides a message seen live.
-        """
+        return self._bump(message_id)
 
-        message_id = payload["message_id"]
-        if history and message_id in self._live:
-            return
-        _remove(self._deletes, lambda queued: queued == message_id)
-        _remove(self._messages, lambda queued: queued["message_id"] == message_id)
+    def add(
+        self, payload: dict[str, Any], *, history: bool = False, token: int | None = None
+    ) -> None:
+        """Queue a message: a live change, a fetched edit (``token``), or one read
+        from history (``history``)."""
+
+        message_id = int(payload["message_id"])
+        if history and message_id in self._generations:
+            return  # a snapshot older than what was seen live
+        if token is not None and self._generation(message_id) != token:
+            return  # a newer change overtook this fetch
         if len(self._messages) >= self._max_pending:
             # Read history again from just before it: what history then holds is
             # the latest version, including an edit refused here.
-            self.reread(stream_id(payload), int(message_id))
+            self.reread(stream_id(payload), message_id)
             return
-        self._messages.append(payload)
-        if not history:
-            self._remember(message_id)
+        if history:
+            generation = 0
+        elif token is not None:
+            generation = token
+        else:
+            generation = self._bump(message_id)
+        self._discard(message_id)
+        self._messages.append((generation, payload))
 
-    def delete(self, message_ids: Iterable[int]) -> None:
-        ids = list(dict.fromkeys(message_ids))  # in order, without repeats
-        wanted = set(ids)
-        _remove(self._messages, lambda queued: queued["message_id"] in wanted)
-        _remove(self._deletes, lambda queued: queued in wanted)
-        self._deletes.extend(ids)
-        for message_id in ids:
-            self._remember(message_id)
+    def delete(self, message_ids: Iterable[int], *, token: int | None = None) -> None:
+        for message_id in dict.fromkeys(message_ids):  # in order, without repeats
+            if token is not None and self._generation(message_id) != token:
+                continue
+            generation = token if token is not None else self._bump(message_id)
+            self._discard(message_id)
+            self._deletes.append((generation, message_id))
+
+    def delete_streams(self, stream_ids: Iterable[int]) -> None:
+        """A channel or thread was deleted: forget everything stored from it."""
+
+        ids = set(stream_ids)
+        _keep(
+            self._messages,
+            lambda item: stream_id(item[1]) not in ids and item[1]["channel_id"] not in ids,
+        )
+        self._streams.extend((0, stream) for stream in ids)
+        for stream in ids:
+            self._rewinds.pop(stream, None)
 
     def reread(self, stream: int, message_id: int) -> None:
         """A live change to ``message_id`` could not be taken: get it from history.
@@ -191,19 +221,13 @@ class Batcher:
         what was stored — would be ignored as a stale snapshot.
         """
 
-        self._live.pop(message_id, None)
+        self._generations.pop(message_id, None)
         self.rewind(stream, message_id - 1)
 
     def rewind(self, stream: int, after: int) -> None:
         """Read ``stream``'s history again from after message ``after`` (0: from the start)."""
 
         self._rewinds[stream] = min(self._rewinds.get(stream, after), after)
-
-    def _remember(self, message_id: int) -> None:
-        self._live[message_id] = None
-        self._live.move_to_end(message_id)
-        while len(self._live) > _LIVE_MEMORY:
-            self._live.popitem(last=False)
 
     def take_rewinds(self) -> dict[int, int]:
         """Where history must be read again, cleared once taken."""
@@ -214,14 +238,41 @@ class Batcher:
     async def flush(self) -> bool:
         """Send everything queued. False when the backend refused or was away.
 
-        Deletions go after the messages, so a message posted and deleted within
-        one interval is stored and then removed, not the other way round.
+        Messages go first, then deletions, then deleted channels, so a message
+        posted and deleted within one interval is stored and then removed.
         """
 
         async with self._lock:
-            if not await _drain(self._messages, self._send_messages, self._max_batch):
+            if not await self._drain(
+                self._messages, self._send_messages, lambda p: int(p["message_id"])
+            ):
                 return False
-            return await _drain(self._deletes, self._send_deletes, self._max_batch)
+            if not await self._drain(self._deletes, self._send_deletes, int):
+                return False
+            if self._send_stream_deletes is None:
+                self._streams.clear()
+                return True
+            return await self._drain(self._streams, self._send_stream_deletes, None)
+
+    async def _drain(
+        self,
+        queue: deque,
+        send: Callable[[list], Awaitable[bool]],
+        message_id_of: Callable[[Any], int] | None,
+    ) -> bool:
+        while queue:
+            batch = [queue.popleft() for _ in range(min(self._max_batch, len(queue)))]
+            if await send([item for _, item in batch]):
+                continue
+            # Put back only what was not overtaken while in flight.
+            current = [
+                (generation, item)
+                for generation, item in batch
+                if message_id_of is None or self._generation(message_id_of(item)) == generation
+            ]
+            queue.extendleft(reversed(current))
+            return False
+        return True
 
     async def run(
         self,
@@ -246,9 +297,28 @@ class Batcher:
             elif self._rewinds and on_rewind is not None:
                 on_rewind()
 
+    def _generation(self, message_id: int) -> int:
+        return self._generations.get(message_id, 0)
 
-def _remove(queue: deque, matches: Callable[[Any], bool]) -> None:
-    kept = [item for item in queue if not matches(item)]
+    def _bump(self, message_id: int) -> int:
+        self._counter += 1
+        self._generations[message_id] = self._counter
+        self._generations.move_to_end(message_id)
+        while len(self._generations) > _LIVE_MEMORY:
+            self._generations.popitem(last=False)
+        return self._counter
+
+    def _discard(self, message_id: int) -> None:
+        """Drop queued operations on ``message_id``; the newest one replaces them."""
+
+        _keep(self._messages, lambda item: int(item[1]["message_id"]) != message_id)
+        _keep(self._deletes, lambda item: item[1] != message_id)
+
+
+def _keep(queue: deque, wanted: Callable[[Any], bool]) -> None:
+    """Filter ``queue`` in place: a flush in flight holds this same object."""
+
+    kept = [item for item in queue if wanted(item)]
     if len(kept) != len(queue):
         queue.clear()
         queue.extend(kept)
@@ -269,15 +339,6 @@ async def fetch_until_ready(
             return cursors
         logger.warning("backend did not say where history left off; retrying")
         await asyncio.sleep(retry_after)
-
-
-async def _drain(queue: deque, send: Callable[[list], Awaitable[bool]], size: int) -> bool:
-    while queue:
-        batch = [queue.popleft() for _ in range(min(size, len(queue)))]
-        if not await send(batch):
-            queue.extendleft(reversed(batch))
-            return False
-    return True
 
 
 async def backfill(

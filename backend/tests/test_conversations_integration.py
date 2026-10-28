@@ -17,6 +17,7 @@ from tekijin.data.conversations import (
     IncomingMessage,
     channel_cursors,
     delete_messages,
+    delete_streams,
     ingest_messages,
 )
 from tekijin.data.db import get_sessionmaker
@@ -190,3 +191,26 @@ def test_cursors_give_the_last_message_per_channel_or_thread(engine, fake_embedd
         )
         session.commit()
         assert channel_cursors(session, org_id=org_id) == {10: 6005, 11: 6003, 78: 6004}
+
+
+def test_deleting_a_channel_takes_its_threads_and_days(engine, fake_embedder, org_id) -> None:
+    """A deleted channel reports no per-message deletions (Codex #77)."""
+
+    with get_sessionmaker(engine)() as session:
+        _ingest(
+            session,
+            fake_embedder,
+            org_id,
+            [
+                _msg(8001, "a", at=NOON),
+                _msg(8002, "b", at=NOON, thread_id=90, thread_name="t"),
+                _msg(8003, "c", at=NOON, channel_id=11, channel_name="運営"),
+            ],
+        )
+        session.commit()
+        deleted = delete_streams(
+            session, fake_embedder, org_id=org_id, guild_id=GUILD, stream_ids=[10], now=NOW
+        )
+        session.commit()
+        assert deleted == 2
+        assert set(_items(session)) == {"channel:11:2026-10-28"}

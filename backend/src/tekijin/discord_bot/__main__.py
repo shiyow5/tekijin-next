@@ -35,6 +35,7 @@ from tekijin.discord_bot.backend import (
     member_backend,
     post_deletes,
     post_messages,
+    post_stream_deletes,
 )
 from tekijin.discord_bot.format import format_add_reply, format_member_reply, format_reply
 from tekijin.discord_bot.ingest import (
@@ -94,7 +95,10 @@ def main() -> None:
     async def send_deletes(message_ids: list[int]) -> bool:
         return await post_deletes(http, guild_id=guild_id, message_ids=message_ids, **backend)
 
-    batcher = Batcher(send_messages, send_deletes)
+    async def send_stream_deletes(stream_ids: list[int]) -> bool:
+        return await post_stream_deletes(http, guild_id=guild_id, stream_ids=stream_ids, **backend)
+
+    batcher = Batcher(send_messages, send_deletes, send_stream_deletes=send_stream_deletes)
     # Strong references: the event loop keeps only weak ones to running tasks.
     tasks: dict[str, asyncio.Task] = {}
     # Clear until the bot knows where history left off; nothing is stored meanwhile.
@@ -204,6 +208,9 @@ def main() -> None:
     async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent) -> None:
         if payload.guild_id != guild_id:
             return
+        # Taken before fetching: a deletion or a newer edit arriving while the
+        # fetch is in flight makes its result stale, and the batcher drops it.
+        token = batcher.begin_edit(payload.message_id)
         # The edit event may carry only part of the message; read it whole.
         try:
             channel = client.get_channel(payload.channel_id) or await client.fetch_channel(
@@ -211,7 +218,7 @@ def main() -> None:
             )
             message = await channel.fetch_message(payload.message_id)  # type: ignore[union-attr]
         except discord.NotFound:
-            batcher.delete([payload.message_id])  # gone since the edit
+            batcher.delete([payload.message_id], token=token)  # gone since the edit
             return
         except discord.Forbidden:
             return  # the bot may not read this channel
@@ -226,9 +233,9 @@ def main() -> None:
             return
         kind, value = action
         if kind == "upsert":
-            batcher.add(value)
+            batcher.add(value, token=token)
         else:
-            batcher.delete([value])
+            batcher.delete([value], token=token)
 
     @client.event
     async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
@@ -239,6 +246,17 @@ def main() -> None:
     async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent) -> None:
         if payload.guild_id == guild_id:
             batcher.delete(payload.message_ids)
+
+    # Deleting a channel or a thread reports no per-message deletions.
+    @client.event
+    async def on_guild_channel_delete(channel: discord.abc.GuildChannel) -> None:
+        if channel.guild.id == guild_id:
+            batcher.delete_streams([channel.id])
+
+    @client.event
+    async def on_raw_thread_delete(payload: discord.RawThreadDeleteEvent) -> None:
+        if payload.guild_id == guild_id:
+            batcher.delete_streams([payload.thread_id])
 
     # Set when the Gateway reconnects while history is being read: another pass
     # must follow, from the points where history left off as of the reconnect.
