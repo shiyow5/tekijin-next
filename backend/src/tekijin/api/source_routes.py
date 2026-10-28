@@ -23,9 +23,9 @@ from tekijin.config import get_settings
 from tekijin.data.db import session_scope
 from tekijin.data.sources import (
     MANUAL,
+    SourceItemSummary,
     SourceOwnedElsewhere,
     count_source_items,
-    SourceItemSummary,
     delete_source_item,
     get_source_item,
     list_source_items,
@@ -130,9 +130,7 @@ def list_sources(
         total = count_source_items(session, org_id=org_id)
         items = list_source_items(session, org_id=org_id, offset=offset, limit=limit)
         names = _author_names(session, items)
-    return SourceListResponse(
-        items=[_list_item(i, names, principal) for i in items], total=total
-    )
+    return SourceListResponse(items=[_list_item(i, names, principal) for i in items], total=total)
 
 
 @router.get("/{item_id}", response_model=SourceDetail)

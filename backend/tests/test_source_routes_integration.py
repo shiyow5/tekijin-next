@@ -184,7 +184,11 @@ def test_detail_shows_the_body_within_the_organization(client, orgs) -> None:
     assert detail.status_code == 200
     body = detail.json()
     assert body["body"] == "通帳 印鑑 金庫"
-    assert (body["title"], body["author_name"], body["can_delete"]) == ("会計の引継ぎ", "アリス", False)
+    assert (body["title"], body["author_name"], body["can_delete"]) == (
+        "会計の引継ぎ",
+        "アリス",
+        False,
+    )
     assert client.get(f"/sources/{item_id}", headers=_as(orgs["alice"])).json()["can_delete"]
     assert client.get(f"/sources/{item_id}", headers=_as(orgs["carol"])).status_code == 404
     assert client.get("/sources/999999", headers=_as(orgs["alice"])).status_code == 404

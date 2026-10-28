@@ -94,7 +94,9 @@ def main() -> None:
     async def optin(interaction: discord.Interaction) -> None:
         await member_action(interaction, "optin")
 
-    @group.command(name="add", description="文章やファイルをTEKIJINの知識に追加する(参加した人のみ)")
+    @group.command(
+        name="add", description="文章やファイルをTEKIJINの知識に追加する(参加した人のみ)"
+    )
     @app_commands.describe(
         text="追加する文章(4000字まで。ファイルだけでもよい)",
         file="テキスト(.txt)かMarkdown(.md)のファイル(200KBまで)",

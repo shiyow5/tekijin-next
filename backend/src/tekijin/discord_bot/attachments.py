@@ -22,9 +22,7 @@ class AddInputError(ValueError):
 
 def check_attachment(file_name: str, size: int) -> None:
     if PurePath(file_name).suffix.lower() not in TEXT_SUFFIXES:
-        raise AddInputError(
-            "添付できるのは、テキスト(.txt)とMarkdown(.md)のファイルだけです。"
-        )
+        raise AddInputError("添付できるのは、テキスト(.txt)とMarkdown(.md)のファイルだけです。")
     if size > MAX_FILE_BYTES:
         raise AddInputError("ファイルが大きすぎます。200KBまでにしてください。")
 
