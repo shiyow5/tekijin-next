@@ -27,6 +27,13 @@ def test_file_only_takes_its_name_as_the_title() -> None:
     )
 
 
+def test_a_long_file_name_is_cut_to_the_title_limit() -> None:
+    """The API rejects a title over 200 characters (Codex #75)."""
+
+    _, title = compose_add(text=None, title=None, file_name="長" * 250 + ".md", file_text="x")
+    assert title == "長" * 200
+
+
 def test_a_given_title_wins_over_the_file_name() -> None:
     _, title = compose_add(text=None, title="会計", file_name="a.md", file_text="x")
     assert title == "会計"

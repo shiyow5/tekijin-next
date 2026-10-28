@@ -14,6 +14,8 @@ MAX_FILE_BYTES = 200_000
 # The backend's limit for one note (api/discord_routes.py, api/source_routes.py).
 MAX_BODY_CHARS = 20000
 TEXT_SUFFIXES = (".txt", ".md", ".markdown")
+# The backend's limit for a title; a title taken from a file name is cut to it.
+MAX_TITLE_CHARS = 200
 
 
 class AddInputError(ValueError):
@@ -52,5 +54,5 @@ def compose_add(
     if len(body) > MAX_BODY_CHARS:
         raise AddInputError("長すぎます。2万字までに分けて追加してください。")
     if not title and file_name:
-        title = PurePath(file_name).stem or None
+        title = PurePath(file_name).stem[:MAX_TITLE_CHARS] or None
     return body, title
