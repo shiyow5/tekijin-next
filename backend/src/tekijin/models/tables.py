@@ -171,9 +171,7 @@ class ChannelMessage(Base):
     """
 
     __tablename__ = "channel_messages"
-    __table_args__ = (
-        UniqueConstraint("org_id", "message_id", name="uq_channel_messages_message"),
-    )
+    __table_args__ = (UniqueConstraint("org_id", "message_id", name="uq_channel_messages_message"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)

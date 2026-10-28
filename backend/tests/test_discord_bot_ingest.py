@@ -21,7 +21,9 @@ def _channel(channel_id: int = 10, name: str = "雑談", parent=None):
 
 
 def _message(message_id: int = 1, content: str = "部室の鍵は？", **kw):
-    author = SimpleNamespace(id=kw.get("author_id", 501), display_name="アリス", bot=kw.get("bot", False))
+    author = SimpleNamespace(
+        id=kw.get("author_id", 501), display_name="アリス", bot=kw.get("bot", False)
+    )
     return SimpleNamespace(
         id=message_id,
         guild=kw.get("guild", SimpleNamespace(id=42)),

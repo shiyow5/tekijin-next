@@ -112,7 +112,9 @@ class Batcher:
 
         async with self._lock:
             while self._messages:
-                batch = [self._messages[i] for i in range(min(self._max_batch, len(self._messages)))]
+                batch = [
+                    self._messages[i] for i in range(min(self._max_batch, len(self._messages)))
+                ]
                 if not await self._send_messages(batch):
                     return False
                 for _ in batch:

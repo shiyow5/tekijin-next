@@ -86,7 +86,9 @@ def test_one_channel_day_becomes_one_conversation(engine, fake_embedder, org_id)
             fake_embedder,
             org_id,
             [
-                _msg(1002, "守衛室 です", at=NOON + dt.timedelta(minutes=1), author="2", name="ボブ"),
+                _msg(
+                    1002, "守衛室 です", at=NOON + dt.timedelta(minutes=1), author="2", name="ボブ"
+                ),
                 _msg(1001, "部室 の 鍵 は？", at=NOON),
             ],
         )
@@ -157,7 +159,10 @@ def test_deleting_messages_rebuilds_then_removes_the_conversation(
             session,
             fake_embedder,
             org_id,
-            [_msg(5001, "一つ目", at=NOON), _msg(5002, "二つ目", at=NOON + dt.timedelta(minutes=1))],
+            [
+                _msg(5001, "一つ目", at=NOON),
+                _msg(5002, "二つ目", at=NOON + dt.timedelta(minutes=1)),
+            ],
         )
         session.commit()
         assert _delete(session, fake_embedder, org_id, [5001]) == 1
@@ -170,9 +175,7 @@ def test_deleting_messages_rebuilds_then_removes_the_conversation(
         assert session.scalars(select(ChannelMessage)).all() == []
 
 
-def test_cursors_give_the_last_message_per_channel_or_thread(
-    engine, fake_embedder, org_id
-) -> None:
+def test_cursors_give_the_last_message_per_channel_or_thread(engine, fake_embedder, org_id) -> None:
     with get_sessionmaker(engine)() as session:
         _ingest(
             session,
