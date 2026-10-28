@@ -148,6 +148,11 @@ class Batcher:
         return bool(self._rewinds)
 
     def add(self, payload: dict[str, Any]) -> None:
+        # The latest change to a message wins: a pending deletion of it is
+        # cancelled (the text came back), and a newer version replaces an older one.
+        message_id = payload["message_id"]
+        _remove(self._deletes, lambda queued: queued == message_id)
+        _remove(self._messages, lambda queued: queued["message_id"] == message_id)
         if len(self._messages) >= self._max_pending:
             stream = stream_id(payload)
             before = int(payload["message_id"]) - 1
@@ -156,7 +161,10 @@ class Batcher:
         self._messages.append(payload)
 
     def delete(self, message_ids: Iterable[int]) -> None:
-        self._deletes.extend(message_ids)
+        ids = set(message_ids)
+        _remove(self._messages, lambda queued: queued["message_id"] in ids)
+        _remove(self._deletes, lambda queued: queued in ids)
+        self._deletes.extend(ids)
 
     def take_rewinds(self) -> dict[int, int]:
         """Where history must be read again, cleared once taken."""
@@ -176,16 +184,52 @@ class Batcher:
                 return False
             return await _drain(self._deletes, self._send_deletes, self._max_batch)
 
-    async def run(self, interval: float, on_rewind: Callable[[], None] | None = None) -> None:
+    async def run(
+        self,
+        interval: float,
+        on_rewind: Callable[[], None] | None = None,
+        ready: asyncio.Event | None = None,
+    ) -> None:
         """Flush every ``interval`` seconds, forever. After a successful flush with
-        refused messages to recover, ``on_rewind`` is called to read history again."""
+        refused messages to recover, ``on_rewind`` is called to read history again.
+
+        Nothing is sent while ``ready`` is clear. The bot clears it until it has
+        read where history left off: storing a new message first would move that
+        point past the messages posted while the bot was away.
+        """
 
         while True:
             await asyncio.sleep(interval)
+            if ready is not None and not ready.is_set():
+                continue
             if not await self.flush():
                 logger.warning("could not forward %d message change(s); will retry", self.pending)
             elif self._rewinds and on_rewind is not None:
                 on_rewind()
+
+
+def _remove(queue: deque, matches: Callable[[Any], bool]) -> None:
+    kept = [item for item in queue if not matches(item)]
+    if len(kept) != len(queue):
+        queue.clear()
+        queue.extend(kept)
+
+
+async def fetch_until_ready(
+    fetch: Callable[[], Awaitable[dict[str, int] | None]], *, retry_after: float
+) -> dict[str, int]:
+    """Ask the backend where history left off until it answers.
+
+    Giving up would let live messages move that point forward, and the messages
+    posted while the bot was away would never be read.
+    """
+
+    while True:
+        cursors = await fetch()
+        if cursors is not None:
+            return cursors
+        logger.warning("backend did not say where history left off; retrying")
+        await asyncio.sleep(retry_after)
 
 
 async def _drain(queue: deque, send: Callable[[list], Awaitable[bool]], size: int) -> bool:

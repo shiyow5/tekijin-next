@@ -15,6 +15,7 @@ from tekijin.discord_bot.ingest import (
     Batcher,
     backfill,
     edit_action,
+    fetch_until_ready,
     is_excluded,
     merge_cursors,
     message_payload,
@@ -137,7 +138,7 @@ def test_a_full_queue_refuses_new_messages_and_remembers_where_to_reread() -> No
     assert batcher.take_rewinds() == {10: 7, 77: 29}
     assert not batcher.needs_rewind
     # Deletions are never refused.
-    batcher.delete(range(100))
+    batcher.delete(range(100, 200))
     assert batcher.pending == 102
 
 
@@ -303,3 +304,49 @@ def test_get_cursors() -> None:
     assert _call(unlinked, get_cursors) is None
     assert _call(error, get_cursors) is None
     assert _call(down, get_cursors) is None
+
+
+def test_the_latest_change_to_a_message_wins() -> None:
+    """Text removed and then restored before a flush must end up stored (Codex #77)."""
+
+    sent, deleted = _Recorder(), _Recorder()
+    batcher = Batcher(sent, deleted)
+    first = {"message_id": 1, "channel_id": 10, "thread_id": None, "content": "a"}
+    batcher.add(first)
+    batcher.delete([1])
+    batcher.add({**first, "content": "b"})
+    batcher.add({**first, "content": "c"})
+    batcher.add({"message_id": 2, "channel_id": 10, "thread_id": None})
+    batcher.delete([2])
+
+    asyncio.run(batcher.flush())
+    assert sent.calls == [[{**first, "content": "c"}]]
+    assert deleted.calls == [[2]]
+
+
+def test_nothing_is_sent_until_ready() -> None:
+    sent = _Recorder()
+    batcher = Batcher(sent, _Recorder())
+    batcher.add({"message_id": 1, "channel_id": 10, "thread_id": None})
+
+    async def scenario() -> tuple[int, int]:
+        ready = asyncio.Event()
+        task = asyncio.create_task(batcher.run(0.01, ready=ready))
+        await asyncio.sleep(0.05)
+        before = len(sent.calls)
+        ready.set()
+        await asyncio.sleep(0.05)
+        task.cancel()
+        return before, len(sent.calls)
+
+    assert asyncio.run(scenario()) == (0, 1)
+
+
+def test_fetch_until_ready_retries() -> None:
+    answers = [None, None, {"10": 5}]
+
+    async def fetch():
+        return answers.pop(0)
+
+    assert asyncio.run(fetch_until_ready(fetch, retry_after=0)) == {"10": 5}
+    assert answers == []

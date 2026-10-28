@@ -41,6 +41,7 @@ from tekijin.discord_bot.ingest import (
     Batcher,
     backfill,
     edit_action,
+    fetch_until_ready,
     is_excluded,
     merge_cursors,
     message_payload,
@@ -55,6 +56,8 @@ logger = logging.getLogger("tekijin.discord_bot")
 _BACKEND_TIMEOUT_S = 14 * 60.0
 # How often collected message changes are forwarded (#76).
 _FLUSH_INTERVAL_S = 10.0
+# How long to wait before asking the backend again where history left off.
+_CURSOR_RETRY_S = 30.0
 
 
 def _user(interaction: discord.Interaction) -> dict:
@@ -92,6 +95,8 @@ def main() -> None:
     batcher = Batcher(send_messages, send_deletes)
     # Strong references: the event loop keeps only weak ones to running tasks.
     tasks: dict[str, asyncio.Task] = {}
+    # Clear until the bot knows where history left off; nothing is stored meanwhile.
+    ready = asyncio.Event()
 
     @tree.command(name="ask", description="TEKIJINに質問する")
     @app_commands.describe(question="質問の内容")
@@ -226,10 +231,13 @@ def main() -> None:
             batcher.delete(payload.message_ids)
 
     async def read_history() -> None:
+        stored = await fetch_until_ready(
+            lambda: get_cursors(http, guild_id=guild_id, **backend), retry_after=_CURSOR_RETRY_S
+        )
+        ready.set()
         guild = client.get_guild(guild_id)
-        stored = await get_cursors(http, guild_id=guild_id, **backend)
-        if guild is None or stored is None:
-            logger.warning("skipped reading history: server or cursors unavailable")
+        if guild is None:
+            logger.warning("skipped reading history: the bot is not in the configured server")
             return
         # Where queued messages had to be refused, read again from before them.
         cursors = merge_cursors(stored, batcher.take_rewinds())
@@ -276,12 +284,18 @@ def main() -> None:
         logger.info("logged in as %s; synced %d command(s)", client.user, len(synced))
         # on_ready fires again after a reconnect. The flush loop runs once; history
         # is read again (unless still being read), which costs only what was missed.
+        # Sending waits until the point where history left off has been read again,
+        # so messages arriving now cannot move it past what was posted meanwhile.
         if "flush" not in tasks:
-            tasks["flush"] = asyncio.create_task(batcher.run(_FLUSH_INTERVAL_S, start_history))
-        start_history()
+            tasks["flush"] = asyncio.create_task(
+                batcher.run(_FLUSH_INTERVAL_S, start_history, ready=ready)
+            )
+        start_history(pause=True)
 
-    def start_history() -> None:
+    def start_history(pause: bool = False) -> None:
         if "history" not in tasks or tasks["history"].done():
+            if pause:
+                ready.clear()
             tasks["history"] = asyncio.create_task(read_history())
 
     client.run(settings.discord_bot_token, log_handler=None)
