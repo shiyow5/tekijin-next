@@ -21,6 +21,16 @@ _SENTENCE_END = re.compile(r"(?<=[。．！？!?\n])")
 _SEPARATOR = "\n\n"
 
 
+def passage_text(title: str | None, text: str) -> str:
+    """What a chunk is embedded as: its source's title, then the chunk itself.
+
+    One definition for ingestion and for re-embedding (``embed_corpus``), so a
+    re-embedded chunk lands exactly where it was.
+    """
+
+    return f"{title}\n{text}" if title else text
+
+
 def split_text(text: str, *, max_chars: int = DEFAULT_MAX_CHARS) -> list[str]:
     """Chunks of ``text``, each at most ``max_chars`` long, in reading order.
 

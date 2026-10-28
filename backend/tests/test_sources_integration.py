@@ -153,6 +153,24 @@ def test_list_and_delete(engine, fake_embedder, org_and_member):
         assert _chunk_count(session, a.item_id) == 0
 
 
+def test_re_embedding_restores_chunk_vectors(engine, fake_embedder, org_and_member):
+    """After a dimension change clears the vectors, ``embed_corpus`` refills them
+    exactly as ingestion computed them (Codex #71)."""
+
+    from tekijin.retrieval.indexing import embed_corpus
+
+    org_id, _, _ = org_and_member
+    with get_sessionmaker(engine)() as session:
+        result = _add(session, fake_embedder, org_id, title="部室の使い方")
+        session.commit()
+        original = list(session.scalars(select(Chunk.embedding)).one())
+        session.execute(text("UPDATE chunks SET embedding = NULL"))
+        counts = embed_corpus(session, fake_embedder)
+        assert counts["chunks"] == result.chunks == 1
+        assert list(session.scalars(select(Chunk.embedding)).one()) == original
+        session.rollback()
+
+
 def test_a_blank_body_is_rejected(engine, fake_embedder, org_and_member):
     org_id, _, _ = org_and_member
     with get_sessionmaker(engine)() as session, pytest.raises(ValueError):

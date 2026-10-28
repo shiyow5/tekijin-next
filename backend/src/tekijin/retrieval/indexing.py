@@ -18,7 +18,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tekijin.models.tables import Answer, DailyReport, Document, EmployeeProfile, Question
+from tekijin.ingest.chunking import passage_text
+from tekijin.models.tables import (
+    Answer,
+    Chunk,
+    DailyReport,
+    Document,
+    EmployeeProfile,
+    Question,
+)
 from tekijin.retrieval.embedding import PASSAGE, Embedder
 
 
@@ -41,6 +49,8 @@ _SPECS: tuple[tuple[str, Any, Callable[[Any], str | None]], ...] = (
     ("documents", Document, _document_text),
     # #433: daily reports as a searchable knowledge source for System 1.
     ("daily_reports", DailyReport, _daily_text),
+    # #70: ingested chunks, so an embedding-model change can re-embed them.
+    ("chunks", Chunk, lambda r: passage_text(r.source_item.title, r.text)),
 )
 
 

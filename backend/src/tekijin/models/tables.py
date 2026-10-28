@@ -175,6 +175,9 @@ class Chunk(Base):
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
 
+    # Read by re-embedding, which needs the title the chunk was embedded with.
+    source_item: Mapped[SourceItem] = relationship()
+
 
 class EmployeeProfile(Base):
     """Free-text self-description of an employee (one row per employee)."""

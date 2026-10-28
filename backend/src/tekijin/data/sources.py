@@ -17,7 +17,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from tekijin.ingest.chunking import split_text
+from tekijin.ingest.chunking import passage_text, split_text
 from tekijin.models.tables import Chunk, SourceItem
 from tekijin.retrieval.embedding import PASSAGE, Embedder
 
@@ -84,8 +84,7 @@ def upsert_source_item(
     if item is not None and item.content_hash == digest:
         return UpsertResult("unchanged", item.id, _count_chunks(session, item.id))
 
-    heading = f"{title}\n" if title else ""
-    vectors = embedder.encode([heading + p for p in pieces], kind=PASSAGE)
+    vectors = embedder.encode([passage_text(title, p) for p in pieces], kind=PASSAGE)
     status: UpsertStatus = "updated"
     if item is None:
         item, status = _insert(session, org_id, provider, external_id), "added"
