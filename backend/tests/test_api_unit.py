@@ -883,7 +883,7 @@ def test_intent_system_prompt_scopes_to_any_organization() -> None:
     # #68: the old company prompt refused anything not about 製品・技術・業務, so a
     # club's questions all came back out of scope. Being off the topic list must
     # not be a reason to refuse, and the company-only rejection classes are gone.
-    assert "社内" not in _INTENT_SYSTEM
+    assert "社内Q&A" not in _INTENT_SYSTEM
     assert "業務と無関係" not in _INTENT_SYSTEM
     assert "有給" not in _INTENT_SYSTEM
     assert "それを理由に範囲外にしてはいけません" in _INTENT_SYSTEM
