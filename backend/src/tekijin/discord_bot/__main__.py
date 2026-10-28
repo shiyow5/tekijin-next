@@ -6,8 +6,9 @@ ingestion left off when it starts, then new, edited and deleted messages as they
 happen. Reading message text needs the MESSAGE CONTENT privileged intent, which must
 also be switched on for the app in the Discord Developer Portal.
 
-Everything arrives over the Gateway connection, so no public URL is needed. The reply is ephemeral (only the asker sees it): a question can name customers or
-internal trouble, and the channel it was typed in may be wide.
+Everything arrives over the Gateway connection, so no public URL is needed. The reply
+is ephemeral (only the asker sees it): a question can name customers or internal
+trouble, and the channel it was typed in may be wide.
 """
 
 from __future__ import annotations
@@ -222,7 +223,11 @@ def main() -> None:
             if c.permissions_for(me).read_message_history and c.permissions_for(me).view_channel
         ]
         channels.extend(guild.threads)
-        for channel in [*guild.text_channels, *guild.forums]:
+        parents: list[discord.TextChannel | discord.ForumChannel] = [
+            *guild.text_channels,
+            *guild.forums,
+        ]
+        for channel in parents:
             try:
                 channels.extend([t async for t in channel.archived_threads(limit=None)])
             except discord.DiscordException:
