@@ -17,6 +17,7 @@ import { PageBackLink } from "@/components/PageBackLink";
 import { ApiError, deleteSource, getSources, postSource } from "@/lib/api-client";
 import type { SourceCreateResponse, SourceItem } from "@/lib/api-types";
 import { formatDateJst } from "@/lib/datetime";
+import { sourceOrigin } from "@/lib/format";
 import Link from "next/link";
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from "react";
 
@@ -86,7 +87,7 @@ function SourceRow({
         ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-x-md gap-y-xs text-on-surface-variant text-xs">
-        <span>追加: {item.author_name ?? "管理者"}</span>
+        <span>{sourceOrigin(item)}</span>
         <span>更新日: {formatDateJst(item.updated_at) ?? "—"}</span>
         <span>断片: {item.chunks}</span>
         {item.url ? (

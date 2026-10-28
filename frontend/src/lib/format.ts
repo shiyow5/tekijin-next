@@ -15,3 +15,13 @@ export function formatConfidence(confidence: number): string {
   const clamped = Math.min(100, Math.max(0, percent));
   return `${clamped}%`;
 }
+
+/**
+ * Who a source came from, for the 資料 screens (#76). A Discord conversation has
+ * many authors and is shown as such; a source without an author was added by the
+ * admin account.
+ */
+export function sourceOrigin(source: { provider: string; author_name: string | null }): string {
+  if (source.provider === "discord") return "Discordの会話";
+  return `追加: ${source.author_name ?? "管理者"}`;
+}
