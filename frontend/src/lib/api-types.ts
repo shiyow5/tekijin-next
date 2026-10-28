@@ -754,3 +754,36 @@ export interface ConsultRetrospectiveAck {
   status: string;
   consult_id: number;
 }
+
+/** GET /sources — one of the organization's ingested documents (#72). */
+export interface SourceItem {
+  id: number;
+  /** Where it came from: "manual" (added by hand), later "discord", "google", "notion". */
+  provider: string;
+  title: string | null;
+  url: string | null;
+  author_name: string | null;
+  updated_at: string;
+  /** How many searchable chunks the body was split into. */
+  chunks: number;
+  /** True for the member who added it, and for the admin. */
+  can_delete: boolean;
+}
+
+export interface SourceListResponse {
+  items: SourceItem[];
+}
+
+/** POST /sources request (#72). */
+export interface SourceCreateRequest {
+  body: string;
+  title: string | null;
+  url: string | null;
+}
+
+/** POST /sources response: re-sending the same URL updates instead of adding. */
+export interface SourceCreateResponse {
+  status: "added" | "updated" | "unchanged";
+  id: number;
+  chunks: number;
+}

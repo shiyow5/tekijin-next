@@ -99,6 +99,25 @@ function IconChatNav({ className }: { className: string }) {
   );
 }
 
+function IconSources({ className }: { className: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+      className={className}
+    >
+      <path
+        d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function IconKnowledge({ className }: { className: string }) {
   return (
     <svg
@@ -146,6 +165,8 @@ const NAV = [
   // Company-wide (not scoped to the acting user), but still NOT admin-only:
   // the point is every user can discover someone else's past answer (#293, #301).
   { href: "/knowledge", label: "ナレッジ", icon: IconKnowledge, adminOnly: false },
+  // The organization's documents and the form to add one (#72).
+  { href: "/sources", label: "資料", icon: IconSources, adminOnly: false },
   { href: "/dashboard", label: "ダッシュボード", icon: IconDashboardNav, adminOnly: true },
 ] as const;
 

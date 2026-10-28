@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -72,6 +74,10 @@ class SourceListItem(BaseModel):
 
 class SourceListResponse(BaseModel):
     items: list[SourceListItem]
+
+
+class SourceDeleteResponse(BaseModel):
+    status: Literal["deleted"] = "deleted"
 
 
 def _service(request: Request) -> AgentService:
@@ -157,10 +163,10 @@ def add_source(
     return SourceCreateResponse(status=result.status, id=result.item_id, chunks=result.chunks)
 
 
-@router.delete("/{item_id}", status_code=204)
+@router.delete("/{item_id}", response_model=SourceDeleteResponse)
 def delete_source(
     item_id: int, request: Request, principal: Principal = Depends(require_principal)
-) -> Response:
+) -> SourceDeleteResponse:
     with session_scope(_service(request).session_factory) as session:
         org_id = _org_id(session, principal)
         item = session.get(SourceItem, item_id)
@@ -169,4 +175,4 @@ def delete_source(
         if not principal.is_admin and item.author_id != principal.employee_id:
             raise HTTPException(status_code=403, detail="追加した本人だけが削除できます。")
         delete_source_item(session, item_id=item_id, org_id=org_id)
-    return Response(status_code=204)
+    return SourceDeleteResponse()

@@ -3,6 +3,7 @@ import {
   advanceSession,
   correctInterpretation,
   deleteQuestion,
+  deleteSource,
   excludeHandoffCandidate,
   getDashboard,
   getDocument,
@@ -14,9 +15,11 @@ import {
   getSlackAuthorizeUrl,
   getSlackLoginUrl,
   getSlackStatus,
+  getSources,
   postAnswer,
   postAsk,
   postSlackUnlink,
+  postSource,
   redeemDiscordLogin,
   regenerateHandoffDraft,
   requestDocumentFallback,
@@ -718,5 +721,50 @@ describe("redeemDiscordLogin", () => {
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toEqual({ token: "once-1" });
     expect(result).toEqual(login);
+  });
+});
+
+describe("sources (#72)", () => {
+  it("GETs {base}/sources and returns the items", async () => {
+    const items = [
+      {
+        id: 1,
+        provider: "manual",
+        title: "会計の引継ぎ",
+        url: null,
+        author_name: "アリス",
+        updated_at: "2026-10-28T12:00:00",
+        chunks: 1,
+        can_delete: true,
+      },
+    ];
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ items }));
+
+    expect(await getSources({ fetchImpl })).toEqual(items);
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${DEFAULT_API_BASE_URL}/sources`);
+  });
+
+  it("POSTs a new source and returns the result", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ status: "added", id: 3, chunks: 2 }));
+
+    const result = await postSource({ body: "本文", title: "題名", url: null }, { fetchImpl });
+
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${DEFAULT_API_BASE_URL}/sources`);
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ body: "本文", title: "題名", url: null });
+    expect(result).toEqual({ status: "added", id: 3, chunks: 2 });
+  });
+
+  it("DELETEs {base}/sources/{id}", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ status: "deleted" }));
+
+    await deleteSource(7, { fetchImpl });
+
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${DEFAULT_API_BASE_URL}/sources/7`);
+    expect(init?.method).toBe("DELETE");
   });
 });

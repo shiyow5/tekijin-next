@@ -78,7 +78,7 @@ def test_add_list_and_delete_own_source(client, orgs) -> None:
 
     mine = client.get("/sources", headers=_as(orgs["alice"])).json()["items"][0]
     assert mine["can_delete"] is True
-    assert client.delete(f"/sources/{item['id']}", headers=_as(orgs["alice"])).status_code == 204
+    assert client.delete(f"/sources/{item['id']}", headers=_as(orgs["alice"])).status_code == 200
     assert client.get("/sources", headers=_as(orgs["alice"])).json()["items"] == []
 
 
@@ -108,7 +108,7 @@ def test_admin_works_on_the_configured_server(client, orgs) -> None:
     assert listed[0]["can_delete"] is True
     added = client.post("/sources", json={"body": "部室 鍵"}, headers=admin)
     assert added.status_code == 201
-    assert client.delete(f"/sources/{item_id}", headers=admin).status_code == 204
+    assert client.delete(f"/sources/{item_id}", headers=admin).status_code == 200
 
 
 def test_admin_without_an_organization_is_told_so(client, engine, monkeypatch) -> None:
