@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 # Message types that are someone talking; everything else is a system notice.
 _CONVERSATION_TYPES = ("default", "reply")
+
+# How many message ids seen live (posted, edited, deleted) the batcher remembers, so
+# that history read afterwards cannot bring back an older version of them.
+_LIVE_MEMORY = 20000
 
 SendMessages = Callable[[list[dict[str, Any]]], Awaitable[bool]]
 SendDeletes = Callable[[list[int]], Awaitable[bool]]
@@ -133,6 +137,7 @@ class Batcher:
         self._messages: deque[dict[str, Any]] = deque()
         self._deletes: deque[int] = deque()
         self._rewinds: dict[int, int] = {}
+        self._live: OrderedDict[int, None] = OrderedDict()
         self._lock = asyncio.Lock()
 
     @property
@@ -147,18 +152,27 @@ class Batcher:
     def needs_rewind(self) -> bool:
         return bool(self._rewinds)
 
-    def add(self, payload: dict[str, Any]) -> None:
-        # The latest change to a message wins: a pending deletion of it is
-        # cancelled (the text came back), and a newer version replaces an older one.
+    def add(self, payload: dict[str, Any], *, history: bool = False) -> None:
+        """Queue a message. ``history`` marks one read from a channel's history.
+
+        A live change is the latest word on a message: a pending deletion of it is
+        cancelled (the text came back) and a newer version replaces an older one.
+        A message from history is only a snapshot, possibly taken before a live
+        edit or deletion arrived, so it never overrides a message seen live.
+        """
+
         message_id = payload["message_id"]
+        if history and message_id in self._live:
+            return
         _remove(self._deletes, lambda queued: queued == message_id)
         _remove(self._messages, lambda queued: queued["message_id"] == message_id)
         if len(self._messages) >= self._max_pending:
-            stream = stream_id(payload)
-            before = int(payload["message_id"]) - 1
-            self._rewinds[stream] = min(self._rewinds.get(stream, before), before)
+            # Not remembered as seen live: reading history again must bring it back.
+            self.rewind(stream_id(payload), int(message_id) - 1)
             return
         self._messages.append(payload)
+        if not history:
+            self._remember(message_id)
 
     def delete(self, message_ids: Iterable[int]) -> None:
         ids = list(dict.fromkeys(message_ids))  # in order, without repeats
@@ -166,6 +180,19 @@ class Batcher:
         _remove(self._messages, lambda queued: queued["message_id"] in wanted)
         _remove(self._deletes, lambda queued: queued in wanted)
         self._deletes.extend(ids)
+        for message_id in ids:
+            self._remember(message_id)
+
+    def rewind(self, stream: int, after: int) -> None:
+        """Read ``stream``'s history again from after message ``after`` (0: from the start)."""
+
+        self._rewinds[stream] = min(self._rewinds.get(stream, after), after)
+
+    def _remember(self, message_id: int) -> None:
+        self._live[message_id] = None
+        self._live.move_to_end(message_id)
+        while len(self._live) > _LIVE_MEMORY:
+            self._live.popitem(last=False)
 
     def take_rewinds(self) -> dict[int, int]:
         """Where history must be read again, cleared once taken."""
@@ -249,14 +276,18 @@ async def backfill(
     batcher: Batcher,
     excluded: set[int],
     after: Callable[[int], Any] | None = None,
+    is_permanent: Callable[[Exception], bool] = lambda exc: False,
 ) -> int:
     """Read each channel's history after where ingestion left off.
 
     ``cursors`` maps a channel or thread id (as a string) to the last stored
     message id there; a channel without one is read from the beginning.
     ``after`` turns an id into what ``history(after=...)`` takes (a
-    ``discord.Object``). A channel the bot cannot read is skipped. Returns how
-    many messages were queued.
+    ``discord.Object``). A channel the bot may not read (``is_permanent``) is
+    skipped. Any other failure leaves a rewind for that channel, so it is read
+    again from the same point once sending works: giving up would let live
+    messages move its cursor past the unread part. Returns how many messages were
+    queued.
     """
 
     queued = 0
@@ -271,10 +302,14 @@ async def backfill(
                 payload = message_payload(message)
                 if payload is None or is_excluded(payload, excluded):
                     continue
-                batcher.add(payload)
+                batcher.add(payload, history=True)
                 queued += 1
                 if batcher.pending >= batcher.max_batch:
                     await batcher.flush()
-        except Exception:  # noqa: BLE001 - one unreadable channel must not stop the rest
-            logger.warning("could not read the history of channel %s", channel.id, exc_info=True)
+        except Exception as exc:  # noqa: BLE001 - one channel must not stop the rest
+            if is_permanent(exc):
+                logger.info("cannot read the history of channel %s; skipped", channel.id)
+            else:
+                logger.warning("reading channel %s failed; will retry", channel.id, exc_info=True)
+                batcher.rewind(channel.id, cursor if cursor is not None else 0)
     return queued

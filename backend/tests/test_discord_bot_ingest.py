@@ -244,9 +244,37 @@ def test_backfill_survives_a_channel_it_cannot_read() -> None:
     batcher = Batcher(_Recorder(), _Recorder())
     readable = _History(11, [_message(7, channel=_channel(11))])
     count = asyncio.run(
-        backfill([Forbidden(10, []), readable], cursors={}, batcher=batcher, excluded=set())
+        backfill(
+            [Forbidden(10, []), readable],
+            cursors={},
+            batcher=batcher,
+            excluded=set(),
+            is_permanent=lambda exc: isinstance(exc, PermissionError),
+        )
     )
     assert count == 1
+    # Not allowed to read is final: no rewind, so no endless retries.
+    assert not batcher.needs_rewind
+
+
+def test_backfill_rereads_a_channel_after_a_passing_failure() -> None:
+    """A transient error must keep the channel's starting point (Codex #77)."""
+
+    class Flaky(_History):
+        def history(self, **kwargs):
+            async def gen():
+                raise RuntimeError("503")
+                yield  # pragma: no cover
+
+            return gen()
+
+    batcher = Batcher(_Recorder(), _Recorder())
+    asyncio.run(
+        backfill([Flaky(10, []), Flaky(11, [])], cursors={"10": 40}, batcher=batcher, excluded=set())
+    )
+    assert batcher.take_rewinds() == {10: 40, 11: 0}
+    # Rewound to 0 = read from the start, even if a live message stored a cursor since.
+    assert merge_cursors({"11": 90}, {11: 0}) == {"11": 0}
 
 
 def _call(handler, func, **kwargs):
@@ -350,3 +378,32 @@ def test_fetch_until_ready_retries() -> None:
 
     assert asyncio.run(fetch_until_ready(fetch, retry_after=0)) == {"10": 5}
     assert answers == []
+
+
+def test_history_never_overrides_what_was_seen_live() -> None:
+    """A snapshot read from history may predate a live edit or deletion (Codex #77)."""
+
+    sent, deleted = _Recorder(), _Recorder()
+    batcher = Batcher(sent, deleted)
+    batcher.delete([2])
+    asyncio.run(batcher.flush())  # the deletion already reached the backend
+    batcher.add({"message_id": 3, "channel_id": 10, "thread_id": None, "content": "新"})
+
+    batcher.add({"message_id": 2, "channel_id": 10, "thread_id": None}, history=True)
+    batcher.add(
+        {"message_id": 3, "channel_id": 10, "thread_id": None, "content": "旧"}, history=True
+    )
+    batcher.add({"message_id": 4, "channel_id": 10, "thread_id": None}, history=True)
+    asyncio.run(batcher.flush())
+
+    assert [m["message_id"] for m in sent.calls[0]] == [3, 4]
+    assert sent.calls[0][0]["content"] == "新"
+
+
+def test_a_refused_live_message_can_come_back_from_history() -> None:
+    batcher = Batcher(_Recorder(), _Recorder(), max_pending=1)
+    batcher.add({"message_id": 1, "channel_id": 10, "thread_id": None})
+    batcher.add({"message_id": 2, "channel_id": 10, "thread_id": None})  # refused
+    asyncio.run(batcher.flush())
+    batcher.add({"message_id": 2, "channel_id": 10, "thread_id": None}, history=True)
+    assert batcher.pending == 1

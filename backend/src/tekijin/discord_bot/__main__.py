@@ -269,7 +269,13 @@ def main() -> None:
                 except discord.DiscordException:
                     continue  # no permission for this listing
         queued = await backfill(
-            channels, cursors=cursors, batcher=batcher, excluded=excluded, after=discord.Object
+            channels,
+            cursors=cursors,
+            batcher=batcher,
+            excluded=excluded,
+            after=discord.Object,
+            # No permission is final; anything else (a timeout, a 5xx) is retried.
+            is_permanent=lambda exc: isinstance(exc, discord.Forbidden),
         )
         await batcher.flush()
         logger.info("read history: %d message(s) from %d channel(s)", queued, len(channels))
