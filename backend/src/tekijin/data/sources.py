@@ -66,6 +66,10 @@ def manual_external_id(url: str | None) -> str:
     return f"url:{url}" if url else f"note:{uuid.uuid4().hex}"
 
 
+class SourceOwnedElsewhere(Exception):
+    """The item exists and belongs to another member, who alone may replace it."""
+
+
 def content_hash(title: str | None, body: str) -> str:
     return hashlib.sha256(f"{title or ''}\x00{body}".encode()).hexdigest()
 
@@ -82,12 +86,18 @@ def upsert_source_item(
     url: str | None,
     author_id: int | None,
     now: dt.datetime,
+    override_owner: bool = False,
 ) -> UpsertResult:
     """Add the item, or update it when ``(org, provider, external_id)`` exists.
 
     An unchanged title and body is a no-op. Otherwise the chunks are rebuilt and
     re-embedded. Embedding runs before any write, so a failing embedder leaves the
     stored item as it was. The caller commits.
+
+    Only the member who added an item may replace it (``override_owner`` lets the
+    admin through); anyone else gets :class:`SourceOwnedElsewhere`. The author never
+    changes on an update, so re-sending someone's URL cannot take over the right to
+    delete it.
     """
 
     pieces = split_text(body)
@@ -97,11 +107,15 @@ def upsert_source_item(
     item = _find(session, org_id, provider, external_id)
     if item is not None and item.content_hash == digest:
         return UpsertResult("unchanged", item.id, _count_chunks(session, item.id))
+    if item is not None:
+        _check_owner(item, author_id, override_owner)
 
     vectors = embedder.encode([passage_text(title, p) for p in pieces], kind=PASSAGE)
     status: UpsertStatus = "updated"
+    created = False
     if item is None:
-        item, status = _insert(session, org_id, provider, external_id), "added"
+        item, created = _insert(session, org_id, provider, external_id)
+        status = "added" if created else "updated"
     # Lock and reload the row before writing. A concurrent update of the same item
     # waits here, and every field below is compared with the row as it is NOW: had
     # the stale copy read above been kept, a field another request changed in the
@@ -110,8 +124,12 @@ def upsert_source_item(
     item = _lock(session, item.id)
     if item.content_hash == digest:
         return UpsertResult("unchanged", item.id, _count_chunks(session, item.id))
+    if created:
+        item.author_id = author_id
+    else:
+        _check_owner(item, author_id, override_owner)
     item.title, item.body, item.url = title, body, url
-    item.author_id, item.content_hash, item.updated_at = author_id, digest, now
+    item.content_hash, item.updated_at = digest, now
     session.execute(delete(Chunk).where(Chunk.source_item_id == item.id))
     session.add_all(
         Chunk(org_id=org_id, source_item_id=item.id, seq=seq, text=piece, embedding=vector)
@@ -140,9 +158,18 @@ def _lock(session: Session, item_id: int) -> SourceItem:
     ).one()
 
 
-def _insert(session: Session, org_id: int, provider: str, external_id: str) -> SourceItem:
-    """A placeholder row the caller fills in; a concurrent insert of the same item
-    is absorbed at a savepoint and the winner's row is returned instead."""
+def _check_owner(item: SourceItem, author_id: int | None, override_owner: bool) -> None:
+    if not override_owner and item.author_id != author_id:
+        raise SourceOwnedElsewhere(item.id)
+
+
+def _insert(
+    session: Session, org_id: int, provider: str, external_id: str
+) -> tuple[SourceItem, bool]:
+    """A placeholder row the caller fills in, and whether this call created it.
+
+    A concurrent insert of the same item is absorbed at a savepoint, and the
+    winner's row is returned instead (``False``)."""
 
     try:
         with session.begin_nested():
@@ -155,11 +182,11 @@ def _insert(session: Session, org_id: int, provider: str, external_id: str) -> S
                 updated_at=dt.datetime.min,
             )
             session.add(created)
-        return created
+        return created, True
     except IntegrityError:
         winner = _find(session, org_id, provider, external_id)
         assert winner is not None  # inserted by the concurrent winner
-        return winner
+        return winner, False
 
 
 def _count_chunks(session: Session, item_id: int) -> int:
@@ -169,10 +196,17 @@ def _count_chunks(session: Session, item_id: int) -> int:
     return int(count or 0)
 
 
+def count_source_items(session: Session, *, org_id: int) -> int:
+    count = session.scalar(
+        select(func.count()).select_from(SourceItem).where(SourceItem.org_id == org_id)
+    )
+    return int(count or 0)
+
+
 def list_source_items(
-    session: Session, *, org_id: int, limit: int = 100
+    session: Session, *, org_id: int, offset: int = 0, limit: int = 100
 ) -> list[SourceItemSummary]:
-    """The organization's items, newest first."""
+    """One page of the organization's items, newest first."""
 
     chunk_count = (
         select(func.count())
@@ -184,6 +218,7 @@ def list_source_items(
         select(SourceItem, chunk_count)
         .where(SourceItem.org_id == org_id)
         .order_by(SourceItem.id.desc())
+        .offset(offset)
         .limit(limit)
     ).all()
     return [

@@ -41,7 +41,12 @@ from tekijin.data.members import (
     resolve_discord_member,
     set_opted_out,
 )
-from tekijin.data.sources import MANUAL, manual_external_id, upsert_source_item
+from tekijin.data.sources import (
+    MANUAL,
+    SourceOwnedElsewhere,
+    manual_external_id,
+    upsert_source_item,
+)
 from tekijin.models.tables import Employee
 
 logger = logging.getLogger(__name__)
@@ -118,7 +123,7 @@ class DiscordAddRequest(DiscordUser):
 
 
 class DiscordAddResponse(BaseModel):
-    status: Literal["added", "updated", "unchanged", "not_joined", "unlinked"]
+    status: Literal["added", "updated", "unchanged", "not_owner", "not_joined", "unlinked"]
     chunks: int = 0
 
 
@@ -267,18 +272,21 @@ def discord_add(
         )
         if member.joined_at is None:
             return DiscordAddResponse(status="not_joined")
-        result = upsert_source_item(
-            session,
-            service.embedder,
-            org_id=org.id,
-            provider=MANUAL,
-            external_id=manual_external_id(req.url),
-            title=req.title,
-            body=req.text,
-            url=req.url,
-            author_id=member.id,
-            now=now,
-        )
+        try:
+            result = upsert_source_item(
+                session,
+                service.embedder,
+                org_id=org.id,
+                provider=MANUAL,
+                external_id=manual_external_id(req.url),
+                title=req.title,
+                body=req.text,
+                url=req.url,
+                author_id=member.id,
+                now=now,
+            )
+        except SourceOwnedElsewhere:
+            return DiscordAddResponse(status="not_owner")
     return DiscordAddResponse(status=result.status, chunks=result.chunks)
 
 

@@ -21,10 +21,11 @@ import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } fr
 
 // Mirrors the API's limit (api/source_routes.py).
 const MAX_BODY_LENGTH = 20000;
+const PAGE_SIZE = 50;
 
 type ListState =
   | { phase: "loading" }
-  | { phase: "ready"; items: SourceItem[] }
+  | { phase: "ready"; items: SourceItem[]; total: number }
   | { phase: "error"; message: string };
 
 interface Draft {
@@ -106,9 +107,11 @@ export function SourcesScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const reload = useCallback(() => {
-    return getSources()
-      .then((items) => setList({ phase: "ready", items }))
+    return getSources({ limit: PAGE_SIZE })
+      .then(({ items, total }) => setList({ phase: "ready", items, total }))
       .catch((error: unknown) =>
         setList({
           phase: "error",
@@ -154,6 +157,19 @@ export function SourcesScreen() {
     const body = await readFile(file);
     const name = file.name.replace(/\.[^.]+$/, "");
     setDraft((prev) => ({ ...prev, body, title: prev.title || name }));
+  }
+
+  async function loadMore() {
+    if (list.phase !== "ready") return;
+    setLoadingMore(true);
+    try {
+      const page = await getSources({ offset: list.items.length, limit: PAGE_SIZE });
+      setList({ phase: "ready", items: [...list.items, ...page.items], total: page.total });
+    } catch (error) {
+      setFormError(errorMessage(error, "続きを読み込めませんでした。"));
+    } finally {
+      setLoadingMore(false);
+    }
   }
 
   async function remove(item: SourceItem) {
@@ -262,11 +278,23 @@ export function SourcesScreen() {
       ) : list.items.length === 0 ? (
         <p className="text-on-surface-variant text-sm">まだ資料がありません。</p>
       ) : (
-        <ul className="flex flex-col gap-sm">
-          {list.items.map((item) => (
-            <SourceRow key={item.id} item={item} onDelete={remove} />
-          ))}
-        </ul>
+        <>
+          <ul className="flex flex-col gap-sm">
+            {list.items.map((item) => (
+              <SourceRow key={item.id} item={item} onDelete={remove} />
+            ))}
+          </ul>
+          {list.items.length < list.total ? (
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="self-center rounded-md border border-outline px-md py-xs text-on-surface text-sm transition-colors hover:bg-surface-container-low disabled:opacity-50"
+            >
+              もっと見る（残り{list.total - list.items.length}件）
+            </button>
+          ) : null}
+        </>
       )}
     </section>
   );

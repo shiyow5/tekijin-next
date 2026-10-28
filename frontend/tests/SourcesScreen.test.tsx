@@ -39,7 +39,7 @@ const THEIRS: SourceItem = {
 };
 
 beforeEach(() => {
-  getSourcesMock.mockReset().mockResolvedValue([MINE, THEIRS]);
+  getSourcesMock.mockReset().mockResolvedValue({ items: [MINE, THEIRS], total: 2 });
   postSourceMock.mockReset();
   deleteSourceMock.mockReset();
 });
@@ -66,8 +66,32 @@ describe("SourcesScreen (#72)", () => {
     expect(screen.getAllByRole("button", { name: /を削除/ })).toHaveLength(1);
   });
 
+  it("pages past the first response", async () => {
+    getSourcesMock
+      .mockResolvedValueOnce({ items: [MINE], total: 2 })
+      .mockResolvedValueOnce({ items: [THEIRS], total: 2 });
+    render(<SourcesScreen />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "もっと見る（残り1件）" }));
+
+    expect(await screen.findByText("（題名なし）")).toBeInTheDocument();
+    expect(getSourcesMock).toHaveBeenLastCalledWith({ offset: 1, limit: 50 });
+    expect(screen.queryByRole("button", { name: /もっと見る/ })).not.toBeInTheDocument();
+  });
+
+  it("shows an error when the next page fails", async () => {
+    getSourcesMock
+      .mockResolvedValueOnce({ items: [MINE], total: 2 })
+      .mockRejectedValueOnce(new Error("boom"));
+    render(<SourcesScreen />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /もっと見る/ }));
+
+    expect(await screen.findByText("続きを読み込めませんでした。")).toBeInTheDocument();
+  });
+
   it("shows an empty state", async () => {
-    getSourcesMock.mockResolvedValue([]);
+    getSourcesMock.mockResolvedValue({ items: [], total: 0 });
     render(<SourcesScreen />);
 
     expect(await screen.findByText("まだ資料がありません。")).toBeInTheDocument();

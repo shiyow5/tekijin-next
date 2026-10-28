@@ -142,3 +142,34 @@ def test_login_is_required(client) -> None:
 )
 def test_bad_input_is_rejected(client, orgs, body) -> None:
     assert client.post("/sources", json=body, headers=_as(orgs["alice"])).status_code == 422
+
+
+def test_only_the_author_or_the_admin_can_replace_a_url(client, orgs) -> None:
+    """Re-sending someone else's URL must not take over their source (Codex #73)."""
+
+    item_id = client.post("/sources", json=NOTE, headers=_as(orgs["alice"])).json()["id"]
+    takeover = client.post("/sources", json={**NOTE, "body": "書き換え"}, headers=_as(orgs["bob"]))
+    assert takeover.status_code == 403
+    # Re-sending the same content is harmless and reported as such.
+    same = client.post("/sources", json=NOTE, headers=_as(orgs["bob"]))
+    assert same.json()["status"] == "unchanged"
+    assert client.delete(f"/sources/{item_id}", headers=_as(orgs["bob"])).status_code == 403
+
+    admin = client.post("/sources", json={**NOTE, "body": "管理者が直した"}, headers=_admin_headers())
+    assert admin.json()["status"] == "updated"
+    listed = client.get("/sources", headers=_as(orgs["alice"])).json()["items"]
+    assert listed[0]["author_name"] == "アリス" and listed[0]["can_delete"] is True
+
+
+def test_the_list_pages(client, orgs) -> None:
+    alice = _as(orgs["alice"])
+    ids = [
+        client.post("/sources", json={"body": f"メモ {n}"}, headers=alice).json()["id"]
+        for n in range(3)
+    ]
+    first = client.get("/sources", params={"limit": 2}, headers=alice).json()
+    assert first["total"] == 3
+    assert [i["id"] for i in first["items"]] == [ids[2], ids[1]]
+    rest = client.get("/sources", params={"offset": 2, "limit": 2}, headers=alice).json()
+    assert [i["id"] for i in rest["items"]] == [ids[0]]
+    assert client.get("/sources", params={"limit": 101}, headers=alice).status_code == 422

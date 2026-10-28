@@ -53,7 +53,6 @@ import type {
   SlackUnlinkResponse,
   SourceCreateRequest,
   SourceCreateResponse,
-  SourceItem,
   SourceListResponse,
   TopicVocabularyResponse,
 } from "@/lib/api-types";
@@ -652,12 +651,19 @@ export async function advanceSession(
 }
 
 /**
- * GET /sources — the signed-in member's organization's documents, newest first
- * (#72). 403 when the member belongs to no organization.
+ * GET /sources — one page of the signed-in member's organization's documents,
+ * newest first, with the total for paging (#72). 403 when the member belongs to
+ * no organization.
  */
-export async function getSources(options: RequestOptions = {}): Promise<SourceItem[]> {
-  const { items } = await getJson<SourceListResponse>("/sources", options);
-  return items;
+export function getSources(
+  options: RequestOptions & { offset?: number; limit?: number } = {},
+): Promise<SourceListResponse> {
+  const { offset, limit, ...requestOptions } = options;
+  const params = new URLSearchParams();
+  if (offset !== undefined) params.set("offset", String(offset));
+  if (limit !== undefined) params.set("limit", String(limit));
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return getJson<SourceListResponse>(`/sources${query}`, requestOptions);
 }
 
 /**

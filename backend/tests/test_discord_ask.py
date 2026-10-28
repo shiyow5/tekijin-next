@@ -276,6 +276,7 @@ def test_format_add_reply() -> None:
     assert "更新しました" in format_add_reply({"status": "updated", "chunks": 1})
     assert "変わっていない" in format_add_reply({"status": "unchanged", "chunks": 1})
     assert "/tekijin join" in format_add_reply({"status": "not_joined"})
+    assert "本人だけ" in format_add_reply({"status": "not_owner"})
     assert "使えません" in format_add_reply({"status": "unlinked"})
     assert "エラー" in format_add_reply({"kind": "error"})
 

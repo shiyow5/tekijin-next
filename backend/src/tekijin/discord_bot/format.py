@@ -57,6 +57,11 @@ def format_add_reply(result: dict[str, Any]) -> str:
         )
     if status == "unchanged":
         return "同じ内容がすでに登録されています。中身は変わっていないので、そのままにしました。"
+    if status == "not_owner":
+        return (
+            "このURLの資料は、ほかのメンバーが追加したものです。"
+            "更新できるのは追加した本人だけなので、変えたいときはその人に頼んでください。"
+        )
     if status == "not_joined":
         return "知識を追加するには、先に `/tekijin join` でTEKIJINに参加してください。"
     if status == "unlinked":

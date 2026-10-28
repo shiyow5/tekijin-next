@@ -738,10 +738,20 @@ describe("sources (#72)", () => {
         can_delete: true,
       },
     ];
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ items }));
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ items, total: 1 }));
 
-    expect(await getSources({ fetchImpl })).toEqual(items);
+    expect(await getSources({ fetchImpl })).toEqual({ items, total: 1 });
     expect(fetchImpl.mock.calls[0][0]).toBe(`${DEFAULT_API_BASE_URL}/sources`);
+  });
+
+  it("passes offset and limit for paging", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ items: [], total: 0 }));
+
+    await getSources({ offset: 50, limit: 50, fetchImpl });
+
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${DEFAULT_API_BASE_URL}/sources?offset=50&limit=50`);
   });
 
   it("POSTs a new source and returns the result", async () => {

@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,6 +23,8 @@ from tekijin.config import get_settings
 from tekijin.data.db import session_scope
 from tekijin.data.sources import (
     MANUAL,
+    SourceOwnedElsewhere,
+    count_source_items,
     delete_source_item,
     list_source_items,
     manual_external_id,
@@ -73,6 +75,8 @@ class SourceListItem(BaseModel):
 
 class SourceListResponse(BaseModel):
     items: list[SourceListItem]
+    # All of the organization's sources, so the client can page past ``limit``.
+    total: int
 
 
 class SourceDeleteResponse(BaseModel):
@@ -110,11 +114,15 @@ def _org_id(session: Session, principal: Principal) -> int:
 
 @router.get("", response_model=SourceListResponse)
 def list_sources(
-    request: Request, principal: Principal = Depends(require_principal)
+    request: Request,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    principal: Principal = Depends(require_principal),
 ) -> SourceListResponse:
     with _service(request).session_factory() as session:
         org_id = _org_id(session, principal)
-        items = list_source_items(session, org_id=org_id)
+        total = count_source_items(session, org_id=org_id)
+        items = list_source_items(session, org_id=org_id, offset=offset, limit=limit)
         author_ids = {i.author_id for i in items if i.author_id is not None}
         rows = session.execute(
             select(Employee.id, Employee.name).where(Employee.id.in_(author_ids))
@@ -134,7 +142,8 @@ def list_sources(
                 or (i.author_id is not None and i.author_id == principal.employee_id),
             )
             for i in items
-        ]
+        ],
+        total=total,
     )
 
 
@@ -147,18 +156,25 @@ def add_source(
     service = _service(request)
     with session_scope(service.session_factory) as session:
         org_id = _org_id(session, principal)
-        result = upsert_source_item(
-            session,
-            service.embedder,
-            org_id=org_id,
-            provider=MANUAL,
-            external_id=manual_external_id(req.url),
-            title=req.title,
-            body=req.body,
-            url=req.url,
-            author_id=principal.employee_id,
-            now=service.now(),
-        )
+        try:
+            result = upsert_source_item(
+                session,
+                service.embedder,
+                org_id=org_id,
+                provider=MANUAL,
+                external_id=manual_external_id(req.url),
+                title=req.title,
+                body=req.body,
+                url=req.url,
+                author_id=principal.employee_id,
+                now=service.now(),
+                override_owner=principal.is_admin,
+            )
+        except SourceOwnedElsewhere as exc:
+            raise HTTPException(
+                status_code=403,
+                detail="このURLの資料はほかのメンバーが追加したもので、その人だけが更新できます。",
+            ) from exc
     return SourceCreateResponse(status=result.status, id=result.item_id, chunks=result.chunks)
 
 

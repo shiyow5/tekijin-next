@@ -772,6 +772,8 @@ export interface SourceItem {
 
 export interface SourceListResponse {
   items: SourceItem[];
+  /** All of the organization's sources, for paging past one response. */
+  total: number;
 }
 
 /** POST /sources request (#72). */
