@@ -245,9 +245,7 @@ export function SourcesScreen() {
           </button>
         </div>
         {notice ? (
-          <p role="status" className="text-on-surface text-sm">
-            {notice}
-          </p>
+          <output className="text-on-surface text-sm">{notice}</output>
         ) : null}
         {formError ? (
           <p role="alert" className="text-error text-sm">
