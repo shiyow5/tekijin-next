@@ -164,7 +164,7 @@ def test_out_of_scope_is_deflected(seed_counts, session, fake_embedder) -> None:
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1]))
     state = agent.invoke(_init("今日の天気とランチのおすすめを教えて"), _cfg("oos"))
     assert state["out_of_scope"] is True
-    assert "業務の範囲外" in state["answer"]
+    assert "お答えできません" in state["answer"]
     assert "recommendations" not in state or not state.get("recommendations")
 
 
@@ -314,7 +314,7 @@ def test_answerability_rejects_to_no_expert_terminal(seed_counts, session, fake_
     assert state["route"] == PERSON
     assert state["answerability_confidence"] == 15 and state["answerable"] is False
     assert not _is_paused(agent, cfg)  # terminal — no send interrupt, no hand-off
-    assert "社内の実績が見つかりません" in state["answer"]
+    assert "詳しいメンバーの記録が、組織の中に見つかりませんでした" in state["answer"]
     assert state.get("draft") is None  # never drafted a hand-off
 
 

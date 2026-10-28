@@ -407,7 +407,7 @@ class AgentNodes:
         if responder_id is not None and responder_id in (retrieval.get("departed_people") or []):
             responder_id = None
         note = (
-            f"過去に社員ID {responder_id} が類似の質問に回答しています。本人に取り次ぎます。"
+            f"過去にメンバーID {responder_id} が類似の質問に回答しています。本人に取り次ぎます。"
             if responder_id is not None
             else "過去の類似回答を参照します。"
         )
@@ -714,8 +714,8 @@ class AgentNodes:
     # -- terminals --------------------------------------------------------
     def out_of_scope(self, state: AgentState) -> AgentState:
         return {
-            "answer": "恐れ入りますが、こちらは業務の範囲外のご質問のようです。"
-            "社内の担当窓口にご確認ください。"
+            "answer": "恐れ入りますが、このご質問にはTEKIJINではお答えできません。"
+            "組織の活動や、メンバーの知見に関することをお尋ねください。"
         }
 
     # -- self-answer (#291): compose a cited answer from retrieved data ----
@@ -835,7 +835,7 @@ class AgentNodes:
         top = _top_by_score(docs)
         doc_id = top["doc_id"] if top else None
         where = f"（文書ID: {doc_id}）" if doc_id else ""
-        answer = f"社内文書に該当がありそうです{where}。該当箇所をご確認ください。"
+        answer = f"組織の文書に該当がありそうです{where}。該当箇所をご確認ください。"
         # #279: C6 ran on the document route too, so a real expert behind a
         # weak-profile document is offered as a fallback rather than dead-ending
         # at zero person-recall. Self-resolution stays the main line (no hand-off
@@ -863,8 +863,8 @@ class AgentNodes:
         # departments, so echoing it would re-surface the very people this reject
         # path exists to withhold — defeating the recommend/persist suppression.
         return {
-            "answer": "ご相談の領域に対応できる社内の実績が見つかりませんでした。"
-            "恐れ入りますが、社外の専門窓口へのご相談もご検討ください。"
+            "answer": "ご相談の領域に詳しいメンバーの記録が、組織の中に見つかりませんでした。"
+            "恐れ入りますが、組織の外の専門家へのご相談もご検討ください。"
         }
 
     def unresolved_intent(self, state: AgentState) -> AgentState:
@@ -872,5 +872,5 @@ class AgentNodes:
         # Fail gracefully instead of silently returning "no expert found".
         return {
             "answer": "ご相談内容を特定できませんでした。恐れ入りますが、"
-            "具体的なご相談内容をお知らせいただくか、社内の担当窓口にご確認ください。"
+            "もう少し具体的なご相談内容をお知らせください。"
         }

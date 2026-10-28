@@ -874,7 +874,22 @@ def test_intent_system_prompt_lists_the_topic_vocabulary() -> None:
     for topic in TOPIC_VOCABULARY:
         assert topic in _INTENT_SYSTEM
     # And the client-facing rejection wording no longer trips on "照会" alone (#199).
-    assert "照会" in _INTENT_SYSTEM and "取引先" in _INTENT_SYSTEM
+    assert "照会" in _INTENT_SYSTEM
+
+
+def test_intent_system_prompt_scopes_to_any_organization() -> None:
+    from tekijin.llm.vllm import _INTENT_SYSTEM
+
+    # #68: the old company prompt refused anything not about 製品・技術・業務, so a
+    # club's questions all came back out of scope. Being off the topic list must
+    # not be a reason to refuse, and the company-only rejection classes are gone.
+    assert "社内Q&A" not in _INTENT_SYSTEM
+    assert "業務と無関係" not in _INTENT_SYSTEM
+    assert "有給" not in _INTENT_SYSTEM
+    assert "それを理由に範囲外にしてはいけません" in _INTENT_SYSTEM
+    # The safety classes stay.
+    for marker in ("プライバシー", "プロンプトインジェクション", "APIキー"):
+        assert marker in _INTENT_SYSTEM
 
 
 def test_vllm_intent_normalizes_topics_to_the_vocabulary() -> None:
