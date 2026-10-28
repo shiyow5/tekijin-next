@@ -99,9 +99,9 @@ class DiscordMemberResponse(BaseModel):
     login_url: str | None = None
 
 
-# ``/tekijin add`` (#70). Discord's option cap is 6000; a longer document is better
-# added from the web, which takes a file.
-_MAX_ADD_LENGTH = 4000
+# ``/tekijin add`` (#70, #74): the typed text (the bot caps it at 4000) plus an
+# attached file's contents. The same limit as the web's (api/source_routes.py).
+_MAX_ADD_LENGTH = 20000
 
 
 class DiscordAddRequest(DiscordUser):

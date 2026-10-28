@@ -23,9 +23,11 @@ from tekijin.config import get_settings
 from tekijin.data.db import session_scope
 from tekijin.data.sources import (
     MANUAL,
+    SourceItemSummary,
     SourceOwnedElsewhere,
     count_source_items,
     delete_source_item,
+    get_source_item,
     list_source_items,
     manual_external_id,
     upsert_source_item,
@@ -71,6 +73,10 @@ class SourceListItem(BaseModel):
     updated_at: dt.datetime
     chunks: int
     can_delete: bool
+
+
+class SourceDetail(SourceListItem):
+    body: str
 
 
 class SourceListResponse(BaseModel):
@@ -123,27 +129,44 @@ def list_sources(
         org_id = _org_id(session, principal)
         total = count_source_items(session, org_id=org_id)
         items = list_source_items(session, org_id=org_id, offset=offset, limit=limit)
-        author_ids = {i.author_id for i in items if i.author_id is not None}
-        rows = session.execute(
-            select(Employee.id, Employee.name).where(Employee.id.in_(author_ids))
-        ).all()
-        names = {member_id: name for member_id, name in rows}
-    return SourceListResponse(
-        items=[
-            SourceListItem(
-                id=i.id,
-                provider=i.provider,
-                title=i.title,
-                url=i.url,
-                author_name=names.get(i.author_id) if i.author_id is not None else None,
-                updated_at=i.updated_at,
-                chunks=i.chunks,
-                can_delete=principal.is_admin
-                or (i.author_id is not None and i.author_id == principal.employee_id),
-            )
-            for i in items
-        ],
-        total=total,
+        names = _author_names(session, items)
+    return SourceListResponse(items=[_list_item(i, names, principal) for i in items], total=total)
+
+
+@router.get("/{item_id}", response_model=SourceDetail)
+def source_detail(
+    item_id: int, request: Request, principal: Principal = Depends(require_principal)
+) -> SourceDetail:
+    with _service(request).session_factory() as session:
+        found = get_source_item(session, item_id=item_id, org_id=_org_id(session, principal))
+        if found is None:
+            raise HTTPException(status_code=404, detail="資料が見つかりません。")
+        summary, body = found
+        names = _author_names(session, [summary])
+    return SourceDetail(**_list_item(summary, names, principal).model_dump(), body=body)
+
+
+def _author_names(session: Session, items: list[SourceItemSummary]) -> dict[int, str]:
+    author_ids = {i.author_id for i in items if i.author_id is not None}
+    rows = session.execute(
+        select(Employee.id, Employee.name).where(Employee.id.in_(author_ids))
+    ).all()
+    return {member_id: name for member_id, name in rows}
+
+
+def _list_item(
+    item: SourceItemSummary, names: dict[int, str], principal: Principal
+) -> SourceListItem:
+    return SourceListItem(
+        id=item.id,
+        provider=item.provider,
+        title=item.title,
+        url=item.url,
+        author_name=names.get(item.author_id) if item.author_id is not None else None,
+        updated_at=item.updated_at,
+        chunks=item.chunks,
+        can_delete=principal.is_admin
+        or (item.author_id is not None and item.author_id == principal.employee_id),
     )
 
 

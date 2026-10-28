@@ -15,6 +15,7 @@ import {
   getSlackAuthorizeUrl,
   getSlackLoginUrl,
   getSlackStatus,
+  getSource,
   getSources,
   postAnswer,
   postAsk,
@@ -766,6 +767,15 @@ describe("sources (#72)", () => {
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toEqual({ body: "本文", title: "題名", url: null });
     expect(result).toEqual({ status: "added", id: 3, chunks: 2 });
+  });
+
+  it("GETs one source with its body", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ id: 4, body: "本文" }));
+
+    expect(await getSource(4, { fetchImpl })).toEqual({ id: 4, body: "本文" });
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${DEFAULT_API_BASE_URL}/sources/4`);
   });
 
   it("DELETEs {base}/sources/{id}", async () => {
