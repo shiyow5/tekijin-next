@@ -41,7 +41,7 @@ from tekijin.data.members import (
     resolve_discord_member,
     set_opted_out,
 )
-from tekijin.data.sources import upsert_source_item
+from tekijin.data.sources import MANUAL, manual_external_id, upsert_source_item
 from tekijin.models.tables import Employee
 
 logger = logging.getLogger(__name__)
@@ -271,8 +271,8 @@ def discord_add(
             session,
             service.embedder,
             org_id=org.id,
-            provider="manual",
-            external_id=f"url:{req.url}" if req.url else f"note:{uuid.uuid4().hex}",
+            provider=MANUAL,
+            external_id=manual_external_id(req.url),
             title=req.title,
             body=req.text,
             url=req.url,

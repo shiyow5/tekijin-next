@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -50,6 +51,19 @@ class ChunkHit:
     url: str | None
     text: str
     similarity: float
+
+
+MANUAL = "manual"
+
+
+def manual_external_id(url: str | None) -> str:
+    """The key of a note added by hand (``/tekijin add`` or the web).
+
+    With a URL the note stands for the document there, so re-sending the same URL
+    updates it; without one every add is a new note.
+    """
+
+    return f"url:{url}" if url else f"note:{uuid.uuid4().hex}"
 
 
 def content_hash(title: str | None, body: str) -> str:
