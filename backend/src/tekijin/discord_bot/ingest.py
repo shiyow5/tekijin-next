@@ -161,9 +161,10 @@ class Batcher:
         self._messages.append(payload)
 
     def delete(self, message_ids: Iterable[int]) -> None:
-        ids = set(message_ids)
-        _remove(self._messages, lambda queued: queued["message_id"] in ids)
-        _remove(self._deletes, lambda queued: queued in ids)
+        ids = list(dict.fromkeys(message_ids))  # in order, without repeats
+        wanted = set(ids)
+        _remove(self._messages, lambda queued: queued["message_id"] in wanted)
+        _remove(self._deletes, lambda queued: queued in wanted)
         self._deletes.extend(ids)
 
     def take_rewinds(self) -> dict[int, int]:
