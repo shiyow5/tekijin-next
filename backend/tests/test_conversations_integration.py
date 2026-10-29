@@ -237,3 +237,8 @@ def test_deleting_a_conversation_takes_its_messages(engine, fake_embedder, org_i
         _ingest(session, fake_embedder, org_id, [_msg(9002, "新しい", at=NOON)])
         session.commit()
         assert _items(session)["channel:10:2026-10-28"].body == "アリス: 新しい"
+        # Its text removed in Discord and then restored: still hidden (Codex #77).
+        _delete(session, fake_embedder, org_id, [9001])
+        _ingest(session, fake_embedder, org_id, [_msg(9001, "戻した", at=NOON)])
+        session.commit()
+        assert _items(session)["channel:10:2026-10-28"].body == "アリス: 新しい"

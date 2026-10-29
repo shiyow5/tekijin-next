@@ -179,7 +179,12 @@ def delete_messages(
     ).all()
     keys = {_key_of(row) for row in rows}
     for row in rows:
-        session.delete(row)
+        if row.hidden_at is not None:
+            # Deleted from the web before: keep the row as that marker (or the
+            # message would come back if its text returns), but drop the text.
+            row.content = ""
+        else:
+            session.delete(row)
     session.flush()
     for key in keys:
         _rebuild(session, embedder, org_id, guild_id, key, now)
