@@ -184,6 +184,10 @@ class ChannelMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, index=True)
     edited_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+    # Set when the conversation was deleted from the web: the row stays as the
+    # point where history left off, so a restart does not read it back, but it is
+    # left out of every conversation.
+    hidden_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
 
 
 class Chunk(Base):

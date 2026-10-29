@@ -216,19 +216,28 @@ def delete_streams(
     )
 
 
-def delete_conversation(session: Session, *, org_id: int, external_id: str) -> int:
-    """Delete a conversation's stored messages along with the conversation itself.
+def delete_conversation(
+    session: Session, *, org_id: int, external_id: str, now: dt.datetime
+) -> int:
+    """Delete a conversation for good, as the web's delete button means.
 
     Deleting only the ``source_items`` row would not last: the next message on
     that day (or in that thread) rebuilds the conversation from every stored
-    message. Returns how many messages were deleted.
+    message. Deleting the messages would not last either: they mark where
+    history left off, and a restart would read them back from Discord. So they
+    are kept but hidden, and no conversation includes them again. Returns how
+    many messages were hidden.
     """
 
     rows = session.scalars(
-        select(ChannelMessage).where(ChannelMessage.org_id == org_id, *_key_filter(external_id))
+        select(ChannelMessage).where(
+            ChannelMessage.org_id == org_id,
+            ChannelMessage.hidden_at.is_(None),
+            *_key_filter(external_id),
+        )
     ).all()
     for row in rows:
-        session.delete(row)
+        row.hidden_at = now
     session.execute(
         delete(SourceItem).where(
             SourceItem.org_id == org_id,
@@ -259,7 +268,11 @@ def _rebuild(
     rows = session.execute(
         select(ChannelMessage, Employee.name)
         .outerjoin(Employee, Employee.id == ChannelMessage.author_id)
-        .where(ChannelMessage.org_id == org_id, *_key_filter(key))
+        .where(
+            ChannelMessage.org_id == org_id,
+            ChannelMessage.hidden_at.is_(None),
+            *_key_filter(key),
+        )
         .order_by(ChannelMessage.created_at, ChannelMessage.message_id)
     ).all()
     if not rows:

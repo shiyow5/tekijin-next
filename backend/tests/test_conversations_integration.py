@@ -223,7 +223,15 @@ def test_deleting_a_conversation_takes_its_messages(engine, fake_embedder, org_i
     with get_sessionmaker(engine)() as session:
         _ingest(session, fake_embedder, org_id, [_msg(9001, "消したい", at=NOON)])
         session.commit()
-        assert delete_conversation(session, org_id=org_id, external_id="channel:10:2026-10-28") == 1
+        key = "channel:10:2026-10-28"
+        assert delete_conversation(session, org_id=org_id, external_id=key, now=NOW) == 1
+        session.commit()
+        assert _items(session) == {}
+        # The hidden message still marks where history left off (Codex #77) ...
+        assert channel_cursors(session, org_id=org_id) == {10: 9001}
+        # ... and reading it again from history, or editing it, does not bring it back.
+        _ingest(session, fake_embedder, org_id, [_msg(9001, "消したい", at=NOON)])
+        _ingest(session, fake_embedder, org_id, [_msg(9001, "編集", at=NOON, edited_at=NOW)])
         session.commit()
         assert _items(session) == {}
         _ingest(session, fake_embedder, org_id, [_msg(9002, "新しい", at=NOON)])
