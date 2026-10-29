@@ -74,6 +74,79 @@ async def add_backend(
     return await _post(http, base_url, secret, "add", body)
 
 
+async def post_messages(
+    http: httpx.AsyncClient,
+    *,
+    base_url: str,
+    secret: str,
+    guild_id: int,
+    messages: list[dict[str, Any]],
+) -> bool:
+    """Forward new or edited messages (#76). False when they were not stored."""
+
+    result = await _post(
+        http, base_url, secret, "messages", {"guild_id": str(guild_id), "messages": messages}
+    )
+    return result.get("status") == "ok"
+
+
+async def post_deletes(
+    http: httpx.AsyncClient, *, base_url: str, secret: str, guild_id: int, message_ids: list[int]
+) -> bool:
+    """Forward deletions (#76). False when they were not applied."""
+
+    result = await _post(
+        http,
+        base_url,
+        secret,
+        "messages/delete",
+        {"guild_id": str(guild_id), "message_ids": message_ids},
+    )
+    return result.get("status") == "ok"
+
+
+async def post_stream_deletes(
+    http: httpx.AsyncClient, *, base_url: str, secret: str, guild_id: int, stream_ids: list[int]
+) -> bool:
+    """Forget deleted channels or threads (#76). False when it was not applied."""
+
+    result = await _post(
+        http,
+        base_url,
+        secret,
+        "streams/delete",
+        {"guild_id": str(guild_id), "stream_ids": stream_ids},
+    )
+    return result.get("status") == "ok"
+
+
+async def get_cursors(
+    http: httpx.AsyncClient, *, base_url: str, secret: str, guild_id: int
+) -> dict[str, int] | None:
+    """Where each channel's stored history ends (#76), or ``None`` when unknown.
+
+    ``None`` (backend away, or the server not ours) means "do not read history
+    now": reading everything from the beginning is the expensive mistake.
+    """
+
+    try:
+        resp = await http.get(
+            f"{base_url.rstrip('/')}/internal/discord/cursors",
+            params={"guild_id": str(guild_id)},
+            headers={SECRET_HEADER: secret},
+        )
+    except httpx.HTTPError:
+        logger.warning("backend unreachable", exc_info=True)
+        return None
+    if resp.status_code != 200:
+        logger.warning("backend answered %s: %s", resp.status_code, resp.text[:200])
+        return None
+    body = resp.json()
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        return None
+    return {str(k): int(v) for k, v in body.get("cursors", {}).items()}
+
+
 async def _post(
     http: httpx.AsyncClient, base_url: str, secret: str, path: str, body: dict[str, Any]
 ) -> dict[str, Any]:

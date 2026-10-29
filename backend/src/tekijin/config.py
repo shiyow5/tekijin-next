@@ -626,6 +626,9 @@ class Settings(BaseSettings):
     # requests from any other server are refused. The bot also syncs its commands
     # to this server instantly instead of globally (which can take up to an hour).
     discord_guild_id: int | None = None
+    # Channels whose messages the bot never forwards (#76), as comma-separated ids.
+    # A thread inside an excluded channel is excluded too. Read only by the bot.
+    discord_excluded_channel_ids: str = ""
 
     def slack_configured(self) -> bool:
         """True once the OAuth app credentials needed to start linking exist.

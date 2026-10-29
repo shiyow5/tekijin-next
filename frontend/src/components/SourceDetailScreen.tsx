@@ -12,6 +12,7 @@ import { PageBackLink } from "@/components/PageBackLink";
 import { ApiError, deleteSource, getSource } from "@/lib/api-client";
 import type { SourceDetail } from "@/lib/api-types";
 import { formatDateJst } from "@/lib/datetime";
+import { sourceOrigin } from "@/lib/format";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -92,7 +93,7 @@ export function SourceDetailScreen({ sourceId }: { sourceId: string }) {
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-x-md gap-y-xs text-on-surface-variant text-xs">
-            <span>追加: {state.source.author_name ?? "管理者"}</span>
+            <span>{sourceOrigin(state.source)}</span>
             <span>更新日: {formatDateJst(state.source.updated_at) ?? "—"}</span>
             <span>断片: {state.source.chunks}</span>
             {state.source.url ? (

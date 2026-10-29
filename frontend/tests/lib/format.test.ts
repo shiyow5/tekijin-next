@@ -1,4 +1,4 @@
-import { formatConfidence } from "@/lib/format";
+import { formatConfidence, sourceOrigin } from "@/lib/format";
 import { describe, expect, it } from "vitest";
 
 describe("formatConfidence", () => {
@@ -21,5 +21,13 @@ describe("formatConfidence", () => {
     expect(formatConfidence(Number.NaN)).toBe("—");
     expect(formatConfidence(Number.POSITIVE_INFINITY)).toBe("—");
     expect(formatConfidence(Number.NEGATIVE_INFINITY)).toBe("—");
+  });
+});
+
+describe("sourceOrigin (#76)", () => {
+  it("names a Discord conversation, an author, or the admin", () => {
+    expect(sourceOrigin({ provider: "discord", author_name: null })).toBe("Discordの会話");
+    expect(sourceOrigin({ provider: "manual", author_name: "アリス" })).toBe("追加: アリス");
+    expect(sourceOrigin({ provider: "manual", author_name: null })).toBe("追加: 管理者");
   });
 });

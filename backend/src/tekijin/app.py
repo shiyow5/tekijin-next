@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from tekijin import __version__
 from tekijin.api.auth_routes import router as auth_router
+from tekijin.api.discord_ingest_routes import router as discord_ingest_router
 from tekijin.api.discord_routes import login_router as discord_login_router
 from tekijin.api.discord_routes import router as discord_router
 from tekijin.api.health import router as health_router
@@ -139,5 +140,6 @@ def create_app(agent_service: AgentService | None = None) -> FastAPI:
     app.include_router(slack_router)
     app.include_router(discord_router)
     app.include_router(discord_login_router)
+    app.include_router(discord_ingest_router)
     app.include_router(source_router)
     return app

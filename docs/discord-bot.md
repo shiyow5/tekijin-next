@@ -28,8 +28,8 @@ TEKIJINは、`TEKIJIN_DISCORD_GUILD_ID` で指定した1つのサーバーを1�
 
 ## 手順
 
-1. [Discord Developer Portal](https://discord.com/developers/applications) でアプリケーションを作り、Botタブでトークンを発行する。
-2. OAuth2 の URL Generator で、スコープに `bot` と `applications.commands` を選ぶ。権限は無しでよい。生成されたURLを開き、ボットをサーバーに招待する。
+1. [Discord Developer Portal](https://discord.com/developers/applications) でアプリケーションを作り、Botタブでトークンを発行する。同じBotタブの下のほうにある「Privileged Gateway Intents」で「Message Content Intent」をオンにして保存する。会話の取り込み(下の節)で発言の本文を読むのに要る。トークンの再発行は要らない。
+2. OAuth2 の URL Generator で、スコープに `bot` と `applications.commands` を選ぶ。権限は「チャンネルを見る(View Channels)」と「メッセージ履歴を読む(Read Message History)」を選ぶ。生成されたURLを開き、ボットをサーバーに招待する。
 3. 共有シークレットを作る。例: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
 4. バックエンドの `.env` に次を書き、バックエンドを再起動する。
 
@@ -55,6 +55,20 @@ TEKIJINは、`TEKIJIN_DISCORD_GUILD_ID` で指定した1つのサーバーを1�
    `TEKIJIN_DISCORD_GUILD_ID` を入れると、コマンドはそのサーバーにすぐ出る。
 
 `.env` は `chmod 600` にしておく。トークンとシークレットはコミットしない。
+
+## 会話の取り込み
+
+ボットは、サーバーで交わされた会話をTEKIJINに取り込む(Issue #76)。起動すると、チャンネルごとに取り込み済みの続きから過去の履歴を読み、そのあとは新しい投稿・編集・削除を10秒ごとにまとめてバックエンドへ送る。初めて起動したときは、ボットが読めるチャンネルとスレッドの履歴をすべて読む。止まっていたあいだの投稿も、次に起動したときに読み込まれる。
+
+発言は、スレッドならスレッド全体、通常のチャンネルなら日本時間の1日分を1つの会話にまとめ、資料の一覧に「#チャンネル名 日付」の題名で並ぶ。Discordで消された発言は、TEKIJINからも消える。チャンネルやスレッドを丸ごと消した場合も、そこで交わされた会話を消す。ボットの発言、DM、本文の無い発言(添付だけなど)、ピン留めなどのお知らせは取り込まない。
+
+取り込まないチャンネルは、ボットのプロセスに渡す設定で、IDをカンマ区切りで指定する。そのチャンネルの中のスレッドも取り込まない。
+
+```dotenv
+TEKIJIN_DISCORD_EXCLUDED_CHANNEL_IDS=123456789012345678,234567890123456789
+```
+
+除外を足しても、すでに取り込んだ発言は消えない。取り込みを始める前に、サーバーのメンバーへ告知しておく(設計書 docs/plans/2026-10-27-general-org-redesign.md の6章)。
 
 ## 止め方
 
