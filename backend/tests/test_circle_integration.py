@@ -68,9 +68,7 @@ def test_every_expected_source_exists(session, fake_embedder) -> None:
     circle = load_circle()
     org_id = seed_circle(session, fake_embedder, circle, now=NOW).org_id
     session.flush()
-    stored = set(
-        session.scalars(select(SourceItem.external_id).where(SourceItem.org_id == org_id))
-    )
+    stored = set(session.scalars(select(SourceItem.external_id).where(SourceItem.org_id == org_id)))
     refs = {r for q in circle.questions for r in q.get("sources", [])}
     assert {external_id(circle, ref) for ref in refs} <= stored
 
