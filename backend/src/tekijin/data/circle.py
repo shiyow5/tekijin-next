@@ -24,11 +24,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tekijin.data.conversations import IncomingMessage, conversation_key, ingest_messages
+from tekijin.data.conversations import (
+    IncomingMessage,
+    conversation_key,
+    delete_messages,
+    ingest_messages,
+)
 from tekijin.data.members import get_or_create_org_for_guild, resolve_discord_member
-from tekijin.data.sources import MANUAL, upsert_source_item
+from tekijin.data.sources import MANUAL, delete_source_item, upsert_source_item
+from tekijin.models.tables import ChannelMessage, SourceItem
 from tekijin.retrieval.embedding import Embedder
 
 GUILD_ID = "900000000000000001"
@@ -157,8 +164,10 @@ def seed_circle(
         ).id
         for member in circle.members
     }
+    messages = _messages(circle)
+    _forget_removed(session, embedder, circle, messages, org_id=org.id, now=now)
     ingested = ingest_messages(
-        session, embedder, org=org, guild_id=GUILD_ID, messages=_messages(circle), now=now
+        session, embedder, org=org, guild_id=GUILD_ID, messages=messages, now=now
     )
     changed = 0
     for document in circle.documents:
@@ -180,6 +189,41 @@ def seed_circle(
         conversations_changed=ingested.conversations,
         documents_changed=changed,
     )
+
+
+def _forget_removed(
+    session: Session,
+    embedder: Embedder,
+    circle: Circle,
+    messages: list[IncomingMessage],
+    *,
+    org_id: int,
+    now: dt.datetime,
+) -> None:
+    """Drop what an earlier seed stored but the fixtures no longer have, so a
+    reused database matches a fresh seed."""
+
+    stored_messages = session.scalars(
+        select(ChannelMessage.message_id).where(ChannelMessage.org_id == org_id)
+    ).all()
+    current_messages = {message.message_id for message in messages}
+    delete_messages(
+        session,
+        embedder,
+        org_id=org_id,
+        guild_id=GUILD_ID,
+        message_ids=[m for m in stored_messages if m not in current_messages],
+        now=now,
+    )
+    current_documents = {external_id(circle, f"{_DOC}{d['key']}") for d in circle.documents}
+    stored_documents = session.execute(
+        select(SourceItem.id, SourceItem.external_id).where(
+            SourceItem.org_id == org_id, SourceItem.provider == MANUAL
+        )
+    ).all()
+    for item_id, stored_id in stored_documents:
+        if stored_id not in current_documents:
+            delete_source_item(session, item_id=item_id, org_id=org_id)
 
 
 def main() -> int:  # pragma: no cover - exercised via CLI

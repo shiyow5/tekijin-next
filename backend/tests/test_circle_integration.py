@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 
 import pytest
@@ -71,6 +72,31 @@ def test_every_expected_source_exists(session, fake_embedder) -> None:
     stored = set(session.scalars(select(SourceItem.external_id).where(SourceItem.org_id == org_id)))
     refs = {r for q in circle.questions for r in q.get("sources", [])}
     assert {external_id(circle, ref) for ref in refs} <= stored
+
+
+def test_what_the_fixtures_dropped_is_forgotten(session, fake_embedder) -> None:
+    circle = load_circle()
+    org_id = seed_circle(session, fake_embedder, circle, now=NOW).org_id
+    session.flush()
+    gone_conversation = external_id(circle, "conv:chat-lunch")
+    gone_document = external_id(circle, "doc:camp-handover")
+    conversations = [c for c in circle.conversations if c["key"] != "chat-lunch"]
+    focus = next(c for c in conversations if c["key"] == "focus")
+    shorter = {**focus, "lines": focus["lines"][:-1]}
+    smaller = dataclasses.replace(
+        circle,
+        conversations=[shorter if c is focus else c for c in conversations],
+        documents=[d for d in circle.documents if d["key"] != "camp-handover"],
+    )
+
+    seed_circle(session, fake_embedder, smaller, now=NOW)
+    session.flush()
+
+    stored = set(session.scalars(select(SourceItem.external_id).where(SourceItem.org_id == org_id)))
+    assert gone_conversation not in stored
+    assert gone_document not in stored
+    lines = sum(len(c["lines"]) for c in smaller.conversations)
+    assert _count(session, ChannelMessage, org_id) == lines
 
 
 def test_other_organizations_are_left_alone(session, fake_embedder) -> None:
