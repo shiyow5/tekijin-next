@@ -115,11 +115,16 @@ def _document(outcome: dict[str, Any], web_url: str) -> str:
 def _sources(citations: list[dict[str, Any]]) -> str:
     if not citations:
         return ""
-    lines = [
-        f"- {_SOURCE_LABELS.get(c.get('kind', ''), '出典')} `{c.get('source_id', '')}`"
-        for c in citations
-    ]
-    return "出典\n" + "\n".join(lines)
+    return "出典\n" + "\n".join(_source_line(c) for c in citations)
+
+
+def _source_line(citation: dict[str, Any]) -> str:
+    kind, source_id = citation.get("kind", ""), citation.get("source_id", "")
+    if kind == "source":
+        title = citation.get("title") or "資料"
+        url = citation.get("url")
+        return f"- {title}: <{url}>" if url else f"- {title}"
+    return f"- {_SOURCE_LABELS.get(kind, '出典')} `{source_id}`"
 
 
 def _handoff(

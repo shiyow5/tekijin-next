@@ -334,3 +334,20 @@ def test_ask_backend_turns_failures_into_replies() -> None:
     assert _ask(unreachable) == {"kind": "error"}
     assert _ask(lambda r: httpx.Response(200, text="<html>proxy</html>")) == {"kind": "error"}
     assert _ask(lambda r: httpx.Response(200, json=["not", "an", "object"])) == {"kind": "error"}
+
+
+def test_ingested_source_is_shown_by_title_and_link() -> None:
+    reply = format_reply(
+        {
+            "kind": "answered",
+            "text": "守衛室で借ります。",
+            "citations": [
+                {"source_id": "src_1", "kind": "source", "title": "部室", "url": "https://e.jp/1"},
+                {"source_id": "src_2", "kind": "source", "title": "合宿"},
+            ],
+        },
+        web_url="https://e.jp",
+    )
+    assert "- 部室: <https://e.jp/1>" in reply
+    assert "- 合宿\n" in reply + "\n"
+    assert "src_1" not in reply

@@ -26,7 +26,16 @@ export function SourceCitations({
       <ul className="mt-xs flex flex-wrap gap-xs">
         {citations.map((citation) => (
           <li key={`${citation.kind}:${citation.source_id}`}>
-            {citation.kind === "knowledge" ? (
+            {citation.kind === "source" ? (
+              // #81: something the organization ingested; its detail page is /sources.
+              <Link
+                href={`/sources/${encodeURIComponent(citation.source_id.replace(/^src_/, ""))}`}
+                className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm text-sm font-bold text-primary transition-colors hover:bg-surface-container"
+              >
+                <span aria-hidden="true">📄</span>
+                {citation.title || "資料"}
+              </Link>
+            ) : citation.kind === "knowledge" ? (
               // #357/#366: a structured knowledge unit. No detail page yet (that
               // arrives with #354), so a label chip — but a DISTINCT one: the
               // catch-all below says 「過去の回答」, which would be a false claim

@@ -46,6 +46,14 @@ class DailyHit(TypedDict):
     score: float
 
 
+class SourceHit(TypedDict):
+    """One chunk of something the organization ingested (#81)."""
+
+    chunk_id: int
+    source_item_id: int
+    score: float
+
+
 class RetrievalResult(TypedDict):
     """The C4 (HybridRetriever) output shape shared by C5/C6.
 
@@ -78,6 +86,11 @@ class RetrievalResult(TypedDict):
     # 0.0. Always populated by C4 (cheap — reuses the answer dense hits), harmless
     # when the feature is off.
     person_question_similarity: dict[int, float]
+    # #81: the asker's organization's own sources. A member's question fills only
+    # these; ``document_confidence`` then carries ``source_confidence`` so C5 routes
+    # as it does for documents.
+    sources: NotRequired[list[SourceHit]]
+    source_confidence: NotRequired[float]
 
 
 def empty_retrieval() -> RetrievalResult:
@@ -93,6 +106,8 @@ def empty_retrieval() -> RetrievalResult:
         "people_confidence": 0.0,
         "person_question_similarity": {},
         "daily_reports": [],
+        "sources": [],
+        "source_confidence": 0.0,
     }
 
 
@@ -103,6 +118,9 @@ class AgentState(TypedDict, total=False):
     question: str
     asker: dict[str, Any] | None
     now: dt.datetime  # naive; the scorer requires it
+    # The asker's organization (#81). ``None`` for an account without one, which
+    # still reads the older, undivided tables.
+    org_id: int | None
 
     # -- durable persistence identity (set by the API layer) ---------------
     # These live in the checkpoint so that outcome recording survives a

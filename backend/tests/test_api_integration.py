@@ -1158,7 +1158,9 @@ def test_self_answer_message_carries_citations(seed_counts, engine, fake_embedde
     message = next(data for e, data in events if e == "message")
     assert message["status"] == "self_answered"
     assert message["message"] == "保守時間内に更新します。"
-    assert message["citations"] == [{"source_id": "doc_001", "kind": "document"}]
+    assert message["citations"] == [
+        {"source_id": "doc_001", "kind": "document", "title": None, "url": None}
+    ]
 
 
 def test_knowledge_answer_persists_route_and_self_resolution(

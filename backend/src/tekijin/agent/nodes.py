@@ -24,6 +24,8 @@ from tekijin.agent.protocols import (
     IntentResult,
     Retriever,
     SelfAnswerModel,
+    SelfAnswerResult,
+    SourceSearch,
     SufficiencyModel,
 )
 from tekijin.agent.route import PRIOR_ANSWER, decide_route
@@ -38,10 +40,11 @@ from tekijin.agent.stubs import (
 from tekijin.data.questions import count_similar_prior_askers
 from tekijin.knowledge.answer import answer_from_knowledge
 from tekijin.retrieval.embedding import QUERY, Embedder
-from tekijin.retrieval.fragments import FragmentSource, collect_cited_evidence
+from tekijin.retrieval.fragments import CitedEvidence, FragmentSource, collect_cited_evidence
 from tekijin.scorer.scorer import ExpertiseScorer
 
 _QUESTION_TYPE_DEFAULT = "製品QA"
+_NOT_IN_SOURCES = "資料の中に、この質問の答えは見つかりませんでした。"
 
 
 def _top_by_score(items: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
@@ -50,6 +53,24 @@ def _top_by_score(items: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | Non
     if not items:
         return None
     return max(items, key=lambda item: float(item.get("score", 0.0)))
+
+
+def _citations(result: SelfAnswerResult, evidence: Sequence[CitedEvidence]) -> list[dict[str, str]]:
+    """The cited ids that resolve to supplied evidence, with what the UI shows."""
+
+    by_id = {e.source_id: e for e in evidence}
+    citations = []
+    for source_id in result.cited_source_ids:
+        item = by_id.get(source_id)
+        if item is None:
+            continue
+        citation = {"source_id": source_id, "kind": item.kind}
+        if item.title is not None:
+            citation["title"] = item.title
+        if item.url is not None:
+            citation["url"] = item.url
+        citations.append(citation)
+    return citations
 
 
 def answerability_evidence(recommendations: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -128,6 +149,7 @@ class AgentNodes:
         branch_constraint_enabled: bool = False,
         employee_branches: BranchSource | None = None,
         employee_source: EmployeeSource | None = None,
+        source_search: SourceSearch | None = None,
     ) -> None:
         self._intent = intent_model
         self._sufficiency = sufficiency_model
@@ -183,6 +205,8 @@ class AgentNodes:
         # so develop behaviour is byte-identical. See ``c6_score`` for why the pool
         # and the ROUTE signal must stay separate.
         self._employee_source = employee_source
+        # #81: what an organization's members search instead of the undivided tables.
+        self._source_search = source_search
 
     # -- entry: validate input, reset per-question control fields ---------
     def reset(self, state: AgentState) -> AgentState:
@@ -364,6 +388,17 @@ class AgentNodes:
     # -- C4: hybrid retrieval ---------------------------------------------
     def c4_retrieve(self, state: AgentState) -> AgentState:
         question = state["question"]
+        org_id = state.get("org_id")
+        if org_id is not None and self._source_search is not None:
+            found = self._source_search.search(question, org_id, state.get("query_vector") or [])
+            return {
+                "retrieval": {
+                    **empty_retrieval(),
+                    "sources": found.hits,
+                    "source_confidence": found.confidence,
+                    "document_confidence": found.confidence,
+                }
+            }
         topics = state.get("topics") or []
         # #371: on a multi-facet question (e.g. "経理×データ基盤") the raw query's dense
         # signal collapses onto the facet with the thicker corpus, dropping the other
@@ -760,24 +795,26 @@ class AgentNodes:
         """
 
         assert self._self_answer is not None and self._fragment_source is not None
-        retrieval = state.get("retrieval") or empty_retrieval()
-        evidence = collect_cited_evidence(self._fragment_source, retrieval)
+        evidence = self._evidence(state)
         result = self._self_answer.compose(state["question"], evidence)
         if not result.grounded:
             return {"self_answer_grounded": False}
         # The composer already filters cited ids to the supplied evidence, so every
         # id resolves here; keep only resolvable ids (never mislabel an unknown one).
-        kind_by_id = {e.source_id: e.kind for e in evidence}
-        citations = [
-            {"source_id": sid, "kind": kind_by_id[sid]}
-            for sid in result.cited_source_ids
-            if sid in kind_by_id
-        ]
         return {
             "self_answer_grounded": True,
             "self_answer_text": result.answer,
-            "self_answer_citations": citations,
+            "self_answer_citations": _citations(result, evidence),
         }
+
+    def _evidence(self, state: AgentState) -> list[CitedEvidence]:
+        retrieval = state.get("retrieval") or empty_retrieval()
+        sources = retrieval.get("sources") or []
+        org_id = state.get("org_id")
+        if sources and org_id is not None and self._source_search is not None:
+            return self._source_search.evidence(sources, org_id)
+        assert self._fragment_source is not None  # wired with the composer
+        return collect_cited_evidence(self._fragment_source, retrieval)
 
     def self_answered(self, state: AgentState) -> AgentState:
         # Terminal for a grounded self-answer: surface the composed text and carry
@@ -810,7 +847,7 @@ class AgentNodes:
         )
         if top_conf < self._additive_self_answer_floor:
             return {}
-        evidence = collect_cited_evidence(self._fragment_source, retrieval)
+        evidence = self._evidence(state)
         # This is a BEST-EFFORT additive step: the hand-off MUST always follow, so a
         # composer failure (e.g. the LLM returns unparseable structured output ->
         # ValueError) must degrade to "no citation" rather than crash the person run
@@ -822,17 +859,16 @@ class AgentNodes:
             return {}
         if not result.grounded:
             return {}
-        kind_by_id = {e.source_id: e.kind for e in evidence}
-        citations = [
-            {"source_id": sid, "kind": kind_by_id[sid]}
-            for sid in result.cited_source_ids
-            if sid in kind_by_id
-        ]
-        return {"additive_answer_text": result.answer, "additive_citations": citations}
+        return {
+            "additive_answer_text": result.answer,
+            "additive_citations": _citations(result, evidence),
+        }
 
     def document(self, state: AgentState) -> AgentState:
-        docs = (state.get("retrieval") or empty_retrieval())["documents"]
-        top = _top_by_score(docs)
+        retrieval = state.get("retrieval") or empty_retrieval()
+        top = _top_by_score(retrieval["documents"])
+        if top is None and retrieval.get("sources"):
+            return {"answer": _NOT_IN_SOURCES, "document_id": None, "fallback_responder": None}
         doc_id = top["doc_id"] if top else None
         where = f"（文書ID: {doc_id}）" if doc_id else ""
         answer = f"組織の文書に該当がありそうです{where}。該当箇所をご確認ください。"

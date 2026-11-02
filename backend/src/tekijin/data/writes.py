@@ -33,6 +33,10 @@ from tekijin.models.tables import (
 EventRow = tuple[str, dt.datetime, dt.datetime, dict[str, Any] | None]
 
 
+def employee_org_id(session: Session, employee_id: int) -> int | None:
+    return session.scalar(select(Employee.org_id).where(Employee.id == employee_id))
+
+
 def employee_exists(session: Session, employee_id: int) -> bool:
     """True if ``employee_id`` is a real employee (asker FK pre-check).
 

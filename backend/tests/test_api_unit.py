@@ -260,7 +260,7 @@ def test_node_event_self_answered_carries_citations() -> None:
         "message": "保守時間内に更新します。",
         "doc_id": None,
         "fallback_responder": None,
-        "citations": [{"source_id": "doc_001", "kind": "document"}],
+        "citations": [{"source_id": "doc_001", "kind": "document", "title": None, "url": None}],
         "latency_ms": None,
     }
 
@@ -280,7 +280,7 @@ def test_node_event_additive_answer_emits_reference_when_grounded() -> None:
     assert sse.event == "reference"
     assert _data(sse) == {
         "answer": "過去の類似回答です。",
-        "citations": [{"source_id": "qa_1", "kind": "qa"}],
+        "citations": [{"source_id": "qa_1", "kind": "qa", "title": None, "url": None}],
     }
 
 

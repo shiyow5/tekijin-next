@@ -18,7 +18,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 from tekijin.agent.state import RetrievalResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only (keeps the heavy retrieval import out)
+    from tekijin.agent.state import SourceHit
     from tekijin.retrieval.fragments import CitedEvidence
+    from tekijin.retrieval.sources import SourceSearchResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +204,16 @@ class Retriever(Protocol):
     def search(
         self, query: str, *, query_vector: Sequence[float] | None = None
     ) -> RetrievalResult: ...
+
+
+class SourceSearch(Protocol):
+    """C4 for a member of an organization: only what that organization ingested (#81)."""
+
+    def search(
+        self, query: str, org_id: int, query_vector: Sequence[float]
+    ) -> SourceSearchResult: ...
+
+    def evidence(self, hits: Sequence[SourceHit], org_id: int) -> list[CitedEvidence]: ...
 
 
 class BranchSource(Protocol):

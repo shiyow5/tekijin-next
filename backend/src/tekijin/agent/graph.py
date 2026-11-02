@@ -25,6 +25,7 @@ from tekijin.agent.protocols import (
     IntentModel,
     Retriever,
     SelfAnswerModel,
+    SourceSearch,
     SufficiencyModel,
 )
 from tekijin.agent.route import DOCUMENT, PERSON, PRIOR_ANSWER
@@ -136,6 +137,7 @@ def build_agent(
     additive_self_answer_floor: float = 0.20,
     score_all_employees: bool = False,
     similar_askers_enabled: bool = False,
+    source_search: SourceSearch | None = None,
 ):
     """Compile and return the C1-C8 agent graph.
 
@@ -162,6 +164,8 @@ def build_agent(
             C5 route signal keeps reading C4's set either way, but note that with the
             whole roster C6 essentially always finds someone, so the ``no_candidate``
             terminal (「適任者が見つかりませんでした」) becomes unreachable in practice.
+        source_search: #81, what a question carrying an ``org_id`` searches instead
+            of ``retriever``.
         checkpointer: LangGraph checkpointer; default ``MemorySaver``.
     """
 
@@ -209,6 +213,7 @@ def build_agent(
         additive_self_answer_floor=additive_self_answer_floor,
         # #87: score the whole roster in C6 (False = OFF -> C4's candidate set).
         employee_source=Repository(session) if score_all_employees else None,
+        source_search=source_search,
     )
     # #70: the critic is wired only when a model is supplied. Off (the default) the
     # graph is byte-for-byte the pre-#70 flow — C6 -> C7 directly.

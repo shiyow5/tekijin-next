@@ -47,6 +47,9 @@ class CitedEvidence:
     source_id: str
     kind: str
     text: str
+    # Set for an ingested source (#81), so its citation can name and link it.
+    title: str | None = None
+    url: str | None = None
 
 
 class FragmentSource(Protocol):
@@ -65,7 +68,7 @@ class FragmentSource(Protocol):
     def daily_reports_by_ids(self, ids: Sequence[int]) -> dict[int, DailyReportDTO]: ...
 
 
-def _clip(text: str, max_chars: int) -> str:
+def clip_text(text: str, max_chars: int) -> str:
     """Collapse whitespace and truncate to ``max_chars`` (ellipsis if cut)."""
 
     collapsed = " ".join(text.split())
@@ -211,7 +214,7 @@ def _answer_evidence_text(
         if question_body and answer_body
         else (question_body or answer_body)
     )
-    return _clip(text, max_chars) if text else ""
+    return clip_text(text, max_chars) if text else ""
 
 
 def _document_evidence_text(document: DocumentDTO, max_chars: int) -> str:
@@ -220,7 +223,7 @@ def _document_evidence_text(document: DocumentDTO, max_chars: int) -> str:
     title = (document.title or "").strip()
     body = (document.body or "").strip()
     text = f"{title}: {body}" if title and body else title or body
-    return _clip(text, max_chars) if text else ""
+    return clip_text(text, max_chars) if text else ""
 
 
 def _daily_evidence_text(report: DailyReportDTO, max_chars: int) -> str:
@@ -229,7 +232,7 @@ def _daily_evidence_text(report: DailyReportDTO, max_chars: int) -> str:
     issue = (report.issue or "").strip()
     content = (report.content or "").strip()
     text = f"{issue} / {content}" if issue and content else issue or content
-    return _clip(text, max_chars) if text else ""
+    return clip_text(text, max_chars) if text else ""
 
 
 def _answer_fragment(answer: AnswerDTO, questions: dict[str, QuestionDTO], max_chars: int) -> str:
@@ -250,7 +253,7 @@ def _answer_fragment(answer: AnswerDTO, questions: dict[str, QuestionDTO], max_c
     if not text:
         return ""
     # Clip the WHOLE labelled fragment so ``max_chars`` bounds what C1 actually sees.
-    return _clip(f"過去のQ&A: {text}", max_chars)
+    return clip_text(f"過去のQ&A: {text}", max_chars)
 
 
 def _document_fragment(document: DocumentDTO, max_chars: int) -> str:
@@ -261,4 +264,4 @@ def _document_fragment(document: DocumentDTO, max_chars: int) -> str:
     text = f"{title}: {body}" if title and body else title or body
     if not text:
         return ""
-    return _clip(f"社内文書: {text}", max_chars)
+    return clip_text(f"社内文書: {text}", max_chars)
