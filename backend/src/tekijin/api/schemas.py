@@ -879,7 +879,11 @@ class SourceCitation(BaseModel):
     source_id: str
     # "qa" (past Q&A) | "document" (internal doc) | "daily" (daily report, #433)
     # | "knowledge" (structured knowledge unit, #357 — emitted by `knowledge_answer`)
+    # | "source" (something the organization ingested, #81)
     kind: str
+    # Only a "source" has these.
+    title: str | None = None
+    url: str | None = None
 
 
 class ReferenceData(BaseModel):

@@ -75,6 +75,7 @@ from tekijin.data.writes import (
     create_answer,
     detach_question_session,
     employee_exists,
+    employee_org_id,
     insert_shown_recommendations,
     latest_primary_recommendation,
     latest_recommendation_for_person,
@@ -95,6 +96,7 @@ from tekijin.data.writes import (
 )
 from tekijin.knowledge.index import embed_knowledge_units
 from tekijin.retrieval.embedding import PASSAGE, Embedder
+from tekijin.retrieval.sources import ChunkSearch
 
 logger = logging.getLogger(__name__)
 
@@ -523,10 +525,12 @@ class AgentService:
                 persist_question(
                     session, question_id, asker_id, question, now, session_id=session_id
                 )
+                org_id = employee_org_id(session, asker_id)
             ctx = self._reg_ensure(session_id)
             ctx.pending = {
                 "question": question,
                 "asker": {"id": asker_id},
+                "org_id": org_id,
                 "now": now,
                 "question_id": question_id,
             }
@@ -1567,6 +1571,8 @@ class AgentService:
             additive_self_answer_floor=self._additive_self_answer_floor,
             score_all_employees=self._score_all_employees,
             similar_askers_enabled=self._similar_askers_enabled,
+            # An injected retriever is a test's stand-in for all of C4.
+            source_search=None if self._retriever is not None else ChunkSearch(session),
         )
 
     def _run(

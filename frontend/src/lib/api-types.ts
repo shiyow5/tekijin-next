@@ -614,7 +614,10 @@ export interface SourceCitation {
    * be mislabelled as a past answer the moment `knowledge_retrieval_enabled` went
    * true.
    */
-  kind: "qa" | "document" | "daily" | "knowledge";
+  kind: "qa" | "document" | "daily" | "knowledge" | "source";
+  /** `kind="source"` のときだけ付く(#81)。 */
+  title?: string | null;
+  url?: string | null;
 }
 
 /**
