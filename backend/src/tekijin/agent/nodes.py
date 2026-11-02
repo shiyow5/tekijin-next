@@ -332,7 +332,7 @@ class AgentNodes:
         # consultation on estimate-style slots, no matter how a (prompt-sensitive)
         # model feels. This never fires on a vague/low-signal request (no topic, or
         # confidence below threshold), which still clarifies.
-        can_route = bool(intent.topics) and intent.confidence >= INTENT_CONFIDENCE_THRESHOLD
+        can_route = intent.confidence >= INTENT_CONFIDENCE_THRESHOLD
         # Speed (#376): ``can_route`` is decidable from C1's output ALONE, and it
         # forces ``sufficient=True`` anyway — so on the common confident path SKIP the
         # C2 sufficiency LLM call entirely, removing one of the three serial
@@ -358,7 +358,11 @@ class AgentNodes:
         # intent is unresolved. Rather than silently search on nothing and land in
         # no_candidate, flag it so the graph routes to an explicit "couldn't
         # identify the request" terminal (see _after_c2 / unresolved_intent).
-        intent_unresolved = capped and not (state.get("topics") or [])
+        # A member's question is searched anyway: the search itself says when nothing
+        # in the organization's sources fits.
+        intent_unresolved = (
+            capped and not (state.get("topics") or []) and state.get("org_id") is None
+        )
         return {
             "sufficient": sufficient,
             "missing": result.missing,
@@ -450,10 +454,12 @@ class AgentNodes:
         # than letting a higher-scoring different person win.
         return {"prior_answer_note": note, "pinned_responder_id": responder_id}
 
-    def _candidate_pool(self, retrieval: Mapping[str, Any]) -> list[int]:
-        """The people C6 scores: the whole roster when wired, else C4's set (#87)."""
+    def _candidate_pool(self, state: AgentState, retrieval: Mapping[str, Any]) -> list[int]:
+        """The people C6 scores: the whole roster when wired, else C4's set (#87).
 
-        if self._employee_source is None:
+        The roster is not divided by organization, so a member never gets it."""
+
+        if self._employee_source is None or state.get("org_id") is not None:
             return list(retrieval.get("candidate_people") or [])
         return [e.id for e in self._employee_source.list_employees()]
 
@@ -626,7 +632,7 @@ class AgentNodes:
             # is ALSO the C5 person-route signal (`route.py`: `if candidate_people:`),
             # and the route recall it produces is at 1.000 (ADR-0007) — so the route
             # keeps reading C4's set, untouched.
-            pool = self._candidate_pool(retrieval)
+            pool = self._candidate_pool(state, retrieval)
             candidates = [p for p in pool if p not in declined and p not in filled_ids]
             if candidates:
 
@@ -769,7 +775,8 @@ class AgentNodes:
 
         assert self._knowledge_session is not None and self._knowledge_floor is not None
         query_vec = state.get("query_vector") or []
-        if not query_vec:
+        # Knowledge units are not divided by organization yet (R6).
+        if not query_vec or state.get("org_id") is not None:
             return {"self_answer_grounded": False}
         result = answer_from_knowledge(
             self._knowledge_session, query_vec, min_similarity=self._knowledge_floor
@@ -883,6 +890,8 @@ class AgentNodes:
         return {"answer": answer, "document_id": doc_id, "fallback_responder": fallback}
 
     def no_candidate(self, state: AgentState) -> AgentState:
+        if state.get("org_id") is not None:
+            return {"answer": _NOT_IN_SOURCES}
         return {
             "answer": "現時点で適任者が見つかりませんでした。条件を変えて、もう一度お試しください。"
         }

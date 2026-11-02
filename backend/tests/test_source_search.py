@@ -198,3 +198,77 @@ def test_empty_retrieval_has_no_sources() -> None:
     empty = empty_retrieval()
     assert empty["sources"] == []
     assert empty["source_confidence"] == 0.0
+
+
+class _SureWithoutTopics:
+    def analyze(self, question, asker, *, context=None) -> IntentResult:
+        return IntentResult(confidence=0.9, situation="鍵の場所")
+
+
+def test_a_confident_question_without_topics_reaches_the_search(engine, fake_embedder, orgs):
+    org_id, _, _ = orgs
+    with get_sessionmaker(engine)() as session:
+        _add(session, fake_embedder, org_id, "keys", KEYS)
+        session.commit()
+        agent = build_agent(
+            fake_embedder,
+            session,
+            intent_model=_SureWithoutTopics(),
+            self_answer_model=_Composer(),
+            scorer=_Scorer(),
+            source_search=ChunkSearch(session),
+        )
+        state = agent.invoke(
+            {"question": KEYS, "asker": None, "org_id": org_id, "now": NOW},
+            {"configurable": {"thread_id": "no-topics"}},
+        )
+
+    assert state["answer"] == "守衛室で借ります。"
+
+
+def test_nothing_near_the_question_says_so(engine, fake_embedder, orgs):
+    org_id, _, _ = orgs
+    with get_sessionmaker(engine)() as session:
+        agent = build_agent(
+            fake_embedder,
+            session,
+            intent_model=_SureWithoutTopics(),
+            self_answer_model=_Composer(),
+            scorer=_Scorer(),
+            source_search=ChunkSearch(session),
+        )
+        state = agent.invoke(
+            {"question": KEYS, "asker": None, "org_id": org_id, "now": NOW},
+            {"configurable": {"thread_id": "nothing"}},
+        )
+
+    assert state["answer"] == "資料の中に、この質問の答えは見つかりませんでした。"
+
+
+def test_older_switches_cannot_reach_other_organizations(
+    engine, fake_embedder, orgs, monkeypatch
+) -> None:
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("an organization's question reached the undivided tables")
+
+    monkeypatch.setattr("tekijin.agent.nodes.answer_from_knowledge", must_not_run)
+    scorer = _Scorer()
+    scorer.rank = must_not_run
+    org_id, _, _ = orgs
+    with get_sessionmaker(engine)() as session:
+        agent = build_agent(
+            fake_embedder,
+            session,
+            intent_model=_Intent(),
+            self_answer_model=_Composer(),
+            scorer=scorer,
+            source_search=ChunkSearch(session),
+            knowledge_answer_min_similarity=0.0,
+            score_all_employees=True,
+        )
+        state = agent.invoke(
+            {"question": KEYS, "asker": None, "org_id": org_id, "now": NOW},
+            {"configurable": {"thread_id": "switches"}},
+        )
+
+    assert state["answer"] == "資料の中に、この質問の答えは見つかりませんでした。"
