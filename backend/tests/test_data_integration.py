@@ -44,7 +44,7 @@ def test_pgvector_extension_and_schema(engine) -> None:
         ext = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
         assert ext == 1
         # A representative table from each layer exists.
-        for table in ("employees", "answers", "person_topic_edges"):
+        for table in ("employees", "answers", "knowledge_units"):
             exists = conn.execute(text("SELECT to_regclass(:t)"), {"t": table}).scalar()
             assert exists is not None
 
@@ -61,8 +61,6 @@ def test_indexes_exist_on_filtered_columns(engine) -> None:
         ("project_members", "employee_id"),
         ("daily_reports", "employee_id"),
         ("employee_profiles", "employee_id"),
-        ("evidence", "person_id"),
-        ("person_topic_edges", "person_id"),
         ("recommendations", "created_at"),  # scorer's 7-day `load` recency window
         ("questions", "topics"),  # GIN index for topic = ANY(questions.topics)
     }

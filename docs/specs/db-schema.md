@@ -4,7 +4,7 @@ TEKIJIN のデータベース設計。**4層**で構成する。
 
 - **A. 入力データ層** … 合成データ（PR #19）が埋める、社員・プロフィール・案件・チャット・日報。PR #18 の ER をベースとし、本ドキュメントを正とする。
 - **B. アプリ実行時テーブル** … 質問・回答・推薦・計測など、アプリ稼働で溜まるデータ（技術仕様 §4 準拠）。
-- **C. 専門性グラフ** … 行動痕跡から推定した「人×トピック」の重み付きエッジ（doc15＝新規性の中核）。
+- **C. 専門性グラフ** … 表としては持たない。`person_topic_edges` と `evidence` は読む側が無かったため #89 で削除した（`company-v1` タグに残る）。
 - **D. 形式知層** … 生データから抽出した構造化ケース知識 `knowledge_units`（#357/#448＝蓄積＝主軸）。
 
 他テーブルはすべて `EMPLOYEES` の「誰」を FK で指す。永続化は PostgreSQL 16 + pgvector 1本（LangGraph の checkpoints は PostgresSaver が自動管理し、本図には含めない）。
@@ -290,36 +290,7 @@ erDiagram
 
 ## C. 専門性グラフ（doc15＝新規性の中核）
 
-「誰が何に詳しいか」を、行動痕跡（回答・案件・資格）から**決定的に積み上げて**表す「人 × トピック」の重み付きエッジ。C8 ノードがオンライン更新する。**エッジは `EVIDENCE` から再計算可能**（監査可能＝根拠表示に使う）。
-
-```mermaid
-erDiagram
-  EMPLOYEES ||--o{ PERSON_TOPIC_EDGES : "トピック専門性"
-  EMPLOYEES ||--o{ EVIDENCE : "専門性の証拠"
-
-  PERSON_TOPIC_EDGES {
-    uuid person_id FK
-    string topic_id
-    float weight
-    float confidence
-    int evidence_count
-    timestamp last_updated
-  }
-  EVIDENCE {
-    uuid id PK
-    uuid person_id FK
-    string topic_id
-    string source_type
-    float base_score
-    float weight_contrib
-    timestamp ts
-  }
-```
-
-| テーブル | 役割 | 主なカラム |
-|---|---|---|
-| `PERSON_TOPIC_EDGES` | 人×トピックの専門性エッジ | `person_id` FK, `topic_id`, `weight`, `confidence`, `evidence_count`, `last_updated` |
-| `EVIDENCE` | エッジの根拠（積み上げ） | `person_id` FK, `topic_id`, `source_type`(cert/project/answer/self/redirect), `base_score`, `weight_contrib`, `ts` |
+「誰が何に詳しいか」は、行動痕跡（回答・案件・資格）から C6 スコアラーがその場で積み上げて求める（`scorer/evidence.py`）。以前は人×トピックのエッジを `PERSON_TOPIC_EDGES`、その根拠を `EVIDENCE` という表に置く設計だったが、どちらも読む側が無かったため #89 で削除した。設計と定義は `company-v1` タグに残っている。
 
 > `base_score`: 有用回答 1.0 > 案件リード 0.8 > 過去回答 0.7 > 資格 0.6 > 案件メンバー 0.5 > 自己申告 0.3（doc15）> **直接相談のふりかえり 0.25**（#247・伝聞）> 日報 0.15（#355）。断り(declined)は専門性を下げず余裕度のみ下げる。
 >

@@ -9,19 +9,20 @@
 背景は `fixtures/synthetic/README.md` と `analysis/19_評価データ設計.md`。
 """
 
-import importlib.util
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import pytest
 
+from eval_topic_keywords import TOPIC_KEYWORDS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SYN = REPO_ROOT / "fixtures" / "synthetic"
 
 pytestmark = pytest.mark.skipif(
     not (SYN / "projects" / "projects.json").exists(),
-    reason="合成データ未生成。`python3 scripts/build_fixtures.py` を実行してください",
+    reason="合成データが無い。生成スクリプト build_fixtures.py は company-v1 タグにある",
 )
 
 
@@ -30,12 +31,7 @@ def _load(rel):
 
 
 def _topics():
-    spec = importlib.util.spec_from_file_location(
-        "build_eval_v2", REPO_ROOT / "scripts" / "build_eval_v2.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.TOPICS
+    return TOPIC_KEYWORDS
 
 
 @pytest.fixture(scope="module")
@@ -149,7 +145,8 @@ def test_some_topics_have_no_past_answers(topics):
 def test_route_labels_come_from_corpus():
     """評価セットの route が4種類そろい、person に偏りすぎていないこと。
 
-    `scripts/build_eval_v2.py` は route をコーパスの状態（文書数・reuse）から導出する。
+    評価セットの生成スクリプト（build_eval_v2.py、company-v1 タグ）は
+    route をコーパスの状態（文書数・reuse）から導出する。
     fixtures が横並びに戻ると、ここが1種類に潰れる。
     """
     person = json.loads((SYN / "eval" / "eval_person.json").read_text(encoding="utf-8"))

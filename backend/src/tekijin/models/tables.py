@@ -1,11 +1,14 @@
 """SQLAlchemy 2.0 ORM table definitions for the TEKIJIN schema.
 
-The schema follows ``docs/specs/db-schema.md`` and is organised in three layers:
+The schema follows ``docs/specs/db-schema.md`` and is organised in layers:
 
 * **A. Input data** — employees, profiles, chat, daily reports, projects.
 * **B. Runtime** — certifications, skills, questions, answers, recommendations,
   events, project members, documents.
-* **C. Expertise graph** — person/topic edges and their evidence.
+* **D. Knowledge** — formalised knowledge units.
+
+(The former **C. Expertise graph** layer — ``person_topic_edges`` / ``evidence``
+— had no reader and was removed in #89; it survives in the ``company-v1`` tag.)
 
 ``embedding`` columns use :class:`pgvector.sqlalchemy.Vector`; they are
 ``nullable`` because vectors are computed at ingestion time (a later component),
@@ -672,36 +675,6 @@ class Document(Base):
 
 
 # --------------------------------------------------------------------------- #
-# C. Expertise graph layer
-# --------------------------------------------------------------------------- #
-class PersonTopicEdge(Base):
-    """Weighted person x topic expertise edge (recomputable from evidence)."""
-
-    __tablename__ = "person_topic_edges"
-
-    person_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), primary_key=True, index=True)
-    topic_id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    weight: Mapped[float | None] = mapped_column(Float)
-    confidence: Mapped[float | None] = mapped_column(Float)
-    evidence_count: Mapped[int | None] = mapped_column(Integer)
-    last_updated: Mapped[dt.datetime | None] = mapped_column(DateTime)
-
-
-class Evidence(Base):
-    """A single piece of evidence backing an expertise edge."""
-
-    __tablename__ = "evidence"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    person_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
-    topic_id: Mapped[str] = mapped_column(String(255))
-    source_type: Mapped[str | None] = mapped_column(String(32))
-    base_score: Mapped[float | None] = mapped_column(Float)
-    weight_contrib: Mapped[float | None] = mapped_column(Float)
-    ts: Mapped[dt.datetime | None] = mapped_column(DateTime)
-
-
-# --------------------------------------------------------------------------- #
 # D. Knowledge layer (#357 — tacit → explicit)
 # --------------------------------------------------------------------------- #
 class KnowledgeUnit(Base):
@@ -779,7 +752,5 @@ __all__ = [
     "Event",
     "ProjectMember",
     "Document",
-    "PersonTopicEdge",
-    "Evidence",
     "KnowledgeUnit",
 ]
