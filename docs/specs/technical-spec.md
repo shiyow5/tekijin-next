@@ -77,7 +77,7 @@ version 0.2 / 2026-08-26 / Aチーム（3名）
     │                            │
 ┌───▼────────────────────────▼─────────────────┐
 │  PostgreSQL 16 + pgvector                                    │
-│   employees / certifications / skills / projects             │
+│   employees / employee_profiles / chat / sources / chunks    │
 │   questions / answers / recommendations / documents          │
 │   events（レイテンシ・経路の記録）                           │
 │   + LangGraph checkpoints（langgraph-checkpoint-postgres）    │
@@ -273,12 +273,9 @@ graph = g.compile(checkpointer=PostgresSaver(...))
 
 ```sql
 -- 人
-employees(id, name, dept, role, branch, years, self_intro, embedding vector)
--- 資格・スキル・案件の4表は #95 で推薦の根拠から外した。表は seed のコードと一緒に後で消す
-certifications(id, employee_id, name, acquired_at)        -- 資格
-skills(id, employee_id, topic, level, source)             -- 自己申告 / 推定
-projects(id, industry, products[], period)                -- 案件
-project_members(project_id, employee_id, role)
+employees(id, name, dept, role, years, self_intro, embedding vector)
+-- 資格・スキル・案件の4表と日報、employees.branch は #97 で消した(company-v1 タグに残る)。
+-- それより前に作った DB には残るが、コードは読みも書きもしない
 
 -- 質問と回答
 questions(id, asker_id, body, topics[], status, created_at, embedding vector)
@@ -289,10 +286,6 @@ recommendations(id, question_id, employee_id, rank, score, reasons jsonb,
 
 -- 文書
 documents(id, title, body, source, updated_at, embedding vector)
-
--- 日報（#91 で機能を削除。表と合成データは後続のPRで消すまで残す・読む側は無い）
-daily_reports(id, employee_id, report_date, content, issue, created_at,
-              topics text[], embedding vector)
 
 -- 形式知（#357/#448・知識抽出パイプラインの出力・graph 外で upsert）
 knowledge_units(id, kind, problem, action, result, topics text[], industry,
@@ -420,11 +413,9 @@ score(e, q) = w1·topic_fit(e,q)
 
 | データ | 件数 | 設計 |
 | --- | --- | --- |
-| 社員 | 40名 | MAC資料の職種比率に寄せる（技術38.7% / 営業32.0% / スタッフ27.7%）。拠点は3〜4箇所 |
-| 資格 | 100件 | MAC資料の推奨資格リストから（情報処理系、中小企業診断士、日商簿記、G検定・E資格 など） |
-| 案件 | 120件 | OA機器・IT商材の販社を想定した商材で構成（複合機、PC、ネットワーク、セキュリティ、おとどけーな、まもりーな。固有の商品名は架空） |
+| 社員 | 40名 | MAC資料の職種比率に寄せる（技術38.7% / 営業32.0% / スタッフ27.7%） |
 | 過去QA | 150件 | 補助経路（誰が答えたか）と専門性推定の燃料。**質と多様性が体験と推薦精度を決めるので、ここに時間を使う** |
-| 社内文書 | 30件 | 格下げ経路用。件数を減らす。実装が押したら未使用でも可 |
+| 社内文書 | 36件 | 格下げ経路用。件数を減らす。実装が押したら未使用でも可 |
 | 評価用質問 | 87行 | ヒアリング由来を優先（person 49 / data 23 / abstain 15。`fixtures/synthetic/eval/eval_person.json`） |
 
 生成は Claude Code で行い、**人が目視で確認する。** 生成物をそのまま使うと不自然さがデモで露呈する。

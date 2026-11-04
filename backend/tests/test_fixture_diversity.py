@@ -3,8 +3,9 @@
 `fixtures/synthetic/` は評価の土台なので、構造が退化すると
 **評価セットの側で何をやっても測定にならない**。以下はその退化を検出する。
 
-- #51: トピック → 専門家が単一部署に閉じると、個人単位の専門性推定を評価できない
 - #52: 全トピックが「回答6〜7件・文書1〜2件」と横並びだと、route をコーパスから決められない
+
+#51 の部署横断の検査は案件と日報の合成データを読んでいたので、それらと一緒に #97 で消した。
 
 背景は `fixtures/synthetic/README.md` と `analysis/19_評価データ設計.md`。
 """
@@ -21,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SYN = REPO_ROOT / "fixtures" / "synthetic"
 
 pytestmark = pytest.mark.skipif(
-    not (SYN / "projects" / "projects.json").exists(),
+    not (SYN / "answers" / "answers.json").exists(),
     reason="合成データが無い。生成スクリプト build_fixtures.py は company-v1 タグにある",
 )
 
@@ -37,70 +38,6 @@ def _topics():
 @pytest.fixture(scope="module")
 def topics():
     return _topics()
-
-
-# ------------------------------------------------------------------ #51
-
-
-def test_projects_cross_department(topics):
-    """部署をまたぐメンバー構成の案件が一定割合あること。
-
-    一次データは顧客接点のある4部署にしか案件を割り当てていない。
-    支援部署（総務・経理・情シス等）をメンバーに入れないと、
-    バックオフィスの社員は案件の証拠を一切持てず、トピック→専門家が部署に一意に決まる。
-    """
-    employees = {e["id"]: e for e in _load("people/employees.json")}
-    members = defaultdict(list)
-    for m in _load("projects/project_members.json"):
-        members[m["project_id"]].append(m)
-
-    cross = 0
-    for ms in members.values():
-        lead = next((m for m in ms if m["role"] == "lead"), None)
-        if lead is None:
-            continue
-        lead_dept = employees[lead["employee_id"]]["department"]
-        if any(
-            employees[m["employee_id"]]["department"] != lead_dept
-            for m in ms
-            if m["role"] == "member"
-        ):
-            cross += 1
-    rate = cross / len(members)
-    assert rate >= 0.15, f"部署をまたぐ案件が {rate:.0%} しかない"
-
-
-def test_topic_experts_are_not_all_identical(topics):
-    """トピックごとの上位専門家が、トピック間で十分に散らばっていること。
-
-    以前は開発部の4名が開発系6トピックすべてで**完全に同じ**正解集合だった。
-    そうなると、クエリを何件足しても独立サンプルが増えない。
-    """
-    projects = {p["id"]: p for p in _load("projects/projects.json")}
-    members = defaultdict(list)
-    for m in _load("projects/project_members.json"):
-        members[m["project_id"]].append(m)
-
-    def match(text):
-        return [t for t, kws in topics.items() if any(k in text for k in kws)]
-
-    ev = defaultdict(lambda: defaultdict(float))
-    for pid, p in projects.items():
-        ts = match(f"{p['subject']} {p['client_issue']} {p['product']} {p.get('remarks', '')}")
-        for m in members[pid]:
-            w = 1.0 if m["role"] == "lead" else 0.6
-            for t in ts:
-                ev[m["employee_id"]][t] += w
-    for d in _load("daily_reports/daily_reports.json"):
-        for t in match(f"{d['content']} {d.get('issue', '')}"):
-            ev[d["employee_id"]][t] += 0.15
-
-    def top(t, k=3):
-        r = sorted(((e, ev[e][t]) for e in ev if ev[e][t] > 0), key=lambda x: (-x[1], x[0]))
-        return tuple(e for e, _ in r[:k])
-
-    uniq = {top(t) for t in topics if top(t)}
-    assert len(uniq) >= 18, f"トピック→上位3名 のユニーク集合が {len(uniq)} 種類しかない"
 
 
 # ------------------------------------------------------------------ #52

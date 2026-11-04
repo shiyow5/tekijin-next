@@ -29,7 +29,6 @@ def map_employee(r: dict[str, Any]) -> t.Employee:
         department=r.get("department"),
         section=r.get("section"),
         position=r.get("position"),
-        branch=r.get("branch"),
         role=r.get("role"),
         hire_date=parse_date(r.get("hire_date")),
         department_history=r.get("department_history"),
@@ -45,50 +44,6 @@ def map_profile(r: dict[str, Any]) -> t.EmployeeProfile:
     )
 
 
-def map_certification(r: dict[str, Any]) -> t.Certification:
-    return t.Certification(
-        id=r["id"],
-        employee_id=r["employee_id"],
-        name=r["name"],
-        acquired_at=parse_date(r.get("acquired_at")),
-    )
-
-
-def map_skill(r: dict[str, Any]) -> t.Skill:
-    return t.Skill(
-        id=r["id"],
-        employee_id=r["employee_id"],
-        topic=r["topic"],
-        level=r.get("level"),
-        source=r.get("source"),
-    )
-
-
-def map_project(r: dict[str, Any]) -> t.Project:
-    return t.Project(
-        id=r["id"],
-        subject=r.get("subject"),
-        client_company=r.get("client_company"),
-        industry=r.get("industry"),
-        company_size=r.get("company_size"),
-        client_issue=r.get("client_issue"),
-        product=r.get("product"),
-        negotiation_count=r.get("negotiation_count"),
-        status=r.get("status"),
-        remarks=r.get("remarks"),
-        start_date=parse_date(r.get("start_date")),
-        end_date=parse_date(r.get("end_date")),
-    )
-
-
-def map_project_member(r: dict[str, Any]) -> t.ProjectMember:
-    return t.ProjectMember(
-        project_id=r["project_id"],
-        employee_id=r["employee_id"],
-        role=r["role"],
-    )
-
-
 def map_employee_chat(r: dict[str, Any]) -> t.EmployeeChatHistory:
     return t.EmployeeChatHistory(
         id=r["id"],
@@ -97,18 +52,6 @@ def map_employee_chat(r: dict[str, Any]) -> t.EmployeeChatHistory:
         channel=r.get("channel"),
         message=r.get("message"),
         sent_at=parse_datetime(r.get("sent_at")),
-    )
-
-
-def map_daily_report(r: dict[str, Any]) -> t.DailyReport:
-    return t.DailyReport(
-        id=r["id"],
-        employee_id=r["employee_id"],
-        report_date=parse_date(r.get("report_date")),
-        content=r.get("content"),
-        issue=r.get("issue"),
-        topics=r.get("topics") or [],
-        created_at=parse_datetime(r.get("created_at")),
     )
 
 
@@ -152,13 +95,8 @@ def map_document(r: dict[str, Any]) -> t.Document:
 # Ordered so that parents are inserted before their FK dependants.
 _PLAN: tuple[tuple[str, str, Mapper], ...] = (
     ("employees", "employees", map_employee),
-    ("projects", "projects", map_project),
     ("profiles", "profiles", map_profile),
-    ("certifications", "certifications", map_certification),
-    ("skills", "skills", map_skill),
-    ("project_members", "project_members", map_project_member),
     ("employee_chat", "employee_chat", map_employee_chat),
-    ("daily_reports", "daily_reports", map_daily_report),
     ("questions", "questions", map_question),
     ("answers", "answers", map_answer),
     ("documents", "documents", map_document),

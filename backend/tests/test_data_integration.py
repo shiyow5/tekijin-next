@@ -14,7 +14,7 @@ from sqlalchemy import event, select, text
 
 from tekijin.config import get_settings
 from tekijin.data.dashboard import _avg_resolution_hours
-from tekijin.data.db import get_engine, get_sessionmaker, session_scope
+from tekijin.data.db import Base, get_engine, get_sessionmaker, session_scope
 from tekijin.data.documents import get_document
 from tekijin.data.history import recent_questions_for_asker
 from tekijin.data.inbox import pending_handoffs_for_responder
@@ -30,7 +30,6 @@ from tekijin.models.tables import (
     Document,
     Employee,
     EmployeeProfile,
-    ProjectMember,
     Question,
     Recommendation,
 )
@@ -52,14 +51,10 @@ def test_pgvector_extension_and_schema(engine) -> None:
 def test_indexes_exist_on_filtered_columns(engine) -> None:
     # Columns the repository filters on must be indexed.
     expected = {
-        ("certifications", "employee_id"),
-        ("skills", "employee_id"),
         ("answers", "topic"),
         ("answers", "question_id"),
         ("answers", "responder_id"),
         ("questions", "asker_id"),
-        ("project_members", "employee_id"),
-        ("daily_reports", "employee_id"),
         ("employee_profiles", "employee_id"),
         ("recommendations", "created_at"),  # scorer's 7-day `load` recency window
         ("questions", "topics"),  # GIN index for topic = ANY(questions.topics)
@@ -120,16 +115,6 @@ def test_record_events_persists_stage_rows(seed_counts, session) -> None:
     )
     assert [e.stage for e in saved] == ["c1_intent", "c6_score"]
     assert saved[1].meta == {"n": 3}
-
-
-def test_project_members_role_check_constraint(engine, seed_counts) -> None:
-    # The CHECK constraint must reject roles outside {lead, member}.
-    factory = get_sessionmaker(engine)
-    with (
-        pytest.raises(Exception),  # noqa: B017 - IntegrityError from CHECK
-        session_scope(factory) as sess,
-    ):
-        sess.add(ProjectMember(project_id=1, employee_id=1, role="observer"))
 
 
 # --------------------------------------------------------------------------- #
@@ -480,13 +465,16 @@ def test_get_document_unknown_id_is_none(seed_counts, session) -> None:
 # seed
 # --------------------------------------------------------------------------- #
 def test_seed_counts(seed_counts) -> None:
-    assert seed_counts["employees"] == 40
-    assert seed_counts["projects"] == 120
-    assert seed_counts["project_members"] == 237
-    assert seed_counts["daily_reports"] == 3070
-    # #51/#52 で skills が 58 -> 61 になった分、合計が 5993 -> 5996
-    # #296 で型番/製品文書を6件追加（documents 30 -> 36）→ 合計 5996 -> 6002
-    assert sum(seed_counts.values()) == 6002
+    assert seed_counts == {
+        "employees": 40,
+        "profiles": 40,
+        "employee_chat": 2000,
+        "questions": 150,
+        "answers": 150,
+        "documents": 36,
+    }
+    # #97 で日報・資格・スキル・案件の合成データを消した(6002 -> 2416)
+    assert sum(seed_counts.values()) == 2416
 
 
 def test_seed_leaves_embeddings_null(seed_counts, session) -> None:
@@ -513,7 +501,7 @@ def test_list_and_get_employee(seed_counts, session) -> None:
     employees = repo.list_employees()
     assert len(employees) == 40
     first = repo.get_employee(1)
-    assert first is not None and first.id == 1 and first.branch
+    assert first is not None and first.id == 1 and first.department
     assert repo.get_employee(999999) is None
 
 
@@ -690,8 +678,11 @@ def test_apply_schema_upgrades_migrates_old_db(database_url: str) -> None:
             conn.execute(text("CREATE TABLE employees (id int primary key)"))
             # Existing recommendations table predating the notification columns.
             conn.execute(text("CREATE TABLE recommendations (id int primary key)"))
-            # #355: pre-existing daily_reports without the new topics column.
-            conn.execute(text("CREATE TABLE daily_reports (id int primary key)"))
+            # #97: a table the code no longer has. The upgrade must leave it alone
+            # (no new columns, no widening) instead of failing or rewriting it.
+            conn.execute(
+                text("CREATE TABLE daily_reports (id int primary key, embedding vector(1024))")
+            )
             # #451: pre-existing chat history without the conversation-scan index.
             # `create_all` builds the TABLE on a real upgrade but never its index,
             # so the old DB below starts with the columns and no index at all.
@@ -746,7 +737,8 @@ def test_apply_schema_upgrades_migrates_old_db(database_url: str) -> None:
                 "accepted_seen_at",
                 "request_seen_at",
             }
-            # #355: daily_reports.topics added to the pre-existing table.
+            # #97: the dropped table is ignored: not widened, no column added.
+            assert embedding_type(conn, "daily_reports") == "vector(1024)"
             has_daily_topics = conn.execute(
                 text(
                     "SELECT 1 FROM information_schema.columns WHERE table_schema = :s "
@@ -754,11 +746,7 @@ def test_apply_schema_upgrades_migrates_old_db(database_url: str) -> None:
                 ),
                 {"s": schema},
             ).scalar()
-            assert has_daily_topics == 1
-            # #433: daily_reports.embedding is ADDED to the pre-existing table (it
-            # had no embedding column) at the current dim, so a daily report can be
-            # a knowledge source. Exercises the new ADD COLUMN + widen-array entry.
-            assert embedding_type(conn, "daily_reports") == "vector(2048)"
+            assert has_daily_topics is None
             # #451: the chat-extraction batch reads the whole table ordered by
             # (channel, sent_at, id) filtered to non-null message/sent_at, so the
             # index has to match that shape exactly to replace the sort. Asserting
@@ -782,6 +770,108 @@ def test_apply_schema_upgrades_migrates_old_db(database_url: str) -> None:
         with eng.begin() as conn:
             conn.execute(text("DROP TABLE chunks"))
         _apply_schema_upgrades(eng)
+    finally:
+        eng.dispose()
+        admin = get_engine(database_url)
+        try:
+            with admin.begin() as conn:
+                conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        finally:
+            admin.dispose()
+
+
+def test_migrate_and_seed_on_db_with_dropped_tables(database_url: str) -> None:
+    """#97: a database created before the company tables were removed still works.
+
+    There is no migration tool and nothing drops the old tables, so an existing DB
+    keeps ``daily_reports`` / ``projects`` / ``project_members`` /
+    ``certifications`` / ``skills`` and ``employees.branch``, with rows whose
+    foreign keys point at ``employees``. ``apply_migrations`` must leave them be,
+    and ``run_seed`` must still TRUNCATE ``employees`` (CASCADE empties the old
+    child tables) and reload the fixtures.
+    """
+
+    schema = "dropped_tables_test"
+    admin = get_engine(database_url)
+    try:
+        with admin.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            conn.execute(text(f"CREATE SCHEMA {schema}"))
+    finally:
+        admin.dispose()
+
+    eng = get_engine(database_url)
+
+    @event.listens_for(eng, "connect")
+    def _set_search_path(dbapi_conn, _record):  # pragma: no cover - driver callback
+        with dbapi_conn.cursor() as cur:
+            cur.execute(f"SET search_path TO {schema}, public")
+
+    old_children = ("daily_reports", "project_members", "certifications", "skills")
+    try:
+        # The current schema, plus what an older create_all left behind.
+        Base.metadata.create_all(eng, checkfirst=False)
+        with eng.begin() as conn:
+            conn.execute(text("ALTER TABLE employees ADD COLUMN branch VARCHAR(255)"))
+            conn.execute(
+                text(
+                    "CREATE TABLE daily_reports (id int primary key, "
+                    "employee_id int NOT NULL REFERENCES employees(id), "
+                    "topics text[], embedding vector(1024))"
+                )
+            )
+            conn.execute(text("CREATE TABLE projects (id int primary key, subject text)"))
+            conn.execute(
+                text(
+                    "CREATE TABLE project_members ("
+                    "project_id int REFERENCES projects(id), "
+                    "employee_id int REFERENCES employees(id), role varchar(32), "
+                    "PRIMARY KEY (project_id, employee_id))"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TABLE certifications (id varchar(64) primary key, "
+                    "employee_id int NOT NULL REFERENCES employees(id), name varchar(255))"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TABLE skills (id varchar(64) primary key, "
+                    "employee_id int NOT NULL REFERENCES employees(id), topic varchar(255))"
+                )
+            )
+            conn.execute(text("INSERT INTO employees (id, name, branch) VALUES (1, 'old', '大阪')"))
+            conn.execute(text("INSERT INTO daily_reports (id, employee_id) VALUES (1, 1)"))
+            conn.execute(text("INSERT INTO projects (id, subject) VALUES (1, 's')"))
+            conn.execute(text("INSERT INTO project_members VALUES (1, 1, 'lead')"))
+            conn.execute(text("INSERT INTO certifications VALUES ('c1', 1, 'n')"))
+            conn.execute(text("INSERT INTO skills VALUES ('s1', 1, 't')"))
+
+        apply_migrations(engine=eng)  # python -m tekijin.data.migrate
+        with eng.connect() as conn:
+            for table in old_children:
+                assert conn.execute(text(f"SELECT count(*) FROM {table}")).scalar() == 1
+
+        counts = run_seed(engine=eng, fixtures_dir=get_settings().fixtures_dir)
+        assert counts["employees"] == 40
+        with eng.connect() as conn:
+            # TRUNCATE employees ... CASCADE emptied every old table pointing at it.
+            for table in old_children:
+                assert conn.execute(text(f"SELECT count(*) FROM {table}")).scalar() == 0
+            # The old column is still there, just never written.
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM employees WHERE branch IS NOT NULL")
+                ).scalar()
+                == 0
+            )
+            assert conn.execute(text("SELECT count(*) FROM employees")).scalar() == 40
+
+        # Re-seeding and migrating again stay idempotent with the old tables present.
+        assert run_seed(engine=eng, fixtures_dir=get_settings().fixtures_dir) == counts
+        apply_migrations(engine=eng)
     finally:
         eng.dispose()
         admin = get_engine(database_url)

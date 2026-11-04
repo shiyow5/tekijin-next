@@ -6,7 +6,6 @@
     "department": "営業部",
     "section": "営業部 第1課",
     "position": "部長",
-    "branch": "大阪",
     "role": "営業",
     "hire_date": "2011-04-01",
     "department_history": [
@@ -24,7 +23,6 @@
     "department": "営業部",
     "section": "営業部 第1課",
     "position": "課長",
-    "branch": "本社",
     "role": "営業",
     "hire_date": "2016-04-01",
     "department_history": [
@@ -47,7 +45,6 @@
     "department": "営業部",
     "section": "営業部 第2課",
     "position": "主任",
-    "branch": "本社",
     "role": "営業",
     "hire_date": "2019-04-01",
     "department_history": [
@@ -65,7 +62,6 @@
     "department": "マーケティング部",
     "section": "マーケティング部 第1課",
     "position": "部長",
-    "branch": "本社",
     "role": "営業",
     "hire_date": "2012-04-01",
     "department_history": [
@@ -83,7 +79,6 @@
     "department": "マーケティング部",
     "section": "マーケティング部 第1課",
     "position": "課長",
-    "branch": "大阪",
     "role": "営業",
     "hire_date": "2017-04-01",
     "department_history": [
@@ -101,7 +96,6 @@
     "department": "情報システム部",
     "section": "情報システム部 第1課",
     "position": "部長",
-    "branch": "大阪",
     "role": "技術",
     "hire_date": "2010-10-01",
     "department_history": [
@@ -119,7 +113,6 @@
     "department": "情報システム部",
     "section": "情報システム部 第1課",
     "position": "課長",
-    "branch": "名古屋",
     "role": "技術",
     "hire_date": "2015-10-01",
     "department_history": [
@@ -137,7 +130,6 @@
     "department": "人事部",
     "section": "人事部 第1課",
     "position": "部長",
-    "branch": "本社",
     "role": "スタッフ",
     "hire_date": "2013-04-01",
     "department_history": [
@@ -155,7 +147,6 @@
     "department": "人事部",
     "section": "人事部 第1課",
     "position": "課長",
-    "branch": "東京",
     "role": "スタッフ",
     "hire_date": "2018-04-01",
     "department_history": [
@@ -178,7 +169,6 @@
     "department": "経理部",
     "section": "経理部 第1課",
     "position": "課長",
-    "branch": "本社",
     "role": "スタッフ",
     "hire_date": "2016-04-01",
     "department_history": [
@@ -196,7 +186,6 @@
     "department": "経理部",
     "section": "経理部 第1課",
     "position": "部長",
-    "branch": "本社",
     "role": "スタッフ",
     "hire_date": "2012-04-01",
     "department_history": [
@@ -214,7 +203,6 @@
     "department": "総務部",
     "section": "総務部 第1課",
     "position": "部長",
-    "branch": "東京",
     "role": "スタッフ",
     "hire_date": "2011-04-01",
     "department_history": [
@@ -232,7 +220,6 @@
     "department": "開発部",
     "section": "開発部 第1課",
     "position": "部長",
-    "branch": "本社",
     "role": "技術",
     "hire_date": "2014-04-01",
     "department_history": [
@@ -250,7 +237,6 @@
     "department": "開発部",
     "section": "開発部 第1課",
     "position": "課長",
-    "branch": "本社",
     "role": "技術",
     "hire_date": "2015-04-01",
     "department_history": [
@@ -273,7 +259,6 @@
     "department": "開発部",
     "section": "開発部 第2課",
     "position": "主任",
-    "branch": "大阪",
     "role": "技術",
     "hire_date": "2021-10-01",
     "department_history": [
@@ -291,7 +276,6 @@
     "department": "開発部",
     "section": "開発部 第2課",
     "position": "一般社員",
-    "branch": "東京",
     "role": "技術",
     "hire_date": "2023-04-01",
     "department_history": [
@@ -309,7 +293,6 @@
     "department": "カスタマーサポート部",
     "section": "カスタマーサポート部 第1課",
     "position": "部長",
-    "branch": "本社",
     "role": "技術",
     "hire_date": "2012-10-01",
     "department_history": [
@@ -327,7 +310,6 @@
     "department": "カスタマーサポート部",
     "section": "カスタマーサポート部 第1課",
     "position": "課長",
-    "branch": "大阪",
     "role": "技術",
     "hire_date": "2018-04-01",
     "department_history": [
@@ -350,7 +332,6 @@
     "department": "購買部",
     "section": "購買部 第1課",
     "position": "部長",
-    "branch": "名古屋",
     "role": "スタッフ",
     "hire_date": "2013-04-01",
     "department_history": [
@@ -368,7 +349,6 @@
     "department": "広報部",
     "section": "広報部 第1課",
     "position": "部長",
-    "branch": "本社",
     "role": "営業",
     "hire_date": "2011-04-01",
     "department_history": [
@@ -386,7 +366,6 @@
     "department": "営業部",
     "section": "営業部 第2課",
     "position": "一般社員",
-    "branch": "名古屋",
     "role": "営業",
     "hire_date": "2023-04-01",
     "department_history": [
@@ -404,7 +383,6 @@
     "department": "マーケティング部",
     "section": "マーケティング部 第2課",
     "position": "主任",
-    "branch": "大阪",
     "role": "営業",
     "hire_date": "2020-04-01",
     "department_history": [
@@ -422,7 +400,6 @@
     "department": "マーケティング部",
     "section": "マーケティング部 第2課",
     "position": "一般社員",
-    "branch": "東京",
     "role": "営業",
     "hire_date": "2022-04-01",
     "department_history": [
@@ -440,7 +417,6 @@
     "department": "情報システム部",
     "section": "情報システム部 第2課",
     "position": "主任",
-    "branch": "本社",
     "role": "技術",
     "hire_date": "2019-10-01",
     "department_history": [
@@ -463,7 +439,6 @@
     "department": "情報システム部",
     "section": "情報システム部 第2課",
     "position": "一般社員",
-    "branch": "福岡",
     "role": "技術",
     "hire_date": "2024-04-01",
     "department_history": [
@@ -481,7 +456,6 @@
     "department": "人事部",
     "section": "人事部 第2課",
     "position": "主任",
-    "branch": "本社",
     "role": "スタッフ",
     "hire_date": "2021-04-01",
     "department_history": [
@@ -499,7 +473,6 @@
     "department": "人事部",
     "section": "人事部 第2課",
     "position": "一般社員",
-    "branch": "本社",
     "role": "スタッフ",
     "hire_date": "2023-10-01",
     "department_history": [
@@ -517,7 +490,6 @@
     "department": "経理部",
     "section": "経理部 第2課",
     "position": "主任",
-    "branch": "本社",
     "role": "スタッフ",
     "hire_date": "2020-04-01",
     "department_history": [
@@ -540,7 +512,6 @@
     "department": "経理部",
     "section": "経理部 第2課",
     "position": "一般社員",
-    "branch": "名古屋",
     "role": "スタッフ",
     "hire_date": "2022-10-01",
     "department_history": [
@@ -558,7 +529,6 @@
     "department": "総務部",
     "section": "総務部 第1課",
     "position": "課長",
-    "branch": "大阪",
     "role": "スタッフ",
     "hire_date": "2017-10-01",
     "department_history": [
@@ -576,7 +546,6 @@
     "department": "総務部",
     "section": "総務部 第2課",
     "position": "主任",
-    "branch": "名古屋",
     "role": "スタッフ",
     "hire_date": "2019-04-01",
     "department_history": [
@@ -594,7 +563,6 @@
     "department": "総務部",
     "section": "総務部 第2課",
     "position": "一般社員",
-    "branch": "大阪",
     "role": "スタッフ",
     "hire_date": "2024-04-01",
     "department_history": [
@@ -612,7 +580,6 @@
     "department": "カスタマーサポート部",
     "section": "カスタマーサポート部 第2課",
     "position": "主任",
-    "branch": "東京",
     "role": "技術",
     "hire_date": "2020-04-01",
     "department_history": [
@@ -635,7 +602,6 @@
     "department": "カスタマーサポート部",
     "section": "カスタマーサポート部 第2課",
     "position": "一般社員",
-    "branch": "福岡",
     "role": "技術",
     "hire_date": "2022-04-01",
     "department_history": [
@@ -653,7 +619,6 @@
     "department": "購買部",
     "section": "購買部 第1課",
     "position": "課長",
-    "branch": "東京",
     "role": "スタッフ",
     "hire_date": "2016-10-01",
     "department_history": [
@@ -671,7 +636,6 @@
     "department": "購買部",
     "section": "購買部 第2課",
     "position": "主任",
-    "branch": "東京",
     "role": "スタッフ",
     "hire_date": "2019-10-01",
     "department_history": [
@@ -694,7 +658,6 @@
     "department": "購買部",
     "section": "購買部 第2課",
     "position": "一般社員",
-    "branch": "名古屋",
     "role": "スタッフ",
     "hire_date": "2024-10-01",
     "department_history": [
@@ -712,7 +675,6 @@
     "department": "広報部",
     "section": "広報部 第1課",
     "position": "課長",
-    "branch": "大阪",
     "role": "営業",
     "hire_date": "2017-04-01",
     "department_history": [
@@ -730,7 +692,6 @@
     "department": "広報部",
     "section": "広報部 第2課",
     "position": "主任",
-    "branch": "名古屋",
     "role": "営業",
     "hire_date": "2021-04-01",
     "department_history": [
@@ -748,7 +709,6 @@
     "department": "広報部",
     "section": "広報部 第2課",
     "position": "一般社員",
-    "branch": "東京",
     "role": "営業",
     "hire_date": "2023-04-01",
     "department_history": [

@@ -2,13 +2,16 @@
 
 The schema follows ``docs/specs/db-schema.md`` and is organised in layers:
 
-* **A. Input data** — employees, profiles, chat, daily reports, projects.
-* **B. Runtime** — certifications, skills, questions, answers, recommendations,
-  events, project members, documents.
+* **A. Input data** — employees, profiles, chat, ingested sources and chunks.
+* **B. Runtime** — questions, answers, recommendations, events, documents.
 * **D. Knowledge** — formalised knowledge units.
 
 (The former **C. Expertise graph** layer — ``person_topic_edges`` / ``evidence``
-— had no reader and was removed in #89; it survives in the ``company-v1`` tag.)
+— had no reader and was removed in #89. Daily reports, projects, project
+members, certifications and skills followed in #97, together with
+``employees.branch``. All of them survive in the ``company-v1`` tag. There is no
+migration tool and no ``DROP TABLE``: a database created before these removals
+keeps the old tables and column, and nothing reads or writes them.)
 
 ``embedding`` columns use :class:`pgvector.sqlalchemy.Vector`; they are
 ``nullable`` because vectors are computed at ingestion time (a later component),
@@ -16,8 +19,7 @@ so fixtures seed the rows with ``NULL`` embeddings.
 
 Every foreign key points back at :class:`Employee` (the "who"), matching the ER
 diagram. Primary-key types mirror the synthetic fixtures verbatim: integer keys
-for employees/projects/chat/reports, string keys for the id-prefixed entities
-(``cert_0001``, ``q_0001`` …).
+for employees/chat, string keys for the id-prefixed entities (``q_0001`` …).
 """
 
 from __future__ import annotations
@@ -80,9 +82,10 @@ class Employee(Base):
     """A member of the organization. The "who" every other table refers to.
 
     Still named ``employees`` from the company-only design; the rename to
-    ``members`` is planned for R3, together with dropping the company-only
-    columns (department, branch, ...). A member created from Discord has only a
-    name, an organization and an identity: ``email`` is optional.
+    ``members`` is planned, together with dropping the remaining company-only
+    columns (department, section, ...; ``branch`` went in #97). A member created
+    from Discord has only a name, an organization and an identity: ``email`` is
+    optional.
     """
 
     __tablename__ = "employees"
@@ -98,7 +101,6 @@ class Employee(Base):
     department: Mapped[str | None] = mapped_column(String(255))
     section: Mapped[str | None] = mapped_column(String(255))
     position: Mapped[str | None] = mapped_column(String(255))
-    branch: Mapped[str | None] = mapped_column(String(255))
     role: Mapped[str | None] = mapped_column(String(255))
     hire_date: Mapped[dt.date | None] = mapped_column(Date)
     department_history: Mapped[list | None] = mapped_column(JSONB)
@@ -364,7 +366,7 @@ class OfflineConsult(Base):
     responder said, so the scorer weights it well below a past answer
     (``BASE_SCORE_OFFLINE_CONSULT``). ``topics`` comes from ``TOPIC_VOCABULARY``,
     validated at the API boundary, so the scorer can join on it without a runtime
-    keyword vocabulary — the same contract as ``daily_reports.topics`` (#355).
+    keyword vocabulary.
 
     ``resolution`` is ``resolved`` / ``partial`` / ``unresolved``. ``unresolved``
     is stored but contributes NO expertise evidence and never subtracts — the same
@@ -395,91 +397,9 @@ class OfflineConsult(Base):
     created_at: Mapped[dt.datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 
-class DailyReport(Base):
-    """Daily report submitted by an employee.
-
-    Nothing reads this table any more (#91 removed daily reports as a feature). It
-    stays, with its fixture and seed loading, until a later PR drops the table and
-    the seed/migration code together. ``topics`` and ``embedding`` are still added
-    to an older table by ``_apply_schema_upgrades`` but are no longer filled.
-    """
-
-    __tablename__ = "daily_reports"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
-    report_date: Mapped[dt.date | None] = mapped_column(Date)
-    content: Mapped[str | None] = mapped_column(Text)
-    issue: Mapped[str | None] = mapped_column(Text)
-    # #355: precomputed topics (build_fixtures ``match_topics``), so the scorer can
-    # use daily reports as topic evidence without a runtime keyword vocabulary.
-    topics: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
-    created_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
-    # #433: dense embedding of ``issue + content`` so a daily report can be a
-    # SEARCHABLE knowledge source for System 1 (self-answer / #413 additive), not
-    # just topic-overlap evidence for the scorer. NULL until ``make embed`` fills
-    # it (fresh DBs via create_all, existing via _apply_schema_upgrades).
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
-
-
-class Project(Base):
-    """Sales/consulting project. Membership lives in ``project_members``.
-
-    No longer read by the scorer (#95); kept until the seed code drops it.
-    """
-
-    __tablename__ = "projects"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    subject: Mapped[str | None] = mapped_column(Text)
-    client_company: Mapped[str | None] = mapped_column(String(255))
-    industry: Mapped[str | None] = mapped_column(String(255))
-    company_size: Mapped[str | None] = mapped_column(String(255))
-    client_issue: Mapped[str | None] = mapped_column(Text)
-    product: Mapped[str | None] = mapped_column(String(255))
-    negotiation_count: Mapped[int | None] = mapped_column(Integer)
-    status: Mapped[str | None] = mapped_column(String(64))
-    remarks: Mapped[str | None] = mapped_column(Text)
-    start_date: Mapped[dt.date | None] = mapped_column(Date)
-    end_date: Mapped[dt.date | None] = mapped_column(Date)
-
-    members: Mapped[list[ProjectMember]] = relationship(
-        back_populates="project", cascade="all, delete-orphan"
-    )
-
-
 # --------------------------------------------------------------------------- #
 # B. Runtime layer
 # --------------------------------------------------------------------------- #
-class Certification(Base):
-    """Certification held by an employee.
-
-    No longer read by the scorer (#95); kept until the seed code drops it.
-    """
-
-    __tablename__ = "certifications"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
-    name: Mapped[str] = mapped_column(String(255))
-    acquired_at: Mapped[dt.date | None] = mapped_column(Date)
-
-
-class Skill(Base):
-    """Self-declared / inferred skill.
-
-    No longer read by the scorer (#95); kept until the seed code drops it.
-    """
-
-    __tablename__ = "skills"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
-    topic: Mapped[str] = mapped_column(String(255))
-    level: Mapped[str | None] = mapped_column(String(64))
-    source: Mapped[str | None] = mapped_column(String(64))
-
-
 class Question(Base):
     """A question asked by an employee (the "asking" side)."""
 
@@ -653,31 +573,6 @@ class Feedback(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-class ProjectMember(Base):
-    """Project membership with role (``lead`` / ``member``).
-
-    No longer read by the scorer (#95); kept until the seed code drops it.
-
-    PK is ``(project_id, employee_id)`` — an employee holds exactly one role per
-    project, so ``role`` is a plain column, not part of the key. Keeping ``role``
-    out of the PK prevents the same person being both lead and member on one
-    project (which would double-count evidence in the C-layer graph).
-    """
-
-    __tablename__ = "project_members"
-    __table_args__ = (
-        CheckConstraint("role IN ('lead', 'member')", name="ck_project_members_role"),
-    )
-
-    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), primary_key=True)
-    employee_id: Mapped[int] = mapped_column(
-        ForeignKey("employees.id"), primary_key=True, index=True
-    )
-    role: Mapped[str] = mapped_column(String(32))
-
-    project: Mapped[Project] = relationship(back_populates="members")
-
-
 class Document(Base):
     """Internal document (demotion path, low priority)."""
 
@@ -757,17 +652,12 @@ __all__ = [
     "EmployeeProfile",
     "AiChatHistory",
     "EmployeeChatHistory",
-    "DailyReport",
-    "Project",
-    "Certification",
-    "Skill",
     "Question",
     "Answer",
     "Recommendation",
     "Message",
     "EvalRun",
     "Event",
-    "ProjectMember",
     "Document",
     "KnowledgeUnit",
 ]

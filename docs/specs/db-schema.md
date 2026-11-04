@@ -2,16 +2,18 @@
 
 TEKIJIN のデータベース設計。**4層**で構成する。
 
-- **A. 入力データ層** … 合成データ（PR #19）が埋める、社員・プロフィール・案件・チャット・日報（日報は #91 で機能を削除し、表だけ残す）。PR #18 の ER をベースとし、本ドキュメントを正とする。
+- **A. 入力データ層** … 合成データ（PR #19）が埋める、社員・プロフィール・チャット。日報・案件は #97 で表ごと消した（`company-v1` タグに残る）。PR #18 の ER をベースとし、本ドキュメントを正とする。
 - **B. アプリ実行時テーブル** … 質問・回答・推薦・計測など、アプリ稼働で溜まるデータ（技術仕様 §4 準拠）。
 - **C. 専門性グラフ** … 表としては持たない。`person_topic_edges` と `evidence` は読む側が無かったため #89 で削除した（`company-v1` タグに残る）。
 - **D. 形式知層** … 生データから抽出した構造化ケース知識 `knowledge_units`（#357/#448＝蓄積＝主軸）。
 
 他テーブルはすべて `EMPLOYEES` の「誰」を FK で指す。永続化は PostgreSQL 16 + pgvector 1本（LangGraph の checkpoints は PostgresSaver が自動管理し、本図には含めない）。
 
-> 整合状況（2026-08-21 監査）: A層は PR #18 の ER に忠実。**B層・C層は技術仕様 §4 / doc15 が要求するが ER 未登場**のため本ドキュメントで補完した。A層にも proximity 用の `branch`(拠点) 等が不足（末尾「A層の補足」参照）。実データ(PR #19)を A層スキーマへ寄せる方針は #18/#19 のレビューで追跡。
+> 整合状況（2026-08-21 監査）: A層は PR #18 の ER に忠実。**B層・C層は技術仕様 §4 / doc15 が要求するが ER 未登場**のため本ドキュメントで補完した。実データ(PR #19)を A層スキーマへ寄せる方針は #18/#19 のレビューで追跡。
 >
-> 実装補足（#28）: PK 型は本 ER 図の `uuid` 表記ではなく**フィクスチャ実体に準拠**する。`employees`・`projects` は `int`、`cert_` / `q_` / `ans_` / `doc_` / `skill_` 接頭辞を持つエンティティ（certifications・questions・answers・documents・skills）は `string`。`project_members` の PK は `(project_id, employee_id)` とし、`role` は `CHECK(role IN ('lead','member'))` 付きの通常カラム（同一ペアで lead/member が二重登録されないため）。
+> 実装補足（#28）: PK 型は本 ER 図の `uuid` 表記ではなく**フィクスチャ実体に準拠**する。`employees` は `int`、`q_` / `ans_` / `doc_` 接頭辞を持つエンティティ（questions・answers・documents）は `string`。
+>
+> #97 で `daily_reports`・`projects`・`project_members`・`certifications`・`skills` の表と `employees.branch` 列をコードから消した。マイグレーションの仕組みが無く `DROP TABLE` もしないので、それより前に作った DB にはこれらが残る。コードは読みも書きもせず、seed の `TRUNCATE employees … CASCADE` で中身だけ空になる。
 
 ## A. 入力データ層（合成データ層）— ER図
 
@@ -21,8 +23,6 @@ erDiagram
   EMPLOYEES ||--o{ AI_CHAT_HISTORY : "AIとの会話に参加する"
   EMPLOYEES ||--o{ EMPLOYEE_CHAT_HISTORY : "送信した(sender)"
   EMPLOYEES ||--o{ EMPLOYEE_CHAT_HISTORY : "受信した(receiver)"
-  EMPLOYEES ||--o{ DAILY_REPORTS : "日報を書く"
-  PROJECTS }o..o{ EMPLOYEES : "employees配列で参照(FK制約なし)"
 
   EMPLOYEES {
     uuid id PK
@@ -55,31 +55,6 @@ erDiagram
     text message
     timestamp sent_at
   }
-  DAILY_REPORTS {
-    uuid id PK
-    uuid employee_id FK
-    date report_date
-    text content
-    text issue
-    timestamp created_at
-    text_array topics
-    vector embedding
-  }
-  PROJECTS {
-    uuid id PK
-    string subject
-    string client_company
-    string industry
-    string company_size
-    text client_issue
-    string product
-    int negotiation_count
-    string status
-    text remarks
-    date start_date
-    date end_date
-    uuid employees "社員ID配列(FK制約なし)"
-  }
 ```
 
 ## A層 各テーブルの説明
@@ -96,7 +71,7 @@ erDiagram
 | `hire_date` | 入社日 |
 
 ### EMPLOYEE_PROFILES（社員プロフィール）
-社員1人につき1行。スキル・特徴を自由記述の文章としてまとめて記録する。`embedding` 列を持たせることで、他の検索対象（過去QA、日報など）と同じ仕組みで意味検索にかけられる。
+社員1人につき1行。スキル・特徴を自由記述の文章としてまとめて記録する。`embedding` 列を持たせることで、他の検索対象（過去QA、文書など）と同じ仕組みで意味検索にかけられる。
 
 | カラム | 説明 |
 |---|---|
@@ -104,23 +79,6 @@ erDiagram
 | `description` | スキル・得意分野・人柄などをまとめた自由記述文 |
 | `embedding` | `description` をベクトル化したもの（AI検索用） |
 | `updated_at` | 最終更新日時 |
-
-### PROJECTS（案件）
-案件そのものの情報。1案件につき1行。関わっている社員は別テーブルに分けず、`employees` 列に社員IDの配列として直接持たせる。
-
-| カラム | 説明 |
-|---|---|
-| `subject` | 件名（案件のタイトル） |
-| `client_company` | 顧客企業名 |
-| `industry` | 顧客企業の業界 |
-| `company_size` | 顧客企業の規模（例: 従業員数、売上規模など） |
-| `client_issue` | 顧客が抱えていた課題 |
-| `product` | 提案・提供した商材 |
-| `negotiation_count` | 商談を行った回数 |
-| `status` | 案件ステータス（例: 商談中／受注／失注／完了） |
-| `remarks` | 備考（自由記述） |
-| `start_date` / `end_date` | 案件の開始日・終了日 |
-| `employees` | この案件に関わっている社員のIDを配列でまとめて格納（例: `[社員Aのid, 社員Bのid]`） |
 
 ### AI_CHAT_HISTORY（AIチャット履歴）
 1行=1メッセージの会話ログ形式。`speaker` 列で発言者が社員かAIかを区別する。`employee_id` は常に EMPLOYEES への FK で、「どの社員との会話セッションか」を表す（AIが発言したメッセージの行でも、`employee_id` にはその会話相手の社員IDが入る）。
@@ -175,54 +133,19 @@ erDiagram
 
 ---
 
-### DAILY_REPORTS（日報）
-社員が日々提出する日報。業務内容（`content`）と課題（`issue`）を分けて記録する。
-
-> **#91 で日報の機能（C6 の証拠、検索のチャネル、出典 `kind="daily"`、日報からの知識抽出）を削除した。**
-> 表・合成データ・seed での読み込みは、seed とマイグレーションのコードと一緒に後続のPRで消すまで残す。読む側は無い。
-
-| カラム | 説明 |
-|---|---|
-| `employee_id` | 日報を書いた社員 |
-| `report_date` | 対象の業務日 |
-| `content` | その日行った業務内容 |
-| `issue` | その日感じた課題・困りごと |
-| `created_at` | 日報が登録された日時 |
-| `topics` | 事前トピックタグ（`text[]`・seed 時付与）。#355 で C6 の証拠に使っていたが、#91 以降は読まない |
-| `embedding` | #433 で自己回答の知識源に使っていた列。`migrate` が `ADD COLUMN IF NOT EXISTS` で足すが、#91 以降は埋めも読みもしない |
-
----
-
 ## B. アプリ実行時テーブル（技術仕様 §4 準拠）
 
 アプリ稼働で溜まるデータ。質問→推薦→回答→計測のループを支える。合成データではなく、デモ実行中に生成される（一部は評価用に合成でシードする）。
 
 ```mermaid
 erDiagram
-  EMPLOYEES ||--o{ CERTIFICATIONS : "資格を持つ"
-  EMPLOYEES ||--o{ SKILLS : "スキル(自己申告/推定)"
   EMPLOYEES ||--o{ QUESTIONS : "質問する(asker)"
   EMPLOYEES ||--o{ ANSWERS : "回答する(responder)"
   QUESTIONS ||--o{ ANSWERS : "への回答"
   QUESTIONS ||--o{ RECOMMENDATIONS : "の推薦"
   EMPLOYEES ||--o{ RECOMMENDATIONS : "推薦された人"
   QUESTIONS ||--o{ EVENTS : "の計測"
-  PROJECTS ||--o{ PROJECT_MEMBERS : "参加"
-  EMPLOYEES ||--o{ PROJECT_MEMBERS : "担当"
 
-  CERTIFICATIONS {
-    uuid id PK
-    uuid employee_id FK
-    string name
-    date acquired_at
-  }
-  SKILLS {
-    uuid id PK
-    uuid employee_id FK
-    string topic
-    string level
-    string source
-  }
   QUESTIONS {
     uuid id PK
     uuid asker_id FK
@@ -260,11 +183,6 @@ erDiagram
     timestamp ended_at
     jsonb meta
   }
-  PROJECT_MEMBERS {
-    uuid project_id FK
-    uuid employee_id FK
-    string role
-  }
   DOCUMENTS {
     uuid id PK
     string title
@@ -277,13 +195,10 @@ erDiagram
 
 | テーブル | 役割 | 主なカラム |
 |---|---|---|
-| `CERTIFICATIONS` | 資格（#95 で推薦の根拠から外した。表は seed のコードと一緒に後で消す） | `employee_id` FK, `name`, `acquired_at` |
-| `SKILLS` | 自己申告/推定スキル（#95 で推薦の根拠から外した。表は後で消す） | `employee_id` FK, `topic`, `level`, `source` |
 | `QUESTIONS` | 聞く側の質問 | `asker_id` FK, `body`, `topics[]`, `status`, `embedding` |
 | `ANSWERS` | 回答（**F-10 ナレッジ化・学習の燃料**） | `question_id` FK, `responder_id` FK, `body`, `embedding`, `reuse_count`, `was_helpful` |
 | `RECOMMENDATIONS` | 推薦結果と結末（**学習の要**） | `question_id` FK, `employee_id` FK, `rank`, `score`, `reasons`(jsonb), `outcome`(accepted/declined/timeout), `created_at`(推薦時刻・DB既定 now) |
 | `EVENTS` | 各ステージの計測（**p50/p95 レイテンシKPI**） | `question_id` FK, `stage`, `started_at`, `ended_at`, `meta` |
-| `PROJECT_MEMBERS` | 案件の担当（**lead/member を区別**。#95 で推薦の根拠から外した。表は後で消す） | `project_id` FK, `employee_id` FK, `role`(lead/member) |
 | `DOCUMENTS` | 社内文書（格下げ経路用・優先度低） | `title`, `body`, `source`, `embedding` |
 | `OFFLINE_CONSULTS` | **直接相談のふりかえり**（#247。対面相談は記録が残らないため、質問者が書き起こす。伝聞なので base_score 0.25 = 過去の回答 0.7 よりずっと低い） | `question_id` FK, `responder_id` FK, `asker_id` FK, `topics[]`, `asked`, `answer_body`, `resolution`(resolved/partial/unresolved), `created_at` |
 
@@ -293,7 +208,7 @@ erDiagram
 
 ## C. 専門性グラフ（doc15＝新規性の中核）
 
-「誰が何に詳しいか」は、行動痕跡（過去の回答・直接相談のふりかえり）から C6 スコアラーがその場で積み上げて求める（`scorer/evidence.py`）。資格・スキル・案件は #95 で根拠から外した。以前は人×トピックのエッジを `PERSON_TOPIC_EDGES`、その根拠を `EVIDENCE` という表に置く設計だったが、どちらも読む側が無かったため #89 で削除した。設計と定義は `company-v1` タグに残っている。
+「誰が何に詳しいか」は、行動痕跡（過去の回答・直接相談のふりかえり）から C6 スコアラーがその場で積み上げて求める（`scorer/evidence.py`）。資格・スキル・案件は #95 で根拠から外し、#97 で表も消した。以前は人×トピックのエッジを `PERSON_TOPIC_EDGES`、その根拠を `EVIDENCE` という表に置く設計だったが、どちらも読む側が無かったため #89 で削除した。設計と定義は `company-v1` タグに残っている。
 
 > `base_score`: 有用回答 1.0 > 過去回答 0.7（doc15）> **直接相談のふりかえり 0.25**（#247・伝聞）。断り(declined)は専門性を下げず余裕度のみ下げる。
 >
@@ -350,7 +265,6 @@ PR #18 の ER（A層）に、仕様上あと少し不足がある。実データ
 
 | 対象 | 追加/変更 | 理由 |
 |---|---|---|
-| `EMPLOYEES` | ~~`branch`(拠点) を追加~~ **実装済**（`models/tables.py`） | もとは `proximity`（同支店>同エリア>全社）の計算に使った。#93 で `proximity` を消したので、今は読む側が無い。列は後続のPRで消す |
+| `EMPLOYEES` | ~~`branch`(拠点)~~ **#97 で削除** | もとは `proximity`（同支店>同エリア>全社）の計算に使った。#93 で `proximity` を消し、#97 で列も消した |
 | `EMPLOYEES` | ~~`role` を追加~~ **実装済**（`department_history` / `password_hash` も追加済） | 職種比率・スコアの説明に使用 |
-| `PROJECTS` | `employees uuid[]` は **`PROJECT_MEMBERS`（役割つき）を正**とする | 配列では lead/member を区別できず base_score(0.8/0.5)を割り当てられない |
 | （算出でよい） | `years`(在籍年数) は `hire_date` から算出 | 冗長カラムにしない |
