@@ -33,6 +33,7 @@ e5-large では `answer_confidence` の最小値(0.816)が `PRIOR_ANSWER_SIM`(0.
 チャネル類似度。ここでは読むだけなので **GPU も DB も要らない**。
 
     # 再測定（埋め込みモデルを変えたとき / コーパスを作り直したとき）
+    # research_e2e.py は #89 で消した。company-v1 タグの版で次を実行する
     python scripts/research_e2e.py --task prepare
     python scripts/research_e2e.py --task route --out fixtures/synthetic/eval/route_calibration.json
 """
@@ -61,7 +62,7 @@ from tekijin.config import get_settings
 # 閾値自体は据え置き（0.95）で、余裕が 0.076 に戻っている。
 _COLLAPSE_RATIO = 0.95
 _REMEASURE = (
-    "再測定: python scripts/research_e2e.py --task prepare && "
+    "再測定（company-v1 タグの版で）: python scripts/research_e2e.py --task prepare && "
     "python scripts/research_e2e.py --task route "
     "--out fixtures/synthetic/eval/route_calibration.json"
 )

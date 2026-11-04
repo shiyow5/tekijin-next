@@ -197,19 +197,13 @@ def test_topic_vocabulary_is_the_scorer_join_vocabulary() -> None:
     assert set(PRODUCT_TOPIC_MAP.values()) <= vocab
 
 
-def test_topic_vocabulary_matches_build_eval_v2() -> None:
-    # The eval gold vocabulary (scripts/build_eval_v2.TOPICS) and the runtime
-    # vocabulary MUST be the same set, or the eval measures a different vocabulary
-    # than production routes on.
-    import pathlib
-    import sys
+def test_topic_vocabulary_matches_eval_topic_keywords() -> None:
+    # The eval gold vocabulary (tests/eval_topic_keywords, formerly
+    # scripts/build_eval_v2.TOPICS) and the runtime vocabulary MUST be the same
+    # set, or the eval measures a different vocabulary than production routes on.
+    from eval_topic_keywords import TOPIC_KEYWORDS
 
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts"))
-    try:
-        from build_eval_v2 import TOPICS  # type: ignore[import-not-found]
-    finally:
-        sys.path.pop(0)
-    assert set(TOPICS) == set(TOPIC_VOCABULARY)
+    assert set(TOPIC_KEYWORDS) == set(TOPIC_VOCABULARY)
 
 
 def test_canonicalize_topic_exact_alias_and_substring() -> None:

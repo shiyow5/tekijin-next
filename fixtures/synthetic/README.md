@@ -3,6 +3,8 @@
 デモ・評価・テストで使う **合成データ（synthetic data）** をここに置く。
 TEKIJIN は実データに接続しない方針なので、**この合成データがそのまま「真実源」**になる。
 
+> 生成スクリプト(`build_fixtures.py`、`build_eval*.py`、`eval_baselines.py`、`eval_label_agreement.py`、`import_human_labels.py`)は #89 で develop から消した。このファイルに出てくるスクリプトは `company-v1` タグで使える。
+
 すべて **架空**。実在の社員・顧客・案件とは一切関係がない。
 生成スクリプトは [`scripts/build_fixtures.py`](../../scripts/build_fixtures.py)
 （`random.seed(42)` で再現可能）。reona 作のダミーデータ（社員 / 案件 / チャット / 日報）を

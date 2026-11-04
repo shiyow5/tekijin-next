@@ -9,7 +9,6 @@ route はキーワード5語で100%当たり、正解は「answers を数える�
 設計の根拠は analysis/19_評価データ設計.md。
 """
 
-import importlib.util
 import json
 import math
 from collections import Counter, defaultdict
@@ -17,14 +16,16 @@ from pathlib import Path
 
 import pytest
 
+from eval_topic_keywords import TOPIC_KEYWORDS
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SYN = REPO_ROOT / "fixtures" / "synthetic"
 EVAL = SYN / "eval"
 
-# 評価セットが未生成の環境（scripts/build_eval_v2.py 未実行）ではスキップする
+# 評価セットが無い環境ではスキップする（生成スクリプトは #89 で消し、company-v1 タグに残る）
 pytestmark = pytest.mark.skipif(
     not (EVAL / "eval_person.json").exists(),
-    reason="評価セット未生成。`python3 scripts/build_eval_v2.py` を実行してください",
+    reason="評価セットが無い。生成スクリプト build_eval_v2.py は company-v1 タグにある",
 )
 
 
@@ -33,12 +34,7 @@ def _load(path: Path):
 
 
 def _topics():
-    spec = importlib.util.spec_from_file_location(
-        "build_eval_v2", REPO_ROOT / "scripts" / "build_eval_v2.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.TOPICS
+    return TOPIC_KEYWORDS
 
 
 @pytest.fixture(scope="module")
@@ -268,7 +264,7 @@ def test_human_labeled_slice_present(person):
 
     gold が全て自動導出だと「合成データの中の別ルール」でしかない。
     独立に人が付けたラベルを一部に入れておくことで、
-    scripts/eval_label_agreement.py による外部検証が成立する。
+    eval_label_agreement.py（company-v1 タグ）による外部検証が成立する。
     """
     human = [q for q in person if q["label_source"] == "human:pr46"]
     assert len(human) == 21, f"人手ラベル由来が {len(human)} 件"

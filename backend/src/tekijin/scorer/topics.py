@@ -16,8 +16,9 @@ from collections.abc import Iterable, Mapping, Sequence
 # ``questions.topics`` all use them, and the CERT/PRODUCT maps below resolve to
 # them), so a topic that is not one of these matches NO evidence and makes the
 # recommendation random (#116). This is the single source of truth C1 must emit;
-# ``scripts/build_eval_v2.TOPICS`` mirrors it and a test cross-checks both against
-# the DB fixtures so the list cannot drift.
+# ``tests/eval_topic_keywords.TOPIC_KEYWORDS`` (formerly
+# ``scripts/build_eval_v2.TOPICS``) mirrors it and a test cross-checks both
+# against the DB fixtures so the list cannot drift.
 TOPIC_VOCABULARY: tuple[str, ...] = (
     "CRM・営業支援",
     "ECサイト構築",

@@ -40,8 +40,6 @@ from tekijin.data.mappers import build_all
 # raw SQL (identifiers cannot be passed as bind parameters).
 _TRUNCATE_ORDER: tuple[str, ...] = (
     "knowledge_units",
-    "evidence",
-    "person_topic_edges",
     "events",
     "eval_runs",
     # #247: runtime-only (no fixture writes it), FKs questions + employees.
