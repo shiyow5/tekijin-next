@@ -130,7 +130,6 @@ def build_agent(
     knowledge_answer_min_similarity: float | None = None,
     query_expansion_enabled: bool = False,
     question_fit_enabled: bool = False,
-    branch_constraint_enabled: bool = False,
     additive_self_answer_enabled: bool = False,
     additive_self_answer_floor: float = 0.20,
     score_all_employees: bool = False,
@@ -200,9 +199,6 @@ def build_agent(
         query_expansion_enabled=query_expansion_enabled,
         # #405: add the question↔past-answer term to C6 (False = OFF, dormant).
         question_fit_enabled=question_fit_enabled,
-        # #83: honour an explicitly requested branch in C6 (False = OFF, dormant).
-        branch_constraint_enabled=branch_constraint_enabled,
-        employee_branches=Repository(session) if branch_constraint_enabled else None,
         # #413: additive cited answer on the person route (False = OFF, dormant).
         additive_self_answer_enabled=additive_self_answer_enabled,
         additive_self_answer_floor=additive_self_answer_floor,

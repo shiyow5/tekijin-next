@@ -12,7 +12,6 @@ function candidate(partial: Partial<Recommendation> = {}): Recommendation {
     confidence: "中",
     reasons: [
       { type: "answers", detail: "類似の質問に過去2件回答" },
-      { type: "proximity", detail: "全社から選定" },
       { type: "load", detail: "今週の対応件数: 少なめ" },
     ],
     ...partial,
@@ -42,10 +41,9 @@ describe("CandidateCard — comparison info on non-top cards (#204)", () => {
     expect(screen.getByText("中")).toBeInTheDocument();
   });
 
-  it("shows distance and load VALUES even when the card is not expanded", () => {
+  it("shows the load VALUE even when the card is not expanded", () => {
     render(<CandidateCard candidate={candidate()} rank={2} expanded={false} selected={false} />);
-    // 距離 and 現在の負荷 details are shown so 2nd/3rd can be compared to the top.
-    expect(screen.getByText(fullText("距離の近さ：全社から選定"))).toBeInTheDocument();
+    // 現在の負荷 detail is shown so 2nd/3rd can be compared to the top.
     expect(screen.getByText(fullText("現在の負荷：今週の対応件数: 少なめ"))).toBeInTheDocument();
   });
 
@@ -60,7 +58,7 @@ describe("CandidateCard — comparison info on non-top cards (#204)", () => {
   it("shows every reason's detail on the expanded top card", () => {
     render(<CandidateCard candidate={candidate()} rank={1} expanded={true} selected={true} />);
     expect(screen.getByText(fullText("過去回答：類似の質問に過去2件回答"))).toBeInTheDocument();
-    expect(screen.getByText(fullText("距離の近さ：全社から選定"))).toBeInTheDocument();
+    expect(screen.getByText(fullText("現在の負荷：今週の対応件数: 少なめ"))).toBeInTheDocument();
   });
 });
 

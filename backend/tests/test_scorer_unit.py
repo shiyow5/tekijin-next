@@ -1,7 +1,7 @@
 """Database-free unit tests for the C6 scorer's pure logic.
 
 Covers evidence stacking -> edge weight, the time-decayed recency (with an
-injected ``now``), the load window saturation, proximity tiers, answer quality,
+injected ``now``), the load window saturation, answer quality,
 confidence derivation, and topic matching. Every value is deterministic.
 """
 
@@ -328,7 +328,7 @@ def test_recency_accepts_date_and_clamps_future() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# load / answer_quality / proximity / confidence
+# load / answer_quality / confidence
 # --------------------------------------------------------------------------- #
 def test_load_monotonic_and_half_saturation() -> None:
     assert features.load(0) == 0.0
@@ -345,14 +345,6 @@ def test_answer_quality_monotonic() -> None:
     reused = features.answer_quality(2, 10, 2)
     assert none == 0.0
     assert 0.0 < some < helpful < reused < 1.0
-
-
-def test_proximity_tiers() -> None:
-    assert features.proximity("大阪", "大阪") == 1.0
-    assert features.proximity("東京", "本社") == 0.5  # same 関東 region
-    assert features.proximity("大阪", "東京") == 0.2
-    assert features.proximity(None, "大阪") == 0.2
-    assert features.proximity("大阪", None) == 0.2
 
 
 def test_confidence_label_by_evidence_kind() -> None:
@@ -382,13 +374,6 @@ def test_recency_detail_empty_and_months() -> None:
         [Evidence("project", 0.8, NOW - dt.timedelta(days=95), "x")], NOW
     )
     assert older == "直近の関連実績: 約3か月前"
-
-
-def test_proximity_detail_tiers() -> None:
-    assert ExpertiseScorer._proximity_detail("大阪", "大阪") == "同じ拠点（大阪）"
-    assert ExpertiseScorer._proximity_detail("東京", "本社") == "同じエリア"  # same 関東 region
-    assert ExpertiseScorer._proximity_detail("大阪", "東京") == "全社から選定"
-    assert ExpertiseScorer._proximity_detail(None, "大阪") == "全社から選定"
 
 
 def test_load_label_bands() -> None:
@@ -443,14 +428,14 @@ def test_rank_rejects_aware_now() -> None:
 
 def test_positive_weight_sum_matches_frontend_fit_ceiling() -> None:
     """The frontend fit gauge (#240) normalises the composite score against the
-    sum of the POSITIVE scorer weights, hardcoded as MAX_COMPOSITE_SCORE = 0.9 in
+    sum of the POSITIVE scorer weights, hardcoded as BASE_POSITIVE_WEIGHTS = 0.8 in
     `frontend/src/lib/fit.ts`. There is no runtime cross-language link, so guard it
     here: if the weights change, this fails and flags that fit.ts must be updated
     too (else the gauge silently mis-normalises)."""
     from tekijin.scorer.weights import DEFAULT_WEIGHTS as w
 
-    positive_sum = w.topic_fit + w.recency + w.answer_quality + w.proximity
-    assert positive_sum == pytest.approx(0.9), (
-        f"positive weight sum {positive_sum} != 0.9; update MAX_COMPOSITE_SCORE in "
+    positive_sum = w.topic_fit + w.recency + w.answer_quality
+    assert positive_sum == pytest.approx(0.8), (
+        f"positive weight sum {positive_sum} != 0.8; update BASE_POSITIVE_WEIGHTS in "
         "frontend/src/lib/fit.ts to match."
     )

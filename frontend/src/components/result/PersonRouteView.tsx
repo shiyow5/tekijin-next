@@ -6,7 +6,7 @@
  * are shown; the asker may pick any of them as the recipient, not just the top
  * pick (#200) — picking one calls `POST /handoff/select`, which reorders the
  * durable hand-off target and regenerates the draft for that person. Only the
- * top card is `expanded`; the comparison signals 距離/現在の負荷 are surfaced on
+ * top card is `expanded`; the comparison signal 現在の負荷 is surfaced on
  * every card by `CandidateCard` itself (#204).
  * "この内容で依頼する" then persists the (possibly further-edited) draft text
  * to the pending hand-off (POST /handoff/draft), so the responder reads the

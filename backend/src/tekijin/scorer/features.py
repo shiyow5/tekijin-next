@@ -1,6 +1,6 @@
 """Pure scoring-feature functions (no DB, no clock).
 
-Each maps already-gathered primitives (counts, dates, branches) to a scalar,
+Each maps already-gathered primitives (counts, dates) to a scalar,
 mostly in ``[0, 1]``, so the weighted sum in :mod:`tekijin.scorer.scorer` stays
 interpretable. Time enters only through an injected ``now`` — nothing here reads
 the wall clock — so every result is reproducible and unit-testable.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 
 from tekijin.scorer.weights import (
     ANSWER_QUALITY_ANSWER_COEF,
@@ -18,11 +18,7 @@ from tekijin.scorer.weights import (
     ANSWER_QUALITY_REUSE_COEF,
     ANSWER_QUALITY_SCALE,
     LOAD_HALF_SATURATION,
-    PROXIMITY_COMPANY_WIDE,
-    PROXIMITY_SAME_BRANCH,
-    PROXIMITY_SAME_REGION,
     RECENCY_HALF_LIFE_DAYS,
-    REGION_OF_BRANCH,
 )
 
 
@@ -85,27 +81,6 @@ def load(recent_count: int) -> float:
     if recent_count <= 0:
         return 0.0
     return 1.0 - 0.5 ** (recent_count / LOAD_HALF_SATURATION)
-
-
-def proximity(
-    asker_branch: str | None,
-    candidate_branch: str | None,
-    region_map: Mapping[str, str] = REGION_OF_BRANCH,
-) -> float:
-    """Organisational closeness: same branch > same region > company-wide.
-
-    Unknown branch on either side yields the neutral company-wide tier.
-    """
-
-    if not asker_branch or not candidate_branch:
-        return PROXIMITY_COMPANY_WIDE
-    if asker_branch == candidate_branch:
-        return PROXIMITY_SAME_BRANCH
-    asker_region = region_map.get(asker_branch)
-    candidate_region = region_map.get(candidate_branch)
-    if asker_region is not None and asker_region == candidate_region:
-        return PROXIMITY_SAME_REGION
-    return PROXIMITY_COMPANY_WIDE
 
 
 # Evidence source types that drive the confidence tier (#110). Calibrated on the

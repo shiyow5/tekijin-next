@@ -27,32 +27,32 @@ describe("fitLevel", () => {
 });
 
 describe("fitPercent", () => {
-  it("normalises a composite score against the qsim-inclusive ceiling (1.9 -> 100%)", () => {
+  it("normalises a composite score against the qsim-inclusive ceiling (1.8 -> 100%)", () => {
     // #498: the ceiling now includes the #405 question-fit term, so a full score of
-    // 1.9 is 100%; a base-only score of 0.9 no longer saturates.
-    expect(MAX_COMPOSITE_SCORE).toBe(1.9);
+    // 1.8 is 100%; a base-only score of 0.8 no longer saturates.
+    expect(MAX_COMPOSITE_SCORE).toBe(1.8);
     expect(fitPercent(MAX_COMPOSITE_SCORE)).toBe(100);
-    expect(fitPercent(0.9)).toBe(47); // base-only strong — de-saturated (was 100)
-    expect(fitPercent(0.45)).toBe(24);
+    expect(fitPercent(0.8)).toBe(44); // base-only strong — de-saturated (was 100)
+    expect(fitPercent(0.45)).toBe(25);
     expect(fitPercent(0)).toBe(0);
   });
 
   it("clamps: a score above the ceiling caps at 100, a negative score floors at 0", () => {
-    expect(fitPercent(2.5)).toBe(100); // above the 1.9 ceiling -> clamp 100
+    expect(fitPercent(2.5)).toBe(100); // above the 1.8 ceiling -> clamp 100
     expect(fitPercent(-0.5)).toBe(0);
   });
 });
 
 describe("fitPercents", () => {
   it("returns each candidate's absolute fit, independent of order", () => {
-    // Normalised against the 1.9 ceiling (#498): 0.9->47, 0.45->24, 0.18->9.
+    // Normalised against the 1.8 ceiling (#498): 0.9->50, 0.45->25, 0.18->10.
     expect(
       fitPercents([
         { score: 0.9, confidence: "低" },
         { score: 0.45, confidence: "高" },
         { score: 0.18, confidence: "中" },
       ]),
-    ).toEqual([47, 24, 9]);
+    ).toEqual([50, 25, 10]);
   });
 
   it("is decoupled from the confidence label — a 低 top still reads high (#240)", () => {
@@ -61,7 +61,7 @@ describe("fitPercents", () => {
     const strongLow = fitPercents([{ score: 0.74, confidence: "低" }]);
     const strongHigh = fitPercents([{ score: 0.74, confidence: "高" }]);
     expect(strongLow).toEqual(strongHigh); // label does not change the gauge
-    // NOTE (#498): under the qsim-inclusive 1.9 ceiling, 0.74 reads 39% — still
+    // NOTE (#498): under the qsim-inclusive 1.8 ceiling, 0.74 reads 41% — still
     // above 33%, but the margin is now thin (was 82% under the 0.9 ceiling). This
     // is the acknowledged single-ceiling trade-off; if the backend qsim/weights
     // distribution drifts, a strong-but-qsim-less candidate could dip toward the
@@ -76,8 +76,8 @@ describe("fitPercents", () => {
       { score: 0.81, confidence: "高" },
       { score: 0.54, confidence: "高" },
     ]);
-    // #498: 0.9->47, 0.81->43, 0.54->28 against the 1.9 ceiling — still monotonic.
-    expect(out).toEqual([47, 43, 28]);
+    // #498: 0.9->50, 0.81->45, 0.54->30 against the 1.8 ceiling — still monotonic.
+    expect(out).toEqual([50, 45, 30]);
     expect(new Set(out).size).toBeGreaterThan(1);
   });
 

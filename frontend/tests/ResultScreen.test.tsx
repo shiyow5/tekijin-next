@@ -376,10 +376,10 @@ describe("ResultScreen — main line (person)", () => {
     // 4th candidate is truncated (max 3)
     expect(screen.queryByText("山田")).not.toBeInTheDocument();
     // Fit number/band and evidence confidence are visibly separate (#540): 高梨's
-    // score 0.92 normalises to 48% (中) against the qsim-inclusive 1.9 ceiling,
+    // score 0.92 normalises to 51% (中) against the qsim-inclusive 1.8 ceiling,
     // while its evidence confidence remains 高. The ring number carries no "%"
     // sign (the % lives only in the aria-label).
-    expect(screen.getByRole("img", { name: "適合度 48%（中）" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "適合度 51%（中）" })).toBeInTheDocument();
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
     // reason labels (expanded top card shows detail)
     expect(screen.getByText("関連資格")).toBeInTheDocument();
@@ -534,7 +534,7 @@ describe("ResultScreen — main line (person)", () => {
             THREE_CANDIDATES[0],
             {
               ...THREE_CANDIDATES[1],
-              reasons: [{ type: "proximity", detail: "同じ拠点（大阪）" }],
+              reasons: [{ type: "load", detail: "今週の対応件数: やや多め" }],
             },
             {
               ...THREE_CANDIDATES[2],
@@ -547,7 +547,7 @@ describe("ResultScreen — main line (person)", () => {
     );
     // Rank 2/3 detail text used to be suppressed (only the label chip showed);
     // now every shown candidate renders its full reason detail.
-    expect(screen.getByText(/同じ拠点（大阪）/)).toBeInTheDocument();
+    expect(screen.getByText(/今週の対応件数: やや多め/)).toBeInTheDocument();
     expect(screen.getByText(/今週の対応件数: 普通/)).toBeInTheDocument();
   });
 

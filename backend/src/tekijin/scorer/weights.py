@@ -15,11 +15,11 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class Weights:
     """Linear weights for ``score = w1·topic_fit + w2·recency + w3·answer_quality
-    + w4·proximity − w5·load (+ w6·question_fit when a qsim map is supplied)``.
+    − w4·load (+ w5·question_fit when a qsim map is supplied)``.
 
     Defaults: topic_fit dominates (it is the "who actually knows this" signal);
-    answer_quality is the next strongest (proven, helpful answers); recency and
-    proximity are supporting nudges; load is a middling penalty — strong enough
+    answer_quality is the next strongest (proven, helpful answers); recency is a
+    supporting nudge; load is a middling penalty — strong enough
     to spread work (risk ②, 負荷集中) yet never enough to bury a true expert. The
     ``question_fit`` term (#405) is dormant unless the scorer is handed a
     ``question_similarity`` map, so the default score is unchanged.
@@ -28,7 +28,6 @@ class Weights:
     topic_fit: float = 0.45
     recency: float = 0.15
     answer_quality: float = 0.20
-    proximity: float = 0.10
     load: float = 0.20
     # #405: additive weight for the question↔past-answer similarity term (qsim).
     # NOTE: 1.0 is an EMPIRICAL coefficient, not a theoretical co-equal bound — on
@@ -116,25 +115,3 @@ DAYS_PER_MONTH = 30.4
 # The ``load`` window: how many days back "recent" reaches (technical-spec §5:
 # 直近7日).
 LOAD_WINDOW_DAYS = 7
-
-# Proximity tiers (technical-spec §5: 同支店 > 同エリア > 全社).
-PROXIMITY_SAME_BRANCH = 1.0
-PROXIMITY_SAME_REGION = 0.5
-PROXIMITY_COMPANY_WIDE = 0.2
-
-# Region grouping for the middle proximity tier. Branches are cities; this maps
-# each to a coarse region so "same area" sits between "same branch" and
-# "company-wide". Extend as branches are added.
-REGION_OF_BRANCH: dict[str, str] = {
-    "本社": "関東",
-    "東京": "関東",
-    "名古屋": "中部",
-    "大阪": "関西",
-    "福岡": "九州",
-}
-
-# The closed branch vocabulary C1 must choose from when the asker names a location
-# (#83). Derived from the region map so the two can never disagree: a branch C1
-# emits that the scorer does not know would silently match nobody. Ordered for a
-# stable JSON Schema enum (guided decoding), like TOPIC_VOCABULARY (#64).
-BRANCH_VOCABULARY: tuple[str, ...] = tuple(sorted(REGION_OF_BRANCH))

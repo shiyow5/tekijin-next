@@ -262,7 +262,7 @@ flowchart LR
 ### 7.1 重み（`weights.py`）
 
 ```
-score = 0.45·topic_fit + 0.20·answer_quality + 0.15·recency + 0.10·proximity
+score = 0.45·topic_fit + 0.20·answer_quality + 0.15·recency
         − 0.20·load + 1.0·question_fit
 ```
 
@@ -546,7 +546,6 @@ grounded 率: baseline **0.265** / +日報 **0.347** / **+チャット 0.286** /
 | `knowledge_retrieval_enabled` | False | `knowledge_answer` ノードを配線する |
 | `score_all_employees` | False | C6 の候補を全社員にする（**測定のうえ棄却**・ADR-0009） |
 | `answerability_enabled` | False | 棄却クリティック |
-| `branch_constraint_enabled` | False | 拠点制約（**測定が汚染**・ADR-0010） |
 | `prior_answer_reuse_min` | None | corpus-count ルーティング（**棄却**・ADR-0007） |
 | `query_expansion_enabled` | False | クエリ拡張（**E2E で person recall を壊す**） |
 | `daily_evidence_enabled` | False | 日報を証拠として加点 |

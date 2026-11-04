@@ -238,26 +238,6 @@ class Settings(BaseSettings):
     # topic rather than the whole table; that is a cost concern, not an accuracy one.
     score_all_employees: bool = False
 
-    # #83: when the asker explicitly asks for someone at a given branch ("福岡の拠点で
-    # 動ける方だと助かります"), treat it as a CONDITION in C6 rather than a scoring term.
-    #
-    # OFF, and NOT yet enablable — the measurement that would justify enabling it is
-    # CONTAMINATED. The DGX full-graph A/B looks strong (Hit@3 0.7626 -> 0.8232 over 3
-    # paired replicates, +0.0606 every time, routing byte-identical), and C1's branch
-    # extraction measured 15/15 with 1 false fire in 72. But the C1 prompt was written
-    # AFTER reading the eval's constrained rows: its two special rules (本部->本社,
-    # 地方名->拠点) cover exactly the ids a naive extractor misses
-    # (`ablation/robustness_results.json`: 11/13/15/17/19/21/24/25), and its negative
-    # example is a verbatim lift of eval row 1. So both numbers measure a prompt fitted
-    # to the rows it is scored on — the same defect that got "C1 few-shot Hit@3 0.803"
-    # retracted (#384). Enabling needs held-out constraint phrasings authored without
-    # reference to this prompt.
-    #
-    # Also unsettled: the committed bench has 「拠点一致を加点」 and 「拠点で絞ってから
-    # 並べる」 at the SAME 0.9333/0.7727 (`robustness_results.json`), so a one-line
-    # `proximity` weight bump may buy the same thing as this new code path.
-    branch_constraint_enabled: bool = False
-
     # #247: the 直接相談 retrospective. ENABLED by default — this is a kill switch,
     # not a rollout gate: the feature is the only durable record a face-to-face
     # consultation leaves, so shipping it OFF would ship nothing. It exists because
