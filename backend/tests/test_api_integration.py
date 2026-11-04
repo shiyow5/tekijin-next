@@ -84,8 +84,8 @@ def _recs(*ids: int) -> list[dict]:
             "name": f"社員{i}",
             "dept": "営業部",
             "score": 0.9 - 0.01 * i,
-            "confidence": "中",
-            "reasons": [{"type": "self", "detail": "自己申告スキル"}],
+            "confidence": "高",
+            "reasons": [{"type": "answers", "detail": "類似の質問に過去3件回答"}],
         }
         for i in ids
     ]
@@ -2914,8 +2914,8 @@ def test_handoff_returns_responder_payload(seed_counts, engine, fake_embedder) -
     assert body["asker"]["name"]  # employee 10 exists in the seed
     # responder = the primary (handed-off) candidate, with its selection reasons.
     assert body["responder"]["person_id"] == "E001"
-    assert body["responder"]["confidence"] == "中"
-    assert body["responder"]["reasons"][0]["type"] == "self"
+    assert body["responder"]["confidence"] == "高"
+    assert body["responder"]["reasons"][0]["type"] == "answers"
     # slots surfaced from the understood state; draft addressed to the responder.
     assert body["topics"] == ["ネットワーク・VPN"]
     assert "社員1さん" in body["draft"]

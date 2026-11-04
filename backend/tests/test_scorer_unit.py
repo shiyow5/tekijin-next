@@ -11,31 +11,19 @@ import datetime as dt
 
 import pytest
 
-from tekijin.data.dto import (
-    AnswerDTO,
-    CertificationDTO,
-    OfflineConsultDTO,
-    ProjectMembershipDTO,
-    SkillDTO,
-)
+from tekijin.data.dto import AnswerDTO, OfflineConsultDTO
 from tekijin.scorer import features
 from tekijin.scorer.evidence import Evidence, collect_topic_evidence, edge_weight
 from tekijin.scorer.scorer import ExpertiseScorer
 from tekijin.scorer.topics import (
-    PRODUCT_TOPIC_MAP,
     TOPIC_VOCABULARY,
     canonicalize_topic,
-    cert_matches_topic,
     normalize_topics,
-    product_matches_topic,
 )
 from tekijin.scorer.weights import (
-    BASE_SCORE_CERTIFICATION,
+    BASE_SCORE_ANSWER,
     BASE_SCORE_HELPFUL_ANSWER,
     BASE_SCORE_OFFLINE_CONSULT,
-    BASE_SCORE_PROJECT_LEAD,
-    BASE_SCORE_PROJECT_MEMBER,
-    BASE_SCORE_SKILL,
     OFFLINE_CONSULT_EVIDENCE_CAP,
 )
 
@@ -46,28 +34,6 @@ TOPIC = "ネットワーク・VPN"
 # --------------------------------------------------------------------------- #
 # helpers to build DTOs
 # --------------------------------------------------------------------------- #
-def _cert(name: str, acquired: dt.date | None = None) -> CertificationDTO:
-    return CertificationDTO(id="c", employee_id=1, name=name, acquired_at=acquired)
-
-
-def _skill(topic: str, level: str | None = "中級", source: str | None = "self") -> SkillDTO:
-    return SkillDTO(id="s", employee_id=1, topic=topic, level=level, source=source)
-
-
-def _membership(product: str, role: str, end: dt.date | None = None) -> ProjectMembershipDTO:
-    return ProjectMembershipDTO(
-        project_id=1,
-        employee_id=1,
-        role=role,
-        product=product,
-        industry=None,
-        subject=None,
-        status="受注",
-        start_date=dt.date(2026, 1, 1),
-        end_date=end,
-    )
-
-
 def _answer(helpful: bool | None, reuse: int | None, created: dt.datetime) -> AnswerDTO:
     return AnswerDTO(
         id="a",
@@ -102,28 +68,27 @@ def _consult(
 def test_collect_topic_evidence_offline_consult_default_is_empty() -> None:
     """No offline_consults arg -> no such evidence (pre-#247 behaviour)."""
 
-    ev = collect_topic_evidence(TOPIC, [], [], [], [])
+    ev = collect_topic_evidence(TOPIC, [])
     assert not any(e.source_type == "offline_consult" for e in ev)
 
 
 def test_collect_topic_evidence_includes_on_topic_offline_consult() -> None:
     ev = collect_topic_evidence(
-        TOPIC, [], [], [], [], offline_consults=[_consult((TOPIC,)), _consult(("経理・決算",))]
+        TOPIC, [], offline_consults=[_consult((TOPIC,)), _consult(("経理・決算",))]
     )
     consults = [e for e in ev if e.source_type == "offline_consult"]
     assert len(consults) == 1  # off-topic retrospective excluded
     assert consults[0].base_score == BASE_SCORE_OFFLINE_CONSULT
 
 
-def test_offline_consult_is_weaker_than_a_self_declared_skill() -> None:
+def test_offline_consult_is_weaker_than_a_past_answer() -> None:
     """It is HEARSAY: the asker summarising what the responder said (#247).
 
-    A self-declared skill is at least first-hand about oneself; a retrospective is
-    one person's paraphrase of another's words. So it must sit below
-    ``BASE_SCORE_SKILL``.
+    A past answer is the responder's own words; a retrospective is one person's
+    paraphrase of another's. So it must sit below ``BASE_SCORE_ANSWER``.
     """
 
-    assert 0 < BASE_SCORE_OFFLINE_CONSULT < BASE_SCORE_SKILL
+    assert 0 < BASE_SCORE_OFFLINE_CONSULT < BASE_SCORE_ANSWER
 
 
 def test_unresolved_offline_consult_is_not_evidence() -> None:
@@ -135,7 +100,7 @@ def test_unresolved_offline_consult_is_not_evidence() -> None:
     """
 
     ev = collect_topic_evidence(
-        TOPIC, [], [], [], [], offline_consults=[_consult((TOPIC,), resolution="unresolved")]
+        TOPIC, [], offline_consults=[_consult((TOPIC,), resolution="unresolved")]
     )
     assert not any(e.source_type == "offline_consult" for e in ev)
     assert edge_weight(ev) == 0.0
@@ -143,7 +108,7 @@ def test_unresolved_offline_consult_is_not_evidence() -> None:
 
 def test_partially_resolved_offline_consult_counts() -> None:
     ev = collect_topic_evidence(
-        TOPIC, [], [], [], [], offline_consults=[_consult((TOPIC,), resolution="partial")]
+        TOPIC, [], offline_consults=[_consult((TOPIC,), resolution="partial")]
     )
     assert sum(1 for e in ev if e.source_type == "offline_consult") == 1
 
@@ -152,13 +117,13 @@ def test_collect_topic_evidence_offline_consult_capped() -> None:
     """Volume must not saturate topic_fit."""
 
     consults = [_consult((TOPIC,)) for _ in range(OFFLINE_CONSULT_EVIDENCE_CAP + 4)]
-    ev = collect_topic_evidence(TOPIC, [], [], [], [], offline_consults=consults)
+    ev = collect_topic_evidence(TOPIC, [], offline_consults=consults)
     assert sum(1 for e in ev if e.source_type == "offline_consult") == OFFLINE_CONSULT_EVIDENCE_CAP
 
 
 def test_collect_topic_evidence_offline_consult_unions_topics() -> None:
     ev = collect_topic_evidence(
-        [TOPIC, "セキュリティ"], [], [], [], [], offline_consults=[_consult(("セキュリティ",))]
+        [TOPIC, "セキュリティ"], [], offline_consults=[_consult(("セキュリティ",))]
     )
     assert sum(1 for e in ev if e.source_type == "offline_consult") == 1
 
@@ -166,27 +131,10 @@ def test_collect_topic_evidence_offline_consult_unions_topics() -> None:
 # --------------------------------------------------------------------------- #
 # topic matching
 # --------------------------------------------------------------------------- #
-def test_cert_matches_topic_by_substring() -> None:
-    assert cert_matches_topic("情報処理安全確保支援士", "セキュリティ") is True
-    assert cert_matches_topic("ネットワークスペシャリスト", "ネットワーク・VPN") is True
-    assert cert_matches_topic("日商簿記1級", "セキュリティ") is False
-    assert cert_matches_topic(None, "セキュリティ") is False
-
-
-def test_product_matches_topic() -> None:
-    assert product_matches_topic("CRM導入支援", "CRM・営業支援") is True
-    assert product_matches_topic("広告運用代行", "Webマーケティング・広告") is True
-    assert product_matches_topic("CRM導入支援", "セキュリティ") is False
-    assert product_matches_topic(None, "CRM・営業支援") is False
-
-
 def test_topic_vocabulary_is_the_scorer_join_vocabulary() -> None:
-    # 22 canonical topics, unique. Every CERT/PRODUCT map resolves INTO this set —
-    # otherwise that evidence source could never match a C1 topic (#116).
+    # 22 canonical topics, unique (#116).
     assert len(TOPIC_VOCABULARY) == 22
     assert len(set(TOPIC_VOCABULARY)) == 22
-    vocab = set(TOPIC_VOCABULARY)
-    assert set(PRODUCT_TOPIC_MAP.values()) <= vocab
 
 
 def test_topic_vocabulary_matches_eval_topic_keywords() -> None:
@@ -234,71 +182,27 @@ def test_normalize_topics_merges_split_compounds_and_dedups() -> None:
 # evidence -> edge weight
 # --------------------------------------------------------------------------- #
 def test_collect_topic_evidence_assigns_base_scores() -> None:
-    evidence = collect_topic_evidence(
-        TOPIC,
-        [_cert("ネットワークスペシャリスト"), _cert("日商簿記1級")],  # only the first matches
-        [_skill(TOPIC), _skill("経理・決算")],  # only the first matches
-        [_membership("保守運用サポート", "lead")],  # product -> サーバー…, NOT this topic
-        [_answer(True, 3, NOW), _answer(False, 0, NOW)],
-    )
+    evidence = collect_topic_evidence(TOPIC, [_answer(True, 3, NOW), _answer(False, 0, NOW)])
     kinds = [(e.source_type, e.base_score) for e in evidence]
-    assert ("cert", BASE_SCORE_CERTIFICATION) in kinds
-    assert ("self", BASE_SCORE_SKILL) in kinds
-    assert ("answer", BASE_SCORE_HELPFUL_ANSWER) in kinds
-    # The non-matching cert / skill / project produced no evidence.
-    assert sum(1 for e in evidence if e.source_type == "cert") == 1
-    assert sum(1 for e in evidence if e.source_type == "self") == 1
-    assert sum(1 for e in evidence if e.source_type == "project") == 0
-
-
-def test_collect_topic_evidence_skill_provenance() -> None:
-    # Inferred skills keep provenance ("inferred"); self-declared and null-source
-    # skills both default to "self". base_score is 0.3 either way.
-    inferred = collect_topic_evidence(TOPIC, [], [_skill(TOPIC, source="inferred")], [], [])
-    declared = collect_topic_evidence(TOPIC, [], [_skill(TOPIC, source="self")], [], [])
-    unknown = collect_topic_evidence(TOPIC, [], [_skill(TOPIC, source=None)], [], [])
-    assert inferred[0].source_type == "inferred"
-    assert declared[0].source_type == "self"
-    assert unknown[0].source_type == "self"  # null source defaults to self-declared
-    assert inferred[0].base_score == declared[0].base_score == BASE_SCORE_SKILL
-
-
-def test_collect_topic_evidence_unions_multiple_topics() -> None:
-    # Skills on either topic are both evidence; a skill on neither is excluded.
-    topics = ["ネットワーク・VPN", "セキュリティ"]
-    skills = [
-        _skill("ネットワーク・VPN"),
-        _skill("セキュリティ"),
-        _skill("経理・決算"),  # neither topic
-    ]
-    evidence = collect_topic_evidence(topics, [], skills, [], [])
-    self_topics = sorted(e.detail for e in evidence if e.source_type == "self")
-    assert self_topics == ["セキュリティ", "ネットワーク・VPN"]  # detail carries skill topic
+    assert kinds == [("answer", BASE_SCORE_HELPFUL_ANSWER), ("answer", BASE_SCORE_ANSWER)]
+    assert [e.detail for e in evidence] == ["有用と評価された回答", "過去の回答"]
 
 
 def test_collect_topic_evidence_single_and_multi_are_consistent() -> None:
     # A single-topic string and a one-element sequence behave identically.
-    one = collect_topic_evidence(TOPIC, [], [_skill(TOPIC)], [], [])
-    seq = collect_topic_evidence([TOPIC], [], [_skill(TOPIC)], [], [])
-    assert [e.source_type for e in one] == [e.source_type for e in seq]
-
-
-def test_collect_topic_evidence_project_role_base_scores() -> None:
-    lead = collect_topic_evidence("CRM・営業支援", [], [], [_membership("CRM導入支援", "lead")], [])
-    member = collect_topic_evidence(
-        "CRM・営業支援", [], [], [_membership("CRM導入支援", "member")], []
-    )
-    assert lead[0].base_score == BASE_SCORE_PROJECT_LEAD
-    assert member[0].base_score == BASE_SCORE_PROJECT_MEMBER
+    consults = [_consult((TOPIC,))]
+    one = collect_topic_evidence(TOPIC, [_answer(True, 0, NOW)], consults)
+    seq = collect_topic_evidence([TOPIC], [_answer(True, 0, NOW)], consults)
+    assert one == seq
 
 
 def test_edge_weight_saturates_and_is_monotonic() -> None:
-    small = edge_weight([Evidence("self", BASE_SCORE_SKILL, None, "x")])
+    small = edge_weight([Evidence("offline_consult", BASE_SCORE_OFFLINE_CONSULT, None, "x")])
     big = edge_weight(
         [
             Evidence("answer", BASE_SCORE_HELPFUL_ANSWER, None, "x"),
-            Evidence("cert", BASE_SCORE_CERTIFICATION, None, "x"),
-            Evidence("project", BASE_SCORE_PROJECT_LEAD, None, "x"),
+            Evidence("answer", BASE_SCORE_ANSWER, None, "x"),
+            Evidence("offline_consult", BASE_SCORE_OFFLINE_CONSULT, None, "x"),
         ]
     )
     assert 0.0 < small < big < 1.0
@@ -348,14 +252,11 @@ def test_answer_quality_monotonic() -> None:
 
 
 def test_confidence_label_by_evidence_kind() -> None:
-    # 高: answered on the topic and not merely project-adjacent (#110).
+    # 高: answered on the topic (#110).
     assert features.confidence_label(["answer"]) == "高"
-    assert features.confidence_label(["cert", "self", "answer"]) == "高"
-    # 中: answered, but also carries project membership (diluting signal, #110).
-    assert features.confidence_label(["answer", "project"]) == "中"
-    assert features.confidence_label(["answer", "answer", "project"]) == "中"
-    # 低: no past answer — certs/skills/projects alone don't prove answering here.
-    assert features.confidence_label(["cert", "project", "self"]) == "低"
+    assert features.confidence_label(["offline_consult", "answer", "answer"]) == "高"
+    # 低: no past answer — a 直接相談 retrospective alone doesn't prove answering here.
+    assert features.confidence_label(["offline_consult"]) == "低"
     assert features.confidence_label([]) == "低"
 
 
@@ -364,14 +265,14 @@ def test_confidence_label_by_evidence_kind() -> None:
 # --------------------------------------------------------------------------- #
 def test_recency_detail_empty_and_months() -> None:
     assert ExpertiseScorer._recency_detail([], NOW) == ""
-    # Skills carry no timestamp -> still empty.
-    assert ExpertiseScorer._recency_detail([Evidence("self", 0.3, None, "x")], NOW) == ""
+    # Evidence without a timestamp -> still empty.
+    assert ExpertiseScorer._recency_detail([Evidence("answer", 0.7, None, "x")], NOW) == ""
     recent = ExpertiseScorer._recency_detail(
         [Evidence("answer", 0.7, NOW - dt.timedelta(days=5), "x")], NOW
     )
     assert recent == "直近1か月以内の関連実績あり"
     older = ExpertiseScorer._recency_detail(
-        [Evidence("project", 0.8, NOW - dt.timedelta(days=95), "x")], NOW
+        [Evidence("answer", 0.7, NOW - dt.timedelta(days=95), "x")], NOW
     )
     assert older == "直近の関連実績: 約3か月前"
 
@@ -382,27 +283,15 @@ def test_load_label_bands() -> None:
     assert ExpertiseScorer._load_label(9) == "多め"
 
 
-def test_recency_moments_excludes_certifications() -> None:
-    # A cert carries a date but must not feed recency (it does not age out).
+def test_recency_moments_keep_only_timestamped_answers() -> None:
+    # Only answers decay into recency; a 直接相談 retrospective and an undated
+    # answer do not feed it (RECENCY_SOURCE_TYPES).
     evidence = [
-        Evidence("cert", 0.6, dt.date(2020, 1, 1), "old cert"),
+        Evidence("offline_consult", 0.25, dt.datetime(2026, 8, 1), "consult"),
         Evidence("answer", 0.7, NOW, "fresh answer"),
-        Evidence("self", 0.3, None, "skill"),
+        Evidence("answer", 0.7, None, "undated answer"),
     ]
-    moments = ExpertiseScorer._recency_moments(evidence, NOW)
-    assert moments == [NOW]  # only the answer's timestamp
-
-
-def test_recency_moments_ongoing_project_uses_now() -> None:
-    # A finished project uses its end_date; an ongoing one (timestamp None) is
-    # treated as current work -> ``now``, so it stays fresh.
-    ended = Evidence("project", 0.8, dt.date(2026, 1, 1), "ended")
-    ongoing = Evidence("project", 0.8, None, "ongoing")
-    assert ExpertiseScorer._recency_moments([ongoing], NOW) == [NOW]
-    moments = ExpertiseScorer._recency_moments([ended, ongoing], NOW)
-    assert moments == [dt.date(2026, 1, 1), NOW]
-    # An ongoing project scores as fresh as an answer submitted right now.
-    assert features.recency(NOW, ExpertiseScorer._recency_moments([ongoing], NOW)) == 1.0
+    assert ExpertiseScorer._recency_moments(evidence) == [NOW]
 
 
 # --------------------------------------------------------------------------- #

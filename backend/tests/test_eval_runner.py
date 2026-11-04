@@ -896,9 +896,21 @@ def test_run_eval_real_pipeline_over_seed(seed_counts, session, fake_embedder) -
     #
     # 床は現在の実測から余裕を取って置く。**下げるのは実測が下がったときだけにし、
     # 理由をここに書く**（一度、下がっていない Recall@3 の床まで下げてしまった）。
-    assert m.top1_accuracy >= 0.50
-    assert m.recall_at_3 >= 0.50
-    assert m.mrr >= 0.55
+    #
+    # #95 で資格・スキル・案件をスコアラーの根拠から外して、実測が下がった。
+    #
+    #     指標        #95前    #95後
+    #     Top-1      0.606    0.470
+    #     Recall@3   0.563    0.455
+    #     MRR        0.659    0.563
+    #     route      0.681    0.681
+    #
+    # 主 gold は `projects` から作るので、案件を根拠に使わなくなれば当たりにくくなる。
+    # 回答から作る第2の gold では Top-1 0.721→0.738、Recall@3 0.492→0.503 と少し上がった。
+    # スコアラーの劣化ではなく、会社データの評価セットが案件に寄っているぶんが抜けた。
+    assert m.top1_accuracy >= 0.42
+    assert m.recall_at_3 >= 0.40
+    assert m.mrr >= 0.50
     assert m.route_accuracy >= 0.65
 
     # #297 recall-centric metrics are produced over the real seed. The LLM-free

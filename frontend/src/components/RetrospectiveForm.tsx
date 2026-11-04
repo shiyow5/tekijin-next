@@ -6,7 +6,7 @@
  * A "direct" consultation (#245) happens face to face, so — unlike a chat
  * hand-off — nothing is written down and the knowledge it carried is lost. This
  * form is the asker's write-up of it, and what it records becomes topic evidence
- * for the responder (`base_score` below a self-declared skill, because it is the
+ * for the responder (`base_score` well below a past answer, because it is the
  * asker paraphrasing someone else).
  *
  * The topic list comes from `GET /topics` rather than a copy in this file: the

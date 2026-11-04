@@ -4,12 +4,16 @@ import { describe, expect, it } from "vitest";
 
 describe("reasonLabel", () => {
   it("maps known reason types to Japanese labels", () => {
-    expect(reasonLabel("cert")).toBe(REASON_LABELS.cert);
+    expect(reasonLabel("answers")).toBe(REASON_LABELS.answers);
     expect(reasonLabel("answers")).toBe("過去回答");
     expect(reasonLabel("load")).toBe("現在の負荷");
-    // `skill` (inferred) is distinct from `self` (self-declared).
-    expect(reasonLabel("skill")).toBe("推定スキル");
-    expect(reasonLabel("self")).toBe("自己申告");
+    expect(reasonLabel("recency")).toBe("直近の活動");
+  });
+
+  it("has no labels for the evidence removed in #95", () => {
+    for (const removed of ["cert", "self", "skill", "project"]) {
+      expect(REASON_LABELS[removed]).toBeUndefined();
+    }
   });
 
   it("falls back to the raw type for unknown reasons", () => {
@@ -20,19 +24,19 @@ describe("reasonLabel", () => {
 describe("answersEvidence", () => {
   it("returns the answers reason detail verbatim (real backend format)", () => {
     const reasons: Reason[] = [
-      { type: "cert", detail: "第一種電気工事士" },
+      { type: "recency", detail: "直近1か月以内の関連実績あり" },
       { type: "answers", detail: "類似の質問に過去5件回答（うち有用と評価3件）" },
     ];
     expect(answersEvidence(reasons)).toBe("類似の質問に過去5件回答（うち有用と評価3件）");
   });
 
   it("returns null when there is no answers reason", () => {
-    expect(answersEvidence([{ type: "cert", detail: "資格" }])).toBeNull();
+    expect(answersEvidence([{ type: "load", detail: "今週の対応件数: 少なめ" }])).toBeNull();
   });
 
   it("never synthesises a reuse count from other reason types", () => {
     // The backend does not expose a raw reuse count; only the `answers` detail
     // is used, so a non-answers reason yields null (no fabricated number).
-    expect(answersEvidence([{ type: "project", detail: "同種の案件を8件担当" }])).toBeNull();
+    expect(answersEvidence([{ type: "recency", detail: "直近の関連実績: 約3か月前" }])).toBeNull();
   });
 });

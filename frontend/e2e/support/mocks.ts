@@ -59,7 +59,7 @@ export const RECOMMENDATION = {
   dept: "技術部",
   score: 0.92,
   confidence: "高",
-  reasons: [{ type: "certification", detail: "情報処理安全確保支援士を保有" }],
+  reasons: [{ type: "answers", detail: "類似の質問に過去3件回答" }],
 };
 
 /** The draft the person-route stream feeds into the editor (asserted verbatim). */
@@ -79,7 +79,7 @@ export const PERSON_ROUTE_FRAMES: SseFrame[] = [
   },
   {
     event: "route",
-    data: { route: "person", reason: "同様の案件を直近で担当した方がいます。", confidence: 0.82 },
+    data: { route: "person", reason: "同様の質問に直近で答えた方がいます。", confidence: 0.82 },
   },
   { event: "recommend", data: { recommendations: [RECOMMENDATION] } },
   { event: "draft", data: { draft: PERSON_ROUTE_DRAFT } },

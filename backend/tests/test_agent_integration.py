@@ -17,7 +17,7 @@ from langgraph.types import Command
 from tekijin.agent import build_agent
 from tekijin.agent.route import DOCUMENT, PERSON, PRIOR_ANSWER
 from tekijin.agent.state import RetrievalResult
-from tekijin.models.tables import Answer, Question, Skill
+from tekijin.models.tables import Answer, Question
 from tekijin.retrieval.indexing import embed_corpus
 
 NOW = dt.datetime(2026, 9, 15, 12, 0, 0)
@@ -110,8 +110,26 @@ class _FakeRetriever:
         return self._payload
 
 
-def _seed_skill(session, sid: str, employee_id: int, topic: str = TOPIC) -> None:
-    session.add(Skill(id=sid, employee_id=employee_id, topic=topic, level="中級", source="self"))
+def _seed_evidence(session, eid: str, employee_id: int, topic: str = TOPIC) -> None:
+    """Give a candidate C6 topic evidence: one helpful past answer on ``topic``.
+
+    Dated 30 days before ``NOW``, outside the 7-day load window, so it adds
+    expertise without adding load.
+    """
+
+    session.add(Question(id=f"q_{eid}", asker_id=2, body="過去の質問", topics=[topic]))
+    session.flush()
+    session.add(
+        Answer(
+            id=eid,
+            question_id=f"q_{eid}",
+            responder_id=employee_id,
+            body="過去の回答",
+            topic=topic,
+            was_helpful=True,
+            created_at=NOW - dt.timedelta(days=30),
+        )
+    )
     session.flush()
 
 
@@ -138,7 +156,7 @@ def _is_paused(agent, cfg) -> bool:
 # --------------------------------------------------------------------------- #
 def test_happy_path_person_route(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_happy_{emp}", emp)
+        _seed_evidence(session, f"ev_happy_{emp}", emp)
     retriever = _FakeRetriever(
         answers=[{"qa_id": "a", "score": 0.005, "responder_id": 1}],
         documents=[{"doc_id": "d", "score": 0.001}],
@@ -173,7 +191,7 @@ def test_out_of_scope_is_deflected(seed_counts, session, fake_embedder) -> None:
 # --------------------------------------------------------------------------- #
 def test_insufficient_triggers_interrupt_then_resumes(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_insuf_{emp}", emp)
+        _seed_evidence(session, f"ev_insuf_{emp}", emp)
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1, 2]))
     cfg = _cfg("insuf")
 
@@ -200,7 +218,7 @@ def test_confident_topic_skips_clarification(seed_counts, session, fake_embedder
     # topic ネットワーク・VPN at confidence ≥ threshold, so C2 proceeds straight to the
     # hand-off instead of asking — finding the responder is the product's job.
     for emp in (1, 2):
-        _seed_skill(session, f"sk_conf_{emp}", emp)
+        _seed_evidence(session, f"ev_conf_{emp}", emp)
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1, 2]))
     cfg = _cfg("conf")
     state = agent.invoke(_init("ネットワークの技術相談です"), cfg)
@@ -212,7 +230,7 @@ def test_confident_topic_skips_clarification(seed_counts, session, fake_embedder
 # C5 three routes
 # --------------------------------------------------------------------------- #
 def test_prior_answer_route(seed_counts, session, fake_embedder) -> None:
-    _seed_skill(session, "sk_pa_1", 1)
+    _seed_evidence(session, "ev_pa_1", 1)
     retriever = _FakeRetriever(
         answers=[{"qa_id": "a", "score": 0.05, "responder_id": 1}],
         answer_confidence=0.9,  # near-duplicate past QA (absolute cosine)
@@ -249,7 +267,7 @@ def test_document_route_offers_a_person_fallback(seed_counts, session, fake_embe
     # route too, so the DOCUMENT terminal cites the doc AND names a fallback person
     # — while staying terminal (self-resolution first, no hand-off interrupt).
     for emp in (1, 2):
-        _seed_skill(session, f"sk_docfb_{emp}", emp)  # real topic evidence
+        _seed_evidence(session, f"ev_docfb_{emp}", emp)  # real topic evidence
     retriever = _FakeRetriever(
         documents=[{"doc_id": "doc_0007", "score": 0.05}],
         document_confidence=0.8,  # strongly on-topic document
@@ -273,7 +291,7 @@ def test_document_route_offers_a_person_fallback(seed_counts, session, fake_embe
 # --------------------------------------------------------------------------- #
 def test_answerability_accepts_and_proceeds_to_handoff(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_ans_ok_{emp}", emp)
+        _seed_evidence(session, f"ev_ans_ok_{emp}", emp)
     critic = _FixedAnswerability(confidence=85)  # strong in-house track record
     agent = build_agent(
         fake_embedder,
@@ -300,7 +318,7 @@ def test_answerability_rejects_to_no_expert_terminal(seed_counts, session, fake_
     # insufficient (海外法務/知財… "痕跡が無い領域") -> graceful no_expert terminal,
     # NOT a hand-off to a weak match.
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_ans_ng_{emp}", emp)
+        _seed_evidence(session, f"ev_ans_ng_{emp}", emp)
     critic = _FixedAnswerability(confidence=15)  # below threshold
     agent = build_agent(
         fake_embedder,
@@ -322,7 +340,7 @@ def test_answerability_bypassed_on_document_route(seed_counts, session, fake_emb
     # The document route is self-resolution, not a hand-off — the critic must not
     # sit on that path (a low score must not turn a document answer into no_expert).
     for emp in (1, 2):
-        _seed_skill(session, f"sk_ans_doc_{emp}", emp)
+        _seed_evidence(session, f"ev_ans_doc_{emp}", emp)
     critic = _FixedAnswerability(confidence=5)  # would reject if it were consulted
     retriever = _FakeRetriever(
         documents=[{"doc_id": "doc_0007", "score": 0.05}],
@@ -347,7 +365,7 @@ def test_answerability_unwired_is_passthrough(seed_counts, session, fake_embedde
     # Default (no critic): the graph is the pre-#70 flow — no critique node, no
     # answerability keys in state, straight to the send hand-off.
     for emp in (1, 2):
-        _seed_skill(session, f"sk_ans_off_{emp}", emp)
+        _seed_evidence(session, f"ev_ans_off_{emp}", emp)
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1, 2]))
     cfg = _cfg("ans_off")
     state = agent.invoke(_init(), cfg)
@@ -375,7 +393,7 @@ def test_self_answer_grounded_terminates_with_citations(
     seed_counts, session, fake_embedder
 ) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_sa_ok_{emp}", emp)
+        _seed_evidence(session, f"ev_sa_ok_{emp}", emp)
     composer = _FixedSelfAnswer(grounded=True, answer="保守時間内に更新します。", cites=["doc_001"])
     agent = build_agent(
         fake_embedder, session, retriever=_doc_retriever(), self_answer_model=composer
@@ -392,7 +410,7 @@ def test_self_answer_grounded_terminates_with_citations(
 
 def test_self_answer_ungrounded_falls_back_to_document(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_sa_ng_{emp}", emp)
+        _seed_evidence(session, f"ev_sa_ng_{emp}", emp)
     composer = _FixedSelfAnswer(grounded=False)
     agent = build_agent(
         fake_embedder, session, retriever=_doc_retriever(), self_answer_model=composer
@@ -409,7 +427,7 @@ def test_self_answer_not_consulted_on_person_route(seed_counts, session, fake_em
     # A person-routed question (weak data) must NOT run the self-answer composer —
     # it goes straight to the hand-off, unchanged.
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_sa_pr_{emp}", emp)
+        _seed_evidence(session, f"ev_sa_pr_{emp}", emp)
     composer = _FixedSelfAnswer(grounded=True, cites=["x"])
     agent = build_agent(
         fake_embedder,
@@ -443,7 +461,7 @@ def test_additive_answer_cites_on_person_route_and_still_hands_off(
     seed_counts, session, fake_embedder
 ) -> None:
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_add_ok_{emp}", emp)
+        _seed_evidence(session, f"ev_add_ok_{emp}", emp)
     composer = _FixedSelfAnswer(grounded=True, answer="過去の類似回答です。", cites=["doc_001"])
     agent = build_agent(
         fake_embedder,
@@ -468,7 +486,7 @@ def test_additive_answer_gated_below_floor_skips_compose(
     seed_counts, session, fake_embedder
 ) -> None:
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_add_lo_{emp}", emp)
+        _seed_evidence(session, f"ev_add_lo_{emp}", emp)
     composer = _FixedSelfAnswer(grounded=True, cites=["doc_001"])
     agent = build_agent(
         fake_embedder,
@@ -490,7 +508,7 @@ def test_additive_answer_ungrounded_leaves_no_reference(
     seed_counts, session, fake_embedder
 ) -> None:
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_add_ng_{emp}", emp)
+        _seed_evidence(session, f"ev_add_ng_{emp}", emp)
     composer = _FixedSelfAnswer(grounded=False)
     agent = build_agent(
         fake_embedder,
@@ -521,7 +539,7 @@ def test_additive_answer_compose_failure_still_hands_off(
             raise ValueError("unparseable structured output")
 
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_add_err_{emp}", emp)
+        _seed_evidence(session, f"ev_add_err_{emp}", emp)
     composer = _RaisingComposer()
     agent = build_agent(
         fake_embedder,
@@ -543,7 +561,7 @@ def test_additive_answer_off_by_default_person_route_unchanged(
     seed_counts, session, fake_embedder
 ) -> None:
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_add_off_{emp}", emp)
+        _seed_evidence(session, f"ev_add_off_{emp}", emp)
     composer = _FixedSelfAnswer(grounded=True, cites=["doc_001"])
     agent = build_agent(
         fake_embedder,
@@ -565,7 +583,7 @@ def test_self_answer_unwired_leaves_document_route_unchanged(
     seed_counts, session, fake_embedder
 ) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_sa_off_{emp}", emp)
+        _seed_evidence(session, f"ev_sa_off_{emp}", emp)
     agent = build_agent(fake_embedder, session, retriever=_doc_retriever())  # no composer
     state = agent.invoke(_init(), _cfg("sa_off"))
     assert state["route"] == DOCUMENT and "doc_001" in state["answer"]
@@ -593,7 +611,7 @@ def test_self_answer_grounded_on_prior_answer_terminates(
 ) -> None:
     # #291 review: the prior_answer route also runs self-answer. A grounded answer
     # terminates at self_answered (no pinned hand-off), citing the past Q&A.
-    _seed_skill(session, "sk_sapa_ok", 1)
+    _seed_evidence(session, "ev_sapa_ok", 1)
     _seed_qa(session, "a_sapa", responder_id=1, body="VPNは保守時間内に更新します")
     composer = _FixedSelfAnswer(
         grounded=True, answer="過去回答より、保守時間内に更新します。", cites=["a_sapa"]
@@ -616,7 +634,7 @@ def test_self_answer_ungrounded_falls_back_to_prior_answer_handoff(
     seed_counts, session, fake_embedder
 ) -> None:
     # Not grounded on the prior_answer route -> fall back to the pinned hand-off.
-    _seed_skill(session, "sk_sapa_ng", 1)
+    _seed_evidence(session, "ev_sapa_ng", 1)
     _seed_qa(session, "a_sapang", responder_id=1)
     composer = _FixedSelfAnswer(grounded=False)
     agent = build_agent(
@@ -638,7 +656,7 @@ def test_self_answer_ungrounded_falls_back_to_prior_answer_handoff(
 # --------------------------------------------------------------------------- #
 def test_decline_reroutes_to_next_candidate(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_dec_{emp}", emp)
+        _seed_evidence(session, f"ev_dec_{emp}", emp)
     retriever = _FakeRetriever(people=[1, 2, 3])
     agent = build_agent(fake_embedder, session, retriever=retriever)
     cfg = _cfg("decline")
@@ -670,7 +688,7 @@ def test_decline_reroute_backfills_only_freed_slot(seed_counts, session, fake_em
     # backfill the slot freed by the decline, proving c6_score does not
     # rescore ranks 2/3 on reroute (#D5/#206).
     for emp in (1, 2, 3, 4):
-        _seed_skill(session, f"sk_dec4_{emp}", emp)
+        _seed_evidence(session, f"ev_dec4_{emp}", emp)
     retriever = _FakeRetriever(people=[1, 2, 3, 4])
     agent = build_agent(fake_embedder, session, retriever=retriever)
     cfg = _cfg("decline4")
@@ -704,7 +722,7 @@ def test_no_candidate_terminal(seed_counts, session, fake_embedder) -> None:
 # --------------------------------------------------------------------------- #
 def test_run_is_deterministic(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_det_{emp}", emp)
+        _seed_evidence(session, f"ev_det_{emp}", emp)
     retriever = _FakeRetriever(people=[1, 2, 3])
 
     def run(thread: str) -> dict:
@@ -727,7 +745,7 @@ def test_run_is_deterministic(seed_counts, session, fake_embedder) -> None:
 # --------------------------------------------------------------------------- #
 def test_stream_yields_node_updates(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_stream_{emp}", emp)
+        _seed_evidence(session, f"ev_stream_{emp}", emp)
     retriever = _FakeRetriever(people=[1, 2])
     agent = build_agent(fake_embedder, session, retriever=retriever)
 
@@ -766,8 +784,8 @@ def test_real_retriever_end_to_end(seed_counts, session, fake_embedder) -> None:
 
 def test_newly_covered_topic_reaches_recommendation(seed_counts, session, fake_embedder) -> None:
     # Fix 2: an EC question (previously uncoverable by the stub) now extracts the
-    # ECサイト構築 topic, so a candidate with that skill can be recommended.
-    _seed_skill(session, "sk_ec_1", 1, topic="ECサイト構築")
+    # ECサイト構築 topic, so a candidate with evidence on it can be recommended.
+    _seed_evidence(session, "ev_ec_1", 1, topic="ECサイト構築")
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1]))
     q = "ECサイト構築について、現行のECサイトで3拠点向けに相談したいです"
     state = agent.invoke(_init(q), _cfg("ec"))
@@ -779,7 +797,7 @@ def test_c4_reuses_c3_query_vector(seed_counts, session, fake_embedder) -> None:
     # Fix 4: the C3 embedding is passed to C4.search so the dense channels do not
     # re-embed (one encode per query, not two).
     retriever = _FakeRetriever(people=[1])
-    _seed_skill(session, "sk_reuse", 1)
+    _seed_evidence(session, "ev_reuse", 1)
     agent = build_agent(fake_embedder, session, retriever=retriever)
     agent.invoke(_init(), _cfg("reuse"))
     assert retriever.calls  # C4 was called
@@ -791,7 +809,7 @@ def test_c4_reuses_c3_query_vector(seed_counts, session, fake_embedder) -> None:
 # --------------------------------------------------------------------------- #
 def test_unexpected_outcome_does_not_reach_c8(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_bad_{emp}", emp)
+        _seed_evidence(session, f"ev_bad_{emp}", emp)
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1, 2]))
     cfg = _cfg("badout")
 
@@ -811,7 +829,7 @@ def test_unexpected_outcome_does_not_reach_c8(seed_counts, session, fake_embedde
 # --------------------------------------------------------------------------- #
 def test_second_question_resets_control_fields(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_reset_{emp}", emp)
+        _seed_evidence(session, f"ev_reset_{emp}", emp)
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1, 2]))
     cfg = _cfg("twoq")  # SAME thread for both questions
 
@@ -833,7 +851,7 @@ def test_second_question_resets_control_fields(seed_counts, session, fake_embedd
 
 def test_resume_does_not_reset_followup_loop(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_noreset_{emp}", emp)
+        _seed_evidence(session, f"ev_noreset_{emp}", emp)
     agent = build_agent(fake_embedder, session, retriever=_FakeRetriever(people=[1, 2]))
     cfg = _cfg("noreset")
     agent.invoke(_init(VAGUE_Q), cfg)  # vague -> C2 asks
@@ -854,7 +872,7 @@ def test_node_enforces_followup_cap(seed_counts, session, fake_embedder) -> None
             return SufficiencyResult(sufficient=False, missing=["x"], followup_question="もっと？")
 
     for emp in (1, 2):
-        _seed_skill(session, f"sk_cap_{emp}", emp)
+        _seed_evidence(session, f"ev_cap_{emp}", emp)
     agent = build_agent(
         fake_embedder,
         session,
@@ -888,7 +906,7 @@ def test_c2_fast_path_keeps_missing_in_handoff_draft(seed_counts, session, fake_
             raise AssertionError("C2 sufficiency LLM must be skipped when can_route")
 
     for emp in (1, 2):
-        _seed_skill(session, f"sk_miss_{emp}", emp)
+        _seed_evidence(session, f"ev_miss_{emp}", emp)
     agent = build_agent(
         fake_embedder,
         session,
@@ -914,7 +932,7 @@ def test_prior_answer_pins_the_responder(seed_counts, session, fake_embedder) ->
     # employee 5; prior_answer must hand off to 5 first (not lose them to a
     # higher-scoring 1/2/3), then fill the remaining 2 slots from 1/2/3.
     for emp in (1, 2, 3):
-        _seed_skill(session, f"sk_pin_{emp}", emp)  # strong candidates
+        _seed_evidence(session, f"ev_pin_{emp}", emp)  # strong candidates
     retriever = _FakeRetriever(
         answers=[{"qa_id": "a", "score": 0.05, "responder_id": 5}],
         answer_confidence=0.9,  # near-duplicate past QA
@@ -935,7 +953,7 @@ def test_prior_answer_falls_back_when_pinned_declines(seed_counts, session, fake
     # Fix 3: the pinned past responder declines -> drop the pin and fall back to
     # the candidate_people pool (never dead-end on a single decline).
     for emp in (1, 2):
-        _seed_skill(session, f"sk_pinfb_{emp}", emp)
+        _seed_evidence(session, f"ev_pinfb_{emp}", emp)
     retriever = _FakeRetriever(
         answers=[{"qa_id": "a", "score": 0.05, "responder_id": 1}],
         answer_confidence=0.9,
@@ -962,7 +980,7 @@ def test_prior_answer_pin_that_is_the_asker_falls_back(seed_counts, session, fak
     # Fix 3: the top past answer's responder IS the asker -> the pin is invalid
     # (they cannot answer their own question); fall back to candidate_people.
     for emp in (1, 2):
-        _seed_skill(session, f"sk_pinself_{emp}", emp)
+        _seed_evidence(session, f"ev_pinself_{emp}", emp)
     retriever = _FakeRetriever(
         answers=[{"qa_id": "a", "score": 0.05, "responder_id": 5}],  # responder == asker
         answer_confidence=0.9,
@@ -1000,7 +1018,7 @@ def test_unresolved_intent_terminal(seed_counts, session, fake_embedder) -> None
 # --------------------------------------------------------------------------- #
 def test_ask_ignores_non_string_resume(seed_counts, session, fake_embedder) -> None:
     for emp in (1, 2):
-        _seed_skill(session, f"sk_badreply_{emp}", emp)
+        _seed_evidence(session, f"ev_badreply_{emp}", emp)
     agent = build_agent(
         fake_embedder,
         session,
@@ -1080,7 +1098,7 @@ def test_knowledge_answer_falls_through_when_irrelevant(
     # to normal retrieval/routing exactly as pre-#357 (a person hand-off here).
     _seed_approved_knowledge(session, fake_embedder, "kb_c4c_2", "全く無関係な話題", "何もしない")
     for emp in (1, 2):
-        _seed_skill(session, f"sk_kb_{emp}", emp)
+        _seed_evidence(session, f"ev_kb_{emp}", emp)
     agent = build_agent(
         fake_embedder,
         session,

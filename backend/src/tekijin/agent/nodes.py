@@ -79,7 +79,7 @@ def answerability_evidence(recommendations: Sequence[Mapping[str, Any]]) -> list
     The evidence-sufficiency critic judges "can the company answer this in-house"
     from the *shown* candidates' track record — so we hand it exactly what C6
     produced: each candidate's name/dept plus its scored ``reasons`` details
-    (self-reported skills, certifications, past answers…). Candidates with no
+    (past answers, question fit, recency, load…). Candidates with no
     reasons still contribute a line (name/dept), because the critic's job is to
     weigh how strong that record is — an empty ``recommendations`` yields ``[]``,
     which the critic reads as "nobody in-house" and rejects.

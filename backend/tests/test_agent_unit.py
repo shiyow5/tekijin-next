@@ -589,7 +589,7 @@ def test_intent_covers_all_22_canonical_topics() -> None:
     from tekijin.agent.stubs import TOPIC_KEYWORDS
 
     # Fix 2: the stub can extract every one of the 22 canonical topics — and the
-    # keys match the scorer's exact-topic join (skills.topic) verbatim.
+    # keys match the scorer's exact-topic join (answers.topic) verbatim.
     assert len(TOPIC_KEYWORDS) == 22
     model = KeywordIntentModel()
     # Spot-check topics that were missing before (EC / SNS / mobile / 基幹 …).
@@ -1030,8 +1030,8 @@ def test_answerability_evidence_one_line_per_candidate_with_reasons() -> None:
             "name": "山田",
             "dept": "技術部",
             "reasons": [
-                {"type": "skill", "detail": "VPN構築の実績"},
-                {"type": "cert", "detail": "ネットワーク資格"},
+                {"type": "answers", "detail": "類似の質問に過去3件回答"},
+                {"type": "recency", "detail": "直近1か月以内の関連実績あり"},
             ],
         },
         {"person_id": 2, "name": "佐藤", "dept": None, "reasons": []},
@@ -1040,7 +1040,7 @@ def test_answerability_evidence_one_line_per_candidate_with_reasons() -> None:
     assert len(lines) == 2
     # name/dept + the reason details are all present for the critic to weigh.
     assert "山田（技術部）" in lines[0]
-    assert "VPN構築の実績" in lines[0] and "ネットワーク資格" in lines[0]
+    assert "類似の質問に過去3件回答" in lines[0] and "直近1か月以内の関連実績あり" in lines[0]
     # A candidate with no reasons still contributes a line (name only, no dept).
     assert lines[1] == "佐藤"
 

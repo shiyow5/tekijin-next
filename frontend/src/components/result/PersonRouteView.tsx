@@ -275,7 +275,7 @@ export function PersonRouteView({
       <header className="flex flex-col gap-xs">
         <h1 className="font-bold text-2xl text-on-surface">この質問は、人に聞くのが確実です</h1>
         <p className="text-on-surface-variant">
-          {reason || "直近で同様の案件を担当した方の知見が役立ちそうです。"}
+          {reason || "直近で同様の質問に答えた方の知見が役立ちそうです。"}
         </p>
       </header>
 

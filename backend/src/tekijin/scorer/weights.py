@@ -62,19 +62,17 @@ DEFAULT_WEIGHTS = Weights()
 # knowledge 0.20). Below this, the tiny score nudge is unexplained but immaterial.
 QUESTION_FIT_REASON_FLOOR = 0.15
 
-# Evidence base_scores (doc15 / db-schema.md): helpful answer 1.0 > project lead
-# 0.8 > past answer 0.7 > certification 0.6 > project member 0.5 > self-declared
-# skill 0.3. These are summed per (person, topic) and saturated into an edge
-# weight; a decline is NOT negative evidence (it lowers availability, not skill).
+# Evidence base_scores (doc15 / db-schema.md): helpful answer 1.0 > past answer
+# 0.7 > 直接相談のふりかえり 0.25. These are summed per (person, topic) and saturated
+# into an edge weight; a decline is NOT negative evidence (it lowers availability,
+# not skill). Certifications, skills and projects were evidence until #95; the
+# general-org redesign (§4.8) dropped them, and R5 rebuilds C6 on evidence from
+# documents and conversations.
 BASE_SCORE_HELPFUL_ANSWER = 1.0
-BASE_SCORE_PROJECT_LEAD = 0.8
 BASE_SCORE_ANSWER = 0.7
-BASE_SCORE_CERTIFICATION = 0.6
-BASE_SCORE_PROJECT_MEMBER = 0.5
-BASE_SCORE_SKILL = 0.3
 # 直接相談のふりかえり (#247): the asker's written summary of a face-to-face
-# consultation. It sits BELOW a self-declared skill (0.3) because it is HEARSAY —
-# one person paraphrasing another's words — yet it records an actual consultation
+# consultation. It sits well BELOW a past answer because it is HEARSAY — one
+# person paraphrasing another's words — yet it records an actual consultation
 # the asker explicitly tagged with a topic and rated. Capped so a chatty pair
 # cannot saturate topic_fit: 4 × 0.25 = 1.0, comparable to one helpful
 # answer. A retrospective marked ``unresolved`` contributes NOTHING (and never
@@ -87,14 +85,12 @@ OFFLINE_CONSULT_EVIDENCE_CAP = 4
 # evidence either way.
 OFFLINE_CONSULT_POSITIVE_RESOLUTIONS = ("resolved", "partial")
 
-# Half-life of experience relevance: a 6-month-old project/answer counts half as
-# much toward ``recency`` (technical-spec §5: 半減期6か月の時間減衰).
+# Half-life of experience relevance: a 6-month-old answer counts half as much
+# toward ``recency`` (technical-spec §5: 半減期6か月の時間減衰).
 RECENCY_HALF_LIFE_DAYS = 182.5
 
-# Evidence source_types that decay with time and so feed ``recency``. A
-# certification does not become less true as it ages, so it is deliberately
-# excluded (technical-spec §5 ties recency to projects/answers).
-RECENCY_SOURCE_TYPES = ("project", "answer")
+# Evidence source_types that decay with time and so feed ``recency``.
+RECENCY_SOURCE_TYPES = ("answer",)
 
 # ``load`` saturates: this many recent items (recommendations + answers in the
 # window) map to a 0.5 penalty; more approaches, but never reaches, 1.0.

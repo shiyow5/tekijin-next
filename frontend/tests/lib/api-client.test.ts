@@ -188,7 +188,7 @@ describe("getHandoff", () => {
       dept: "技術部",
       score: 0.9,
       confidence: "高",
-      reasons: [{ type: "cert", detail: "情報処理安全確保支援士" }],
+      reasons: [{ type: "answers", detail: "類似の質問に過去3件回答" }],
     },
     draft: "高梨さんへの依頼文",
     reuse_count: 7,

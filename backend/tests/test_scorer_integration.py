@@ -5,7 +5,7 @@ CI's pgvector service via ``TEKIJIN_DATABASE_URL`` or an ephemeral ``pgserver``
 locally, skipped when neither is available.
 
 Evidence is isolated with a SYNTHETIC topic that matches nothing in the seed
-(no skill, cert, product, or answer maps to it), so every candidate starts from
+(no answer or retrospective maps to it), so every candidate starts from
 zero and the only evidence is what each test inserts. ``now`` is injected, so the
 7-day load window and recency are fully deterministic. Inserted rows are flushed
 (visible in-session) but never committed — each test rolls back on close.
@@ -66,8 +66,27 @@ def _add_answer(
     session.flush()
 
 
-def _add_skill(session, sid: str, employee_id: int) -> None:
-    session.add(Skill(id=sid, employee_id=employee_id, topic=TOPIC, level="中級", source="self"))
+def _add_evidence(session, eid: str, employee_id: int, topic: str = TOPIC) -> None:
+    """One helpful on-topic answer dated outside the 7-day load window.
+
+    It gives the candidate topic evidence without adding to their load, so tests
+    that compare load or other terms start from identical evidence.
+    """
+
+    session.add(Question(id=f"q_{eid}", asker_id=1, body="q", topics=[topic], status="open"))
+    session.flush()
+    session.add(
+        Answer(
+            id=eid,
+            question_id=f"q_{eid}",
+            responder_id=employee_id,
+            body="a",
+            topic=topic,
+            reuse_count=0,
+            was_helpful=True,
+            created_at=NOW - dt.timedelta(days=30),
+        )
+    )
     session.flush()
 
 
@@ -96,9 +115,9 @@ def _scores_by_person(result: dict) -> dict[int, float]:
 # --------------------------------------------------------------------------- #
 def test_rank_output_shape_and_top_k(seed_counts, session) -> None:
     _add_question(session, "q_shape")
-    # Five candidates with differing strengths (skill + varying helpful answers).
+    # Five candidates with differing strengths (one old answer + varying fresh ones).
     for i, emp in enumerate([1, 2, 3, 4, 5]):
-        _add_skill(session, f"sk_shape_{emp}", emp)
+        _add_evidence(session, f"ev_shape_{emp}", emp)
         for j in range(i):  # emp 1 gets 0, emp 5 gets 4 helpful answers
             _add_answer(
                 session, f"a_shape_{emp}_{j}", "q_shape", emp, helpful=True, reuse=1, created=NOW
@@ -114,7 +133,7 @@ def test_rank_output_shape_and_top_k(seed_counts, session) -> None:
         assert set(rec) == {"person_id", "name", "dept", "score", "confidence", "reasons"}
         assert isinstance(rec["person_id"], int)
         assert isinstance(rec["score"], float)
-        assert rec["confidence"] in {"高", "中", "低"}
+        assert rec["confidence"] in {"高", "低"}
         assert rec["reasons"] and all(set(r) == {"type", "detail"} for r in rec["reasons"])
     # Sorted by descending score.
     scores = [r["score"] for r in recs]
@@ -128,12 +147,12 @@ def test_rank_output_shape_and_top_k(seed_counts, session) -> None:
 # --------------------------------------------------------------------------- #
 def test_expert_outranks_thin_candidate(seed_counts, session) -> None:
     _add_question(session, "q_exp")
-    # Expert: skill + three helpful, reused answers.
-    _add_skill(session, "sk_exp", 1)
+    # Expert: one old answer + three fresh helpful, reused answers.
+    _add_evidence(session, "ev_exp", 1)
     for j in range(3):
         _add_answer(session, f"a_exp_{j}", "q_exp", 1, helpful=True, reuse=2, created=NOW)
-    # Thin candidate: only a self-declared skill.
-    _add_skill(session, "sk_thin", 2)
+    # Thin candidate: only the one old answer.
+    _add_evidence(session, "ev_thin", 2)
 
     scorer = ExpertiseScorer(Repository(session))
     result = scorer.rank(TOPIC, [2, 1], asker_id=None, now=NOW, top_k=3)
@@ -144,7 +163,7 @@ def test_expert_outranks_thin_candidate(seed_counts, session) -> None:
     # The expert's reasons mention the answers evidence.
     expert = result["recommendations"][0]
     assert any(r["type"] == "answers" for r in expert["reasons"])
-    assert expert["confidence"] in {"高", "中"}
+    assert expert["confidence"] == "高"
 
 
 # --------------------------------------------------------------------------- #
@@ -154,7 +173,7 @@ def test_high_load_lowers_score(seed_counts, session) -> None:
     _add_question(session, "q_load")
     # Identical evidence for both candidates.
     for emp in (1, 2):
-        _add_skill(session, f"sk_load_{emp}", emp)
+        _add_evidence(session, f"ev_load_{emp}", emp)
         _add_answer(session, f"a_load_{emp}", "q_load", emp, helpful=True, reuse=1, created=NOW)
     # emp 2 is busy this week (8 recent recommendations).
     for _ in range(8):
@@ -177,7 +196,7 @@ def test_declined_recommendations_count_as_load(seed_counts, session) -> None:
     # declines) must rank BELOW emp 2 (identical evidence, no load).
     _add_question(session, "q_decl")
     for emp in (1, 2):
-        _add_skill(session, f"sk_decl_{emp}", emp)
+        _add_evidence(session, f"ev_decl_{emp}", emp)
     for _ in range(8):
         _add_recommendation(
             session, 1, created=NOW - dt.timedelta(days=1), outcome="declined", qid="q_decl"
@@ -205,7 +224,7 @@ def test_a_decline_never_costs_expertise_only_availability(seed_counts, session)
 
     _add_question(session, "q_decl_sym")
     for emp in (1, 2):
-        _add_skill(session, f"sk_decl_sym_{emp}", emp)
+        _add_evidence(session, f"ev_decl_sym_{emp}", emp)
     # Same count, same window, same everything — only `outcome` differs.
     for emp, outcome in ((1, "declined"), (2, "accepted")):
         for _ in range(8):
@@ -261,7 +280,7 @@ def test_declining_does_not_erase_the_answers_a_person_already_gave(seed_counts,
 def test_old_recommendations_outside_window_ignored(seed_counts, session) -> None:
     _add_question(session, "q_old")
     for emp in (1, 2):
-        _add_skill(session, f"sk_old_{emp}", emp)
+        _add_evidence(session, f"ev_old_{emp}", emp)
     # emp 2's recs are 10 days old — outside the 7-day load window.
     for _ in range(8):
         _add_recommendation(
@@ -279,7 +298,7 @@ def test_old_recommendations_outside_window_ignored(seed_counts, session) -> Non
 def test_only_input_candidates_are_scored(seed_counts, session) -> None:
     _add_question(session, "q_scope")
     for emp in (1, 2):
-        _add_skill(session, f"sk_scope_{emp}", emp)
+        _add_evidence(session, f"ev_scope_{emp}", emp)
 
     scorer = ExpertiseScorer(Repository(session))
     result = scorer.rank(TOPIC, [1, 2, 999999], asker_id=None, now=NOW, top_k=3)
@@ -295,7 +314,7 @@ def test_only_input_candidates_are_scored(seed_counts, session) -> None:
 def test_rank_is_deterministic(seed_counts, session) -> None:
     _add_question(session, "q_det")
     for emp in (1, 2, 3):
-        _add_skill(session, f"sk_det_{emp}", emp)
+        _add_evidence(session, f"ev_det_{emp}", emp)
         _add_answer(session, f"a_det_{emp}", "q_det", emp, helpful=True, reuse=1, created=NOW)
 
     scorer = ExpertiseScorer(Repository(session))
@@ -305,18 +324,25 @@ def test_rank_is_deterministic(seed_counts, session) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# reasons decompose cert + project evidence (real topic with matching maps)
+# #95: certifications, skills and projects are no longer evidence
 # --------------------------------------------------------------------------- #
-def test_reasons_include_cert_and_project(seed_counts, session) -> None:
+def test_certifications_skills_and_projects_are_not_evidence(seed_counts, session) -> None:
+    """The tables stay (a later PR drops them with the seed code), but C6 must not
+    read them: adding a matching cert, skill and project lead changes nothing."""
+
     real_topic = "CRM・営業支援"
     emp = 7
-    # A certification whose name maps to the topic (中小企業診断士 -> CRM・営業支援).
+    scorer = ExpertiseScorer(Repository(session))
+    before = scorer.rank(real_topic, [emp], asker_id=None, now=NOW, top_k=3)
+
+    # Each of these matched CRM・営業支援 under the old maps (中小企業診断士 /
+    # skills.topic / product CRM導入支援).
     session.add(
         Certification(
             id="cert_scorer_test", employee_id=emp, name="中小企業診断士", acquired_at=None
         )
     )
-    # A project whose product maps to the topic; emp is the lead.
+    session.add(Skill(id="sk_scorer_test", employee_id=emp, topic=real_topic, source="self"))
     session.add(
         Project(id=990001, subject="s", product="CRM導入支援", start_date=None, end_date=None)
     )
@@ -324,32 +350,10 @@ def test_reasons_include_cert_and_project(seed_counts, session) -> None:
     session.add(ProjectMember(project_id=990001, employee_id=emp, role="lead"))
     session.flush()
 
-    scorer = ExpertiseScorer(Repository(session))
-    result = scorer.rank(real_topic, [emp], asker_id=None, now=NOW, top_k=3)
-
-    rec = result["recommendations"][0]
-    assert rec["person_id"] == emp
-    reason_types = {r["type"] for r in rec["reasons"]}
-    assert {"cert", "project"} <= reason_types
-    cert_reason = next(r for r in rec["reasons"] if r["type"] == "cert")
-    assert "中小企業診断士" in cert_reason["detail"]
-    project_reason = next(r for r in rec["reasons"] if r["type"] == "project")
-    assert "案件" in project_reason["detail"]
-
-
-# --------------------------------------------------------------------------- #
-# fix 2: a self-declared skill is surfaced as a reason
-# --------------------------------------------------------------------------- #
-def test_skill_only_candidate_has_self_reason(seed_counts, session) -> None:
-    _add_skill(session, "sk_self", 3)  # only evidence: one self-declared skill
-
-    scorer = ExpertiseScorer(Repository(session))
-    result = scorer.rank(TOPIC, [3], asker_id=None, now=NOW, top_k=3)
-
-    rec = result["recommendations"][0]
-    self_reasons = [r for r in rec["reasons"] if r["type"] == "self"]
-    assert self_reasons  # the expertise signal is explained, not just load
-    assert TOPIC in self_reasons[0]["detail"]
+    after = scorer.rank(real_topic, [emp], asker_id=None, now=NOW, top_k=3)
+    assert after == before
+    reason_types = {r["type"] for r in after["recommendations"][0]["reasons"]}
+    assert not reason_types & {"cert", "self", "skill", "project"}
 
 
 # --------------------------------------------------------------------------- #
@@ -357,7 +361,7 @@ def test_skill_only_candidate_has_self_reason(seed_counts, session) -> None:
 # --------------------------------------------------------------------------- #
 def test_asker_excluded_from_candidates(seed_counts, session) -> None:
     for emp in (1, 2):
-        _add_skill(session, f"sk_asker_{emp}", emp)
+        _add_evidence(session, f"ev_asker_{emp}", emp)
 
     scorer = ExpertiseScorer(Repository(session))
     result = scorer.rank(TOPIC, [1, 2], asker_id=1, now=NOW, top_k=3)
@@ -367,7 +371,7 @@ def test_asker_excluded_from_candidates(seed_counts, session) -> None:
 
 
 def test_asker_only_candidate_yields_empty(seed_counts, session) -> None:
-    _add_skill(session, "sk_solo", 5)
+    _add_evidence(session, "ev_solo", 5)
     scorer = ExpertiseScorer(Repository(session))
     result = scorer.rank(TOPIC, [5], asker_id=5, now=NOW, top_k=3)
     assert result["recommendations"] == []
@@ -383,7 +387,7 @@ def test_question_similarity_reranks_and_adds_reason(seed_counts, session) -> No
     from tekijin.scorer.weights import DEFAULT_WEIGHTS
 
     for emp in (1, 2):
-        _add_skill(session, f"sk_qsim_{emp}", emp)  # identical topic evidence
+        _add_evidence(session, f"ev_qsim_{emp}", emp)  # identical topic evidence
 
     scorer = ExpertiseScorer(Repository(session))
     # Baseline: identical evidence -> tie broken by ascending person_id (1 leads).
@@ -408,7 +412,7 @@ def test_question_similarity_below_floor_scores_without_reason(seed_counts, sess
     but must NOT show the assertive "一致" reason — the reason is floored (#405)."""
     from tekijin.scorer.weights import DEFAULT_WEIGHTS, QUESTION_FIT_REASON_FLOOR
 
-    _add_skill(session, "sk_qsim_floor", 4)
+    _add_evidence(session, "ev_qsim_floor", 4)
     scorer = ExpertiseScorer(Repository(session))
     base = _scores_by_person(scorer.rank(TOPIC, [4], asker_id=None, now=NOW, top_k=3))
 
@@ -424,7 +428,7 @@ def test_question_similarity_below_floor_scores_without_reason(seed_counts, sess
 def test_question_similarity_absent_is_byte_identical(seed_counts, session) -> None:
     """Omitting ``question_similarity`` keeps develop behaviour byte-identical:
     no score change, no question_fit reason (dormant by default)."""
-    _add_skill(session, "sk_qsim_off", 3)
+    _add_evidence(session, "ev_qsim_off", 3)
     scorer = ExpertiseScorer(Repository(session))
 
     without = scorer.rank(TOPIC, [3], asker_id=None, now=NOW, top_k=3)
@@ -446,10 +450,9 @@ def test_answer_tagged_other_subtopic_is_not_evidence(seed_counts, session) -> N
         Question(id="q_multi", asker_id=1, body="q", topics=[topic_a, topic_b], status="open")
     )
     session.flush()
-    # emp 3: skill on B + an answer whose own topic is A (must NOT count for B).
+    # emp 3: an answer whose own topic is A (must NOT count for B).
     # Dated outside the 7-day load window so its (topic-independent) load does not
     # confound the comparison — this test is purely about evidence filtering.
-    _add_skill(session, "sk_b3", 3)
     session.add(
         Answer(
             id="a_tagged_a",
@@ -462,15 +465,14 @@ def test_answer_tagged_other_subtopic_is_not_evidence(seed_counts, session) -> N
             created_at=NOW - dt.timedelta(days=30),
         )
     )
-    # emp 4: control — only the skill on B.
-    _add_skill(session, "sk_b4", 4)
+    # emp 4: control — no evidence at all.
     session.flush()
 
     scorer = ExpertiseScorer(Repository(session))
     result = scorer.rank(topic_b, [3, 4], asker_id=None, now=NOW, top_k=3)
     scores = _scores_by_person(result)
 
-    # The A-tagged answer is ignored for B, so emp 3 == emp 4 (skill only).
+    # The A-tagged answer is ignored for B, so emp 3 == emp 4 (no evidence).
     assert scores[3] == scores[4]
     emp3 = next(r for r in result["recommendations"] if r["person_id"] == 3)
     assert not any(r["type"] == "answers" for r in emp3["reasons"])
@@ -493,7 +495,7 @@ def test_null_topic_answer_uses_question_topics(seed_counts, session) -> None:
             created_at=NOW,
         )
     )
-    _add_skill(session, "sk_null4", 4)  # control: skill only
+    # emp 4: control — no evidence.
     session.flush()
 
     scorer = ExpertiseScorer(Repository(session))
@@ -514,7 +516,7 @@ def test_load_window_boundary_is_inclusive(seed_counts, session) -> None:
     from tekijin.scorer.weights import LOAD_WINDOW_DAYS
 
     for emp in (1, 2):
-        _add_skill(session, f"sk_bnd_{emp}", emp)
+        _add_evidence(session, f"ev_bnd_{emp}", emp)
     _add_question(session, "q_bnd")
     # emp 1: a rec EXACTLY at the window edge (now - 7d) -> counted (>= since).
     _add_recommendation(
@@ -545,7 +547,7 @@ def test_load_window_boundary_is_inclusive(seed_counts, session) -> None:
 def test_future_recommendations_not_counted_as_load(seed_counts, session) -> None:
     _add_question(session, "q_future")
     for emp in (1, 2):
-        _add_skill(session, f"sk_fut_{emp}", emp)
+        _add_evidence(session, f"ev_fut_{emp}", emp)
     # emp 1 has 8 recs dated AFTER now — a replayed historical ``now`` must not
     # let them into the [now-7d, now] window.
     for _ in range(8):
@@ -559,78 +561,25 @@ def test_future_recommendations_not_counted_as_load(seed_counts, session) -> Non
 
 
 # --------------------------------------------------------------------------- #
-# fix 2: an ongoing project stays fresh (recency uses now, not start_date)
-# --------------------------------------------------------------------------- #
-def test_ongoing_project_stays_fresh(seed_counts, session) -> None:
-    real_topic = "CRM・営業支援"
-    emp = 8
-    long_ago = (NOW - dt.timedelta(days=700)).date()
-    # A long-running project (started 700d ago), still ongoing (end_date NULL).
-    session.add(
-        Project(id=990010, subject="s", product="CRM導入支援", start_date=long_ago, end_date=None)
-    )
-    session.flush()
-    session.add(ProjectMember(project_id=990010, employee_id=emp, role="member"))
-    session.flush()
-
-    scorer = ExpertiseScorer(Repository(session))
-    ongoing_score = scorer.rank(real_topic, [emp], asker_id=None, now=NOW)["recommendations"][0][
-        "score"
-    ]
-
-    # Same project, but now marked as having ended 700 days ago. Only the recency
-    # input changes; all seed confounders are identical across the two runs.
-    proj = session.get(Project, 990010)
-    proj.end_date = long_ago
-    session.flush()
-    ended_score = scorer.rank(real_topic, [emp], asker_id=None, now=NOW)["recommendations"][0][
-        "score"
-    ]
-
-    assert ongoing_score > ended_score  # ongoing == current work, stays fresh
-
-
-# --------------------------------------------------------------------------- #
-# fix 3: an inferred skill is described as estimated, not self-declared
-# --------------------------------------------------------------------------- #
-def test_inferred_skill_reason_is_estimated(seed_counts, session) -> None:
-    session.add(
-        Skill(id="sk_inferred", employee_id=6, topic=TOPIC, level="上級", source="inferred")
-    )
-    session.flush()
-
-    scorer = ExpertiseScorer(Repository(session))
-    rec = scorer.rank(TOPIC, [6], asker_id=None, now=NOW)["recommendations"][0]
-
-    reason_types = {r["type"] for r in rec["reasons"]}
-    assert "skill" in reason_types  # inferred skill surfaces as a "skill" reason
-    assert "self" not in reason_types  # never mislabelled as self-declared
-    skill_reason = next(r for r in rec["reasons"] if r["type"] == "skill")
-    assert "推定" in skill_reason["detail"]
-    assert "自己申告" not in skill_reason["detail"]
-
-
-# --------------------------------------------------------------------------- #
 # fix C: multiple topics are aggregated (not just topics[0])
 # --------------------------------------------------------------------------- #
 def test_multi_topic_aggregates_expertise(seed_counts, session) -> None:
     topic_a = "__MT_TOPIC_A__"
     topic_b = "__MT_TOPIC_B__"
-    # emp 3: skill on A only. emp 4: skill on A AND B.
-    session.add(Skill(id="mt_a3", employee_id=3, topic=topic_a, level="中級", source="self"))
-    session.add(Skill(id="mt_a4", employee_id=4, topic=topic_a, level="中級", source="self"))
-    session.add(Skill(id="mt_b4", employee_id=4, topic=topic_b, level="中級", source="self"))
-    session.flush()
+    # emp 3: an answer on A only. emp 4: answers on A AND B.
+    _add_evidence(session, "mt_a3", 3, topic=topic_a)
+    _add_evidence(session, "mt_a4", 4, topic=topic_a)
+    _add_evidence(session, "mt_b4", 4, topic=topic_b)
 
     scorer = ExpertiseScorer(Repository(session))
 
-    # Both topics: emp 4's extra B-skill lifts it above emp 3.
+    # Both topics: emp 4's extra B-answer lifts it above emp 3.
     both = scorer.rank([topic_a, topic_b], [3, 4], asker_id=None, now=NOW, top_k=3)
     both_scores = _scores_by_person(both)
     assert both["recommendations"][0]["person_id"] == 4
     assert both_scores[4] > both_scores[3]
 
-    # Single topic A only: the B-skill is ignored, so they tie.
+    # Single topic A only: the B-answer is ignored, so they tie.
     only_a = scorer.rank(topic_a, [3, 4], asker_id=None, now=NOW, top_k=3)
     only_scores = _scores_by_person(only_a)
     assert only_scores[3] == only_scores[4]
@@ -638,7 +587,7 @@ def test_multi_topic_aggregates_expertise(seed_counts, session) -> None:
 
 def test_rank_accepts_single_topic_string(seed_counts, session) -> None:
     # Back-compat: a single topic string still works as before.
-    _add_skill(session, "mt_single", 5)
+    _add_evidence(session, "mt_single", 5)
     scorer = ExpertiseScorer(Repository(session))
     result = scorer.rank(TOPIC, [5], asker_id=None, now=NOW, top_k=3)
     assert result["recommendations"][0]["person_id"] == 5

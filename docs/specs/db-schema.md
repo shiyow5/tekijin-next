@@ -160,7 +160,7 @@ erDiagram
 | `created_at` | 記録日時（DB 既定 `now()`） |
 
 **伝聞であることを重みに反映する**: 「質問者が、相談相手の発言を要約して書いたもの」なので、
-自己申告（0.3）より低い **0.25**。件数で `topic_fit` を飽和させないよう上限
+過去の回答（0.7）よりずっと低い **0.25**。件数で `topic_fit` を飽和させないよう上限
 （`OFFLINE_CONSULT_EVIDENCE_CAP` = 4）を設ける。
 
 **「誰が書けるか」と「誰について書けるか」は別の制約**: 質問の所有者だけが書ける（前者）と
@@ -277,15 +277,15 @@ erDiagram
 
 | テーブル | 役割 | 主なカラム |
 |---|---|---|
-| `CERTIFICATIONS` | 資格（**最も確実な証拠**、base_score 0.6） | `employee_id` FK, `name`, `acquired_at` |
-| `SKILLS` | 自己申告/推定スキル（base_score 0.3） | `employee_id` FK, `topic`, `level`, `source` |
+| `CERTIFICATIONS` | 資格（#95 で推薦の根拠から外した。表は seed のコードと一緒に後で消す） | `employee_id` FK, `name`, `acquired_at` |
+| `SKILLS` | 自己申告/推定スキル（#95 で推薦の根拠から外した。表は後で消す） | `employee_id` FK, `topic`, `level`, `source` |
 | `QUESTIONS` | 聞く側の質問 | `asker_id` FK, `body`, `topics[]`, `status`, `embedding` |
 | `ANSWERS` | 回答（**F-10 ナレッジ化・学習の燃料**） | `question_id` FK, `responder_id` FK, `body`, `embedding`, `reuse_count`, `was_helpful` |
 | `RECOMMENDATIONS` | 推薦結果と結末（**学習の要**） | `question_id` FK, `employee_id` FK, `rank`, `score`, `reasons`(jsonb), `outcome`(accepted/declined/timeout), `created_at`(推薦時刻・DB既定 now) |
 | `EVENTS` | 各ステージの計測（**p50/p95 レイテンシKPI**） | `question_id` FK, `stage`, `started_at`, `ended_at`, `meta` |
-| `PROJECT_MEMBERS` | 案件の担当（**lead/member を区別**。base_score が lead 0.8 / member 0.5） | `project_id` FK, `employee_id` FK, `role`(lead/member) |
+| `PROJECT_MEMBERS` | 案件の担当（**lead/member を区別**。#95 で推薦の根拠から外した。表は後で消す） | `project_id` FK, `employee_id` FK, `role`(lead/member) |
 | `DOCUMENTS` | 社内文書（格下げ経路用・優先度低） | `title`, `body`, `source`, `embedding` |
-| `OFFLINE_CONSULTS` | **直接相談のふりかえり**（#247。対面相談は記録が残らないため、質問者が書き起こす。伝聞なので base_score 0.25 = 自己申告 0.3 未満） | `question_id` FK, `responder_id` FK, `asker_id` FK, `topics[]`, `asked`, `answer_body`, `resolution`(resolved/partial/unresolved), `created_at` |
+| `OFFLINE_CONSULTS` | **直接相談のふりかえり**（#247。対面相談は記録が残らないため、質問者が書き起こす。伝聞なので base_score 0.25 = 過去の回答 0.7 よりずっと低い） | `question_id` FK, `responder_id` FK, `asker_id` FK, `topics[]`, `asked`, `answer_body`, `resolution`(resolved/partial/unresolved), `created_at` |
 
 > `ANSWERS.reuse_count`/`was_helpful` は `answer_quality` スコアと C8 グラフ更新に、`RECOMMENDATIONS.outcome` は `load`（負荷）減点と「使うほど育つ」学習に、`EVENTS` はレイテンシ計測に直結する（技術仕様 §5・§7）。`RECOMMENDATIONS.created_at`（DB 既定 `now()`）は `load` を**直近7日**の推薦数で数えるための時刻窓に使う（技術仕様 §5）。実装では `ANSWERS.created_at` も同様に DB 既定 `now()` を持ち、実行時に生成される回答へ確実に時刻が入る。
 
@@ -293,9 +293,9 @@ erDiagram
 
 ## C. 専門性グラフ（doc15＝新規性の中核）
 
-「誰が何に詳しいか」は、行動痕跡（回答・案件・資格）から C6 スコアラーがその場で積み上げて求める（`scorer/evidence.py`）。以前は人×トピックのエッジを `PERSON_TOPIC_EDGES`、その根拠を `EVIDENCE` という表に置く設計だったが、どちらも読む側が無かったため #89 で削除した。設計と定義は `company-v1` タグに残っている。
+「誰が何に詳しいか」は、行動痕跡（過去の回答・直接相談のふりかえり）から C6 スコアラーがその場で積み上げて求める（`scorer/evidence.py`）。資格・スキル・案件は #95 で根拠から外した。以前は人×トピックのエッジを `PERSON_TOPIC_EDGES`、その根拠を `EVIDENCE` という表に置く設計だったが、どちらも読む側が無かったため #89 で削除した。設計と定義は `company-v1` タグに残っている。
 
-> `base_score`: 有用回答 1.0 > 案件リード 0.8 > 過去回答 0.7 > 資格 0.6 > 案件メンバー 0.5 > 自己申告 0.3（doc15）> **直接相談のふりかえり 0.25**（#247・伝聞）。断り(declined)は専門性を下げず余裕度のみ下げる。
+> `base_score`: 有用回答 1.0 > 過去回答 0.7（doc15）> **直接相談のふりかえり 0.25**（#247・伝聞）。断り(declined)は専門性を下げず余裕度のみ下げる。
 >
 > **同じ規則をふりかえりにも適用する**: `resolution=unresolved`（解決しなかった）は記録は残るが
 > 専門性の証拠にならず、**下げもしない**。一度うまくいかなかったことが、その人が実際に知っている
