@@ -274,7 +274,8 @@ graph = g.compile(checkpointer=PostgresSaver(...))
 ```sql
 -- 人
 employees(id, name, dept, role, branch, years, self_intro, embedding vector)
-certifications(id, employee_id, name, acquired_at)        -- 資格。最も確実なデータ源
+-- 資格・スキル・案件の4表は #95 で推薦の根拠から外した。表は seed のコードと一緒に後で消す
+certifications(id, employee_id, name, acquired_at)        -- 資格
 skills(id, employee_id, topic, level, source)             -- 自己申告 / 推定
 projects(id, industry, products[], period)                -- 案件
 project_members(project_id, employee_id, role)
@@ -329,8 +330,8 @@ score(e, q) = w1·topic_fit(e,q)
 
 | 項 | 内容 | データ源 |
 | --- | --- | --- |
-| `topic_fit` | 質問トピックとの適合。資格・自己申告・案件・過去回答を統合したRRFスコア | certifications / skills / projects / answers |
-| `recency` | 直近の経験ほど重い。半減期6か月の時間減衰 | projects / answers |
+| `topic_fit` | 質問トピックとの適合。過去回答と直接相談のふりかえりの base_score を足して飽和させた値（資格・自己申告・案件は #95 で外した） | answers / offline_consults |
+| `recency` | 直近の経験ほど重い。半減期6か月の時間減衰 | answers |
 | `answer_quality` | 過去回答の有用度と再利用数 | answers |
 | `load` | **直近7日の推薦・回答件数。多いほど減点** | recommendations / answers |
 | `question_fit` | **質問文↔その人の過去回答本文の意味一致（最大コサイン）。#405 qsim・既定ON**。`topic_fit` はタグしか見ず飽和する（ADR-0006）ため、C1 が誤トピックでも正解専門家を救う。実 E2E Hit@3 0.742→0.788 | answers（C4 の answer dense チャネル） |
@@ -347,7 +348,7 @@ score(e, q) = w1·topic_fit(e,q)
 
 | 段階 | 主に効く項 |
 | --- | --- |
-| 初期（ログ0件） | `topic_fit`（資格・自己申告） |
+| 初期（ログ0件） | 根拠なし（資格・自己申告は #95 で外した。R5 で資料と会話からの根拠を足す） |
 | 利用が進む | `answer_quality`, `recency`（回答実績） |
 
 **デモでは、ログ0件と30件の Top-1 精度を並べて見せる。** 学習性が主張ではなく実測になる。

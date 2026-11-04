@@ -33,7 +33,7 @@ MAX_FOLLOWUPS = 1
 INTENT_CONFIDENCE_THRESHOLD = 0.5
 
 # Question keyword -> canonical topic (matched case-insensitively). Keys are the
-# 22 canonical topics and MUST match ``skills.topic`` verbatim (the scorer joins on
+# 22 canonical topics and MUST match ``answers.topic`` verbatim (the scorer joins on
 # exact topic equality). Extend freely; this is data, not logic.
 TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
     "CRM・営業支援": ("crm", "営業支援", "顧客管理", "sfa"),

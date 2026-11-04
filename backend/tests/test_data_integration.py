@@ -517,19 +517,8 @@ def test_list_and_get_employee(seed_counts, session) -> None:
     assert repo.get_employee(999999) is None
 
 
-def test_certifications_and_skills_fk_consistent(seed_counts, session) -> None:
-    repo = Repository(session)
-    certs = repo.certifications_for(1)
-    assert certs and all(c.employee_id == 1 for c in certs)
-    skills = repo.skills_for(1)
-    assert all(s.employee_id == 1 for s in skills)
-    memberships = repo.project_memberships_for(1)
-    assert all(m.employee_id == 1 for m in memberships)
-
-
-def test_batch_evidence_lookups_match_singular(seed_counts, session) -> None:
-    # The scorer's N+1 fix (#58): the batch lookups must return exactly what the
-    # per-employee methods do, keyed by employee, so scoring is unchanged.
+def test_employees_by_ids_batch_lookup(seed_counts, session) -> None:
+    # The scorer's N+1 fix (#58): one query for every candidate, keyed by id.
     repo = Repository(session)
     ids = [1, 2, 3]
 
@@ -538,19 +527,8 @@ def test_batch_evidence_lookups_match_singular(seed_counts, session) -> None:
     for eid, emp in employees.items():
         assert emp.id == eid
 
-    certs_many = repo.certifications_for_many(ids)
-    skills_many = repo.skills_for_many(ids)
-    memberships_many = repo.project_memberships_for_many(ids)
-    for eid in ids:
-        assert certs_many.get(eid, []) == repo.certifications_for(eid)
-        assert skills_many.get(eid, []) == repo.skills_for(eid)
-        assert memberships_many.get(eid, []) == repo.project_memberships_for(eid)
-
     # Empty input short-circuits to {} without a query.
     assert repo.employees_by_ids([]) == {}
-    assert repo.certifications_for_many([]) == {}
-    assert repo.skills_for_many([]) == {}
-    assert repo.project_memberships_for_many([]) == {}
 
 
 def test_answers_by_topic(seed_counts, session) -> None:
@@ -635,16 +613,6 @@ def test_questions_answers_documents(seed_counts, session) -> None:
     # answers_for_question resolves a real FK link.
     linked = repo.answers_for_question(questions[0].id)
     assert all(a.question_id == questions[0].id for a in linked)
-
-
-def test_projects_with_members(seed_counts, session) -> None:
-    repo = Repository(session)
-    projects = repo.list_projects_with_members()
-    assert len(projects) == 120
-    with_members = [p for p in projects if p.members]
-    assert with_members
-    roles = {m.role for p in with_members for m in p.members}
-    assert roles <= {"lead", "member"}
 
 
 def test_session_scope_rolls_back_on_error(engine, seed_counts) -> None:

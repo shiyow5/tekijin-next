@@ -13,32 +13,24 @@ import datetime as dt
 from collections.abc import Sequence
 
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session
 
 from tekijin.data.dto import (
     AnswerDTO,
-    CertificationDTO,
     DocumentDTO,
     EmployeeDTO,
     OfflineConsultDTO,
     ProfileDTO,
-    ProjectMembershipDTO,
-    ProjectWithMembersDTO,
     QuestionDTO,
-    SkillDTO,
 )
 from tekijin.models.tables import (
     Answer,
-    Certification,
     Document,
     Employee,
     EmployeeProfile,
     OfflineConsult,
-    Project,
-    ProjectMember,
     Question,
     Recommendation,
-    Skill,
 )
 
 # Who may be recommended: still in the organization (#506) and not opted out (#66).
@@ -107,55 +99,6 @@ class Repository:
         return [ProfileDTO.from_row(r) for r in self._session.scalars(stmt)]
 
     # -- expertise evidence ---------------------------------------------- #
-    def certifications_for(self, employee_id: int) -> list[CertificationDTO]:
-        stmt = (
-            select(Certification)
-            .where(Certification.employee_id == employee_id)
-            .order_by(Certification.id)
-        )
-        return [CertificationDTO.from_row(r) for r in self._session.scalars(stmt)]
-
-    def certifications_for_many(
-        self, employee_ids: Sequence[int]
-    ) -> dict[int, list[CertificationDTO]]:
-        """Certifications for several employees in one query (scorer N+1 fix, #58).
-
-        Grouped by ``employee_id``; each list keeps the same ``id`` order as the
-        per-employee :meth:`certifications_for`. Empty ids → ``{}`` (no query);
-        employees with none are simply absent (callers use ``.get(id, [])``).
-        """
-
-        if not employee_ids:
-            return {}
-        stmt = (
-            select(Certification)
-            .where(Certification.employee_id.in_(employee_ids))
-            .order_by(Certification.employee_id, Certification.id)
-        )
-        out: dict[int, list[CertificationDTO]] = {}
-        for row in self._session.scalars(stmt):
-            out.setdefault(row.employee_id, []).append(CertificationDTO.from_row(row))
-        return out
-
-    def skills_for(self, employee_id: int) -> list[SkillDTO]:
-        stmt = select(Skill).where(Skill.employee_id == employee_id).order_by(Skill.id)
-        return [SkillDTO.from_row(r) for r in self._session.scalars(stmt)]
-
-    def skills_for_many(self, employee_ids: Sequence[int]) -> dict[int, list[SkillDTO]]:
-        """Skills for several employees in one query (scorer N+1 fix, #58)."""
-
-        if not employee_ids:
-            return {}
-        stmt = (
-            select(Skill)
-            .where(Skill.employee_id.in_(employee_ids))
-            .order_by(Skill.employee_id, Skill.id)
-        )
-        out: dict[int, list[SkillDTO]] = {}
-        for row in self._session.scalars(stmt):
-            out.setdefault(row.employee_id, []).append(SkillDTO.from_row(row))
-        return out
-
     def offline_consults_for_many(
         self, employee_ids: Sequence[int]
     ) -> dict[int, list[OfflineConsultDTO]]:
@@ -281,48 +224,6 @@ class Repository:
             return {}
         rows = self._session.scalars(select(Document).where(Document.id.in_(ids)))
         return {row.id: DocumentDTO.from_row(row) for row in rows}
-
-    # -- projects --------------------------------------------------------- #
-    def list_projects_with_members(self) -> list[ProjectWithMembersDTO]:
-        stmt = select(Project).options(selectinload(Project.members)).order_by(Project.id)
-        rows = self._session.scalars(stmt).all()
-        return [ProjectWithMembersDTO.from_row(r) for r in rows]
-
-    def project_memberships_for(self, employee_id: int) -> list[ProjectMembershipDTO]:
-        """Projects an employee is on (with role, product, dates) for scoring.
-
-        Ordered by ``project_id`` so the result is deterministic.
-        """
-
-        stmt = (
-            select(ProjectMember)
-            .options(joinedload(ProjectMember.project))
-            .where(ProjectMember.employee_id == employee_id)
-            .order_by(ProjectMember.project_id)
-        )
-        return [ProjectMembershipDTO.from_member(m) for m in self._session.scalars(stmt)]
-
-    def project_memberships_for_many(
-        self, employee_ids: Sequence[int]
-    ) -> dict[int, list[ProjectMembershipDTO]]:
-        """Project memberships for several employees in one query (scorer N+1 fix, #58).
-
-        Grouped by ``employee_id``; each list keeps the ``project_id`` order of the
-        per-employee :meth:`project_memberships_for`. Empty ids → ``{}`` (no query).
-        """
-
-        if not employee_ids:
-            return {}
-        stmt = (
-            select(ProjectMember)
-            .options(joinedload(ProjectMember.project))
-            .where(ProjectMember.employee_id.in_(employee_ids))
-            .order_by(ProjectMember.employee_id, ProjectMember.project_id)
-        )
-        out: dict[int, list[ProjectMembershipDTO]] = {}
-        for member in self._session.scalars(stmt):
-            out.setdefault(member.employee_id, []).append(ProjectMembershipDTO.from_member(member))
-        return out
 
     # -- load (recency windows) ------------------------------------------ #
     def recent_recommendation_counts(

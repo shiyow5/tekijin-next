@@ -83,46 +83,31 @@ def load(recent_count: int) -> float:
     return 1.0 - 0.5 ** (recent_count / LOAD_HALF_SATURATION)
 
 
-# Evidence source types that drive the confidence tier (#110). Calibrated on the
+# Evidence source type that drives the confidence tier (#110). Calibrated on the
 # misrecommendation slot dump via scripts/research_confidence.py: a past ANSWER on
 # the topic is the single signal that separates right from wrong picks (within a
-# question, answer あり 0.70 vs なし 0.55), while PROJECT membership co-occurs with
-# WRONG picks (あり 0.60 vs なし 0.84) — being staffed near a product ≠ being the
-# topic's answerer. Evidence QUANTITY (edge_weight / evidence_count) is
-# non-predictive and was even inverted, so it is deliberately dropped.
+# question, answer あり 0.70 vs なし 0.55). Evidence QUANTITY (edge_weight /
+# evidence_count) is non-predictive and was even inverted, so it is deliberately
+# dropped.
 _CONFIDENCE_ANSWER = "answer"
-_CONFIDENCE_PROJECT = "project"
 
 
 def confidence_label(source_types: Iterable[str]) -> str:
-    """Deterministic 高/中/低 from the KINDS of evidence a person has (#110).
+    """Deterministic 高/低 from the KINDS of evidence a person has (#110).
 
     ``source_types`` is every evidence item's ``source_type`` for this person on
     the question's topics (order/duplicates irrelevant — only the set matters).
 
-    Calibrated on the misrecommendation slot dump (docs/benchmarks/confidence.md
-    §4-5). This rule's OWN separation is monotone and significant: full-set
-    高 0.84 / 中 0.61 / 低 0.55, paired 高−低 +0.287 (95%CI [+0.106, +0.461],
-    問題単位20000回). A "rank+kind" variant scored marginally higher (高−低
-    +0.326) and won the split-half selection more often, but rank is only known
-    after ranking whereas this label is computed per-candidate inside
-    ``_score_person`` (before the sort in ``rank``); the kind-only rule is kept
-    for that architectural simplicity. The tiers mean:
+    * **高** — has answered on the topic.
+    * **低** — no past answer on the topic; a 直接相談 retrospective alone does not
+      prove the person answers *here*. This is the tier a "低 は棄却" policy acts on.
 
-    * **低** — no past answer on the topic. Certs, skills and project roles alone
-      do not prove the person answers *here*; this is the tier a "低 は棄却"
-      policy can finally act on (the old rule never produced 低).
-    * **中** — has answered, but also carries project membership, which dilutes
-      the signal (product-adjacency, not topic authorship) in the eval corpus.
-    * **高** — has answered and is not merely project-adjacent.
-
-    Replaces the pre-#110 quantity rule ``(edge_weight, evidence_count)``, whose
-    tiers were inverted (高 0.66 < 中 0.77) and never assigned 低.
+    The #110 calibration (docs/benchmarks/confidence.md §4-5) also had a **中** tier
+    for an answerer who carried project membership — being staffed near a product
+    co-occurred with wrong picks. Project evidence was removed in #95, so no
+    candidate reaches 中 any more; R5 recalibrates the tiers on its new evidence.
     """
 
-    kinds = set(source_types)
-    if _CONFIDENCE_ANSWER not in kinds:
-        return "低"
-    if _CONFIDENCE_PROJECT in kinds:
-        return "中"
-    return "高"
+    if _CONFIDENCE_ANSWER in set(source_types):
+        return "高"
+    return "低"

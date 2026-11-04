@@ -282,12 +282,11 @@ qsim は（間違っているかもしれない）トピックラベルに関係
 | 証拠 | 重み |
 |---|---|
 | 有用だった回答（`was_helpful`） | 1.0 |
-| プロジェクトリード | 0.8 |
 | 過去の回答 | 0.7 |
-| 資格 | 0.6 |
-| プロジェクト参加 | 0.5 |
-| 自己申告スキル | 0.3 |
+| 直接相談のふりかえり（`resolved` / `partial`） | 0.25（上限4件） |
 | 日報（既定OFF: `daily_evidence_enabled=False`） | 0.15（上限5件） |
+
+資格・プロジェクト・自己申告スキルは #95 で証拠から外した（表は seed のコードと一緒に後で消す）。
 
 **辞退は負の証拠ではない。** 可用性（load）を下げるだけで、スキル評価は下げない。
 
@@ -346,9 +345,9 @@ GPU は vLLM が占有するため、埋め込みは CPU に逃がせること�
 erDiagram
     EMPLOYEES ||--o| EMPLOYEE_PROFILES : "自己紹介＋埋め込み"
     EMPLOYEES ||--o| SLACK_LINKS : "Slack本人性（1人1行・slack_user_id は UNIQUE）"
-    EMPLOYEES ||--o{ CERTIFICATIONS : "資格 0.6"
-    EMPLOYEES ||--o{ SKILLS : "自己申告 0.3"
-    EMPLOYEES ||--o{ PROJECT_MEMBERS : "lead 0.8 / member 0.5"
+    EMPLOYEES ||--o{ CERTIFICATIONS : "資格（推薦では使わない）"
+    EMPLOYEES ||--o{ SKILLS : "自己申告（推薦では使わない）"
+    EMPLOYEES ||--o{ PROJECT_MEMBERS : "lead / member（推薦では使わない）"
     EMPLOYEES ||--o{ DAILY_REPORTS : "日報"
     EMPLOYEES ||--o{ ANSWERS : "回答 0.7 / 有用 1.0"
     EMPLOYEES ||--o{ QUESTIONS : "質問者"

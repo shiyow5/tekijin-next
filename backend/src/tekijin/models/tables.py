@@ -361,7 +361,7 @@ class OfflineConsult(Base):
     nothing to work with. This table is that missing record, written by the asker.
 
     Deliberately HEARSAY: ``answer_body`` is the asker's paraphrase of what the
-    responder said, so the scorer weights it below a self-declared skill
+    responder said, so the scorer weights it well below a past answer
     (``BASE_SCORE_OFFLINE_CONSULT``). ``topics`` comes from ``TOPIC_VOCABULARY``,
     validated at the API boundary, so the scorer can join on it without a runtime
     keyword vocabulary — the same contract as ``daily_reports.topics`` (#355).
@@ -423,7 +423,10 @@ class DailyReport(Base):
 
 
 class Project(Base):
-    """Sales/consulting project. Membership lives in ``project_members``."""
+    """Sales/consulting project. Membership lives in ``project_members``.
+
+    No longer read by the scorer (#95); kept until the seed code drops it.
+    """
 
     __tablename__ = "projects"
 
@@ -449,7 +452,10 @@ class Project(Base):
 # B. Runtime layer
 # --------------------------------------------------------------------------- #
 class Certification(Base):
-    """Certification held by an employee (strongest evidence, base_score 0.6)."""
+    """Certification held by an employee.
+
+    No longer read by the scorer (#95); kept until the seed code drops it.
+    """
 
     __tablename__ = "certifications"
 
@@ -460,7 +466,10 @@ class Certification(Base):
 
 
 class Skill(Base):
-    """Self-declared / inferred skill (base_score 0.3 for ``self``)."""
+    """Self-declared / inferred skill.
+
+    No longer read by the scorer (#95); kept until the seed code drops it.
+    """
 
     __tablename__ = "skills"
 
@@ -645,7 +654,9 @@ class Feedback(Base):
 
 
 class ProjectMember(Base):
-    """Project membership with role (lead 0.8 / member 0.5).
+    """Project membership with role (``lead`` / ``member``).
+
+    No longer read by the scorer (#95); kept until the seed code drops it.
 
     PK is ``(project_id, employee_id)`` — an employee holds exactly one role per
     project, so ``role`` is a plain column, not part of the key. Keeping ``role``

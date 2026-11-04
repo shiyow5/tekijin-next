@@ -36,7 +36,7 @@ const HANDOFF: HandoffResponse = {
     score: 0.9,
     confidence: "高",
     reasons: [
-      { type: "cert", detail: "情報処理安全確保支援士" },
+      { type: "recency", detail: "直近1か月以内の関連実績あり" },
       { type: "answers", detail: "類似の質問に過去5件回答（うち有用と評価3件）" },
     ],
   },
@@ -75,7 +75,7 @@ describe("AnswerScreen", () => {
     expect(screen.getByText(/藤田 悠斗/)).toBeInTheDocument();
     expect(screen.getByText(/第3営業部/)).toBeInTheDocument();
     // selection reasons (verbatim details from the backend).
-    expect(screen.getByText(/情報処理安全確保支援士/)).toBeInTheDocument();
+    expect(screen.getByText(/直近1か月以内の関連実績あり/)).toBeInTheDocument();
     expect(screen.getByText(/類似の質問に過去5件回答/)).toBeInTheDocument();
     // draft (the filled-in 依頼文 the responder receives).
     expect(screen.getByText(/高梨さんへの依頼文です/)).toBeInTheDocument();

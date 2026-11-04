@@ -86,7 +86,7 @@ const THREE_CANDIDATES: Recommendation[] = [
     score: 0.92,
     confidence: "高",
     reasons: [
-      { type: "cert", detail: "第一種電気工事士" },
+      { type: "recency", detail: "直近1か月以内の関連実績あり" },
       { type: "answers", detail: "類似の質問に過去45件回答（うち有用と評価30件）" },
       { type: "load", detail: "今週の対応件数: 少なめ" },
     ],
@@ -305,8 +305,8 @@ describe("ResultScreen — candidates after completion (#520)", () => {
     expect(screen.getByText("高梨")).toBeInTheDocument();
     expect(screen.getByText("鈴木")).toBeInTheDocument();
     // The evidence, not just the names — that is the part the outcome screen
-    // could not answer. Regex: the card renders it as 「関連資格：第一種電気工事士」.
-    expect(screen.getByText(/第一種電気工事士/)).toBeInTheDocument();
+    // could not answer. Regex: the card renders it as 「直近の活動：直近1か月以内の関連実績あり」.
+    expect(screen.getByText(/直近1か月以内の関連実績あり/)).toBeInTheDocument();
     expect(screen.getAllByText("適合度").length).toBe(THREE_CANDIDATES.length);
   });
 
@@ -357,7 +357,7 @@ describe("ResultScreen — main line (person)", () => {
   it("renders up to three candidates with the fit signal and reason labels", () => {
     renderResult(
       state({
-        route: { route: "person", reason: "同様の案件担当者がいます", confidence: 0.9 },
+        route: { route: "person", reason: "同様の質問に答えた方がいます", confidence: 0.9 },
         recommend: {
           recommendations: [
             ...THREE_CANDIDATES,
@@ -369,7 +369,7 @@ describe("ResultScreen — main line (person)", () => {
     );
 
     expect(screen.getByText("この質問は、人に聞くのが確実です")).toBeInTheDocument();
-    expect(screen.getByText("同様の案件担当者がいます")).toBeInTheDocument();
+    expect(screen.getByText("同様の質問に答えた方がいます")).toBeInTheDocument();
     expect(screen.getByText("高梨")).toBeInTheDocument();
     expect(screen.getByText("鈴木")).toBeInTheDocument();
     expect(screen.getByText("田中")).toBeInTheDocument();
@@ -382,14 +382,14 @@ describe("ResultScreen — main line (person)", () => {
     expect(screen.getByRole("img", { name: "適合度 51%（中）" })).toBeInTheDocument();
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
     // reason labels (expanded top card shows detail)
-    expect(screen.getByText("関連資格")).toBeInTheDocument();
+    expect(screen.getByText("直近の活動")).toBeInTheDocument();
     expect(screen.getByText("過去回答")).toBeInTheDocument();
   });
 
   it("shows the additive cited answer above the candidates when present (#413)", () => {
     renderResult(
       state({
-        route: { route: "person", reason: "同様の案件担当者がいます", confidence: 0.9 },
+        route: { route: "person", reason: "同様の質問に答えた方がいます", confidence: 0.9 },
         reference: {
           answer: "契約管理は費用対効果で説明するのが有効です。",
           citations: [{ source_id: "qa_42", kind: "qa" }],
@@ -856,7 +856,7 @@ describe("ResultScreen — main line (person)", () => {
     // Graceful fallback: candidates missing, but the draft is still sendable.
     expect(screen.getByText(/宛先候補を再取得しています/)).toBeInTheDocument();
     // reason fallback text
-    expect(screen.getByText(/直近で同様の案件を担当した方/)).toBeInTheDocument();
+    expect(screen.getByText(/直近で同様の質問に答えた方/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "この内容で依頼する" })).toBeEnabled();
   });
 
@@ -871,7 +871,7 @@ describe("ResultScreen — main line (person)", () => {
               name: "佐藤",
               dept: null,
               score: 0.6,
-              reasons: [{ type: "self", detail: "" }],
+              reasons: [{ type: "answers", detail: "" }],
             }),
           ],
         },
@@ -880,8 +880,8 @@ describe("ResultScreen — main line (person)", () => {
     );
     expect(screen.getByText("佐藤")).toBeInTheDocument();
     expect(screen.getByText("E020")).toBeInTheDocument();
-    // The self-declared-skill reason label renders even without a detail string.
-    expect(screen.getByText("自己申告")).toBeInTheDocument();
+    // The reason label renders even without a detail string.
+    expect(screen.getByText("過去回答")).toBeInTheDocument();
   });
 });
 

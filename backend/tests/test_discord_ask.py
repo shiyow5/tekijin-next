@@ -33,8 +33,8 @@ REC = {
     "name": "社員1",
     "dept": "営業部",
     "score": 0.9,
-    "confidence": "中",
-    "reasons": [{"type": "self", "detail": "自己申告スキル"}],
+    "confidence": "高",
+    "reasons": [{"type": "answers", "detail": "類似の質問に過去3件回答"}],
 }
 
 
@@ -112,7 +112,7 @@ def test_format_answered_lists_sources() -> None:
 def test_format_handoff_names_people_and_points_to_web() -> None:
     out = summarize_events([("recommend", {"recommendations": [REC]}), ("draft", {"draft": "d"})])
     text = format_reply(out.model_dump(), web_url=WEB)
-    assert "社員1" in text and "営業部" in text and "自己申告スキル" in text
+    assert "社員1" in text and "営業部" in text and "類似の質問に過去3件回答" in text
     assert WEB in text
 
 
@@ -207,7 +207,7 @@ def test_format_keeps_sources_and_web_link_when_clipping() -> None:
     assert len(text) <= DISCORD_MESSAGE_LIMIT
     assert "社員1" in text and WEB in text
 
-    wordy = {**REC, "reasons": [{"type": "self", "detail": "え" * 3000}]}
+    wordy = {**REC, "reasons": [{"type": "answers", "detail": "え" * 3000}]}
     long_people = summarize_events([("recommend", {"recommendations": [wordy, wordy]})])
     text = format_reply(long_people.model_dump(), web_url=WEB)
     assert len(text) <= DISCORD_MESSAGE_LIMIT

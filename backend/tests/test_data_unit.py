@@ -18,13 +18,10 @@ from tekijin.config import Settings, get_settings
 from tekijin.data import db as dbmod
 from tekijin.data.dto import (
     AnswerDTO,
-    CertificationDTO,
     DocumentDTO,
     EmployeeDTO,
     ProfileDTO,
-    ProjectWithMembersDTO,
     QuestionDTO,
-    SkillDTO,
 )
 from tekijin.data.loaders import (
     FIXTURE_FILES,
@@ -258,7 +255,7 @@ def test_profile_and_question_has_embedding_flag() -> None:
     assert q2.topics == ()
 
 
-def test_answer_certification_skill_document_dtos() -> None:
+def test_answer_and_document_dtos() -> None:
     ans = AnswerDTO.from_row(
         t.Answer(
             id="a1",
@@ -272,14 +269,6 @@ def test_answer_certification_skill_document_dtos() -> None:
         )
     )
     assert ans.topic == "T" and ans.reuse_count == 5 and ans.has_embedding is False
-    cert = CertificationDTO.from_row(
-        t.Certification(id="c1", employee_id=1, name="N", acquired_at=None)
-    )
-    assert cert.name == "N"
-    skill = SkillDTO.from_row(
-        t.Skill(id="s1", employee_id=1, topic="T", level="中級", source="self")
-    )
-    assert skill.level == "中級"
     doc = DocumentDTO.from_row(
         t.Document(id="d1", title="t", body="b", source="s", embedding=[0.0] * 3)
     )
@@ -345,17 +334,6 @@ def test_knowledge_write_validation_is_database_free() -> None:
         kb.knowledge_units_by_topics(None, ["CRM・営業支援"], review_status="bogus")
     assert set(kb.VALID_KINDS) == {"case", "procedure", "decision"}
     assert set(kb.VALID_REVIEW_STATUSES) == {"unreviewed", "approved", "rejected"}
-
-
-def test_project_with_members_dto() -> None:
-    proj = t.Project(id=1, subject="S", client_company="C", industry="I", status="受注")
-    proj.members = [
-        t.ProjectMember(project_id=1, employee_id=5, role="lead"),
-        t.ProjectMember(project_id=1, employee_id=6, role="member"),
-    ]
-    dto = ProjectWithMembersDTO.from_row(proj)
-    assert dto.id == 1
-    assert {m.role for m in dto.members} == {"lead", "member"}
 
 
 # --------------------------------------------------------------------------- #

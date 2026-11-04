@@ -16,13 +16,7 @@ import datetime as dt
 from collections.abc import Mapping, Sequence
 from typing import TypedDict
 
-from tekijin.data.dto import (
-    AnswerDTO,
-    CertificationDTO,
-    OfflineConsultDTO,
-    ProjectMembershipDTO,
-    SkillDTO,
-)
+from tekijin.data.dto import AnswerDTO, OfflineConsultDTO
 from tekijin.data.repository import Repository
 from tekijin.scorer.evidence import Evidence, collect_topic_evidence, edge_weight
 from tekijin.scorer.features import (
@@ -66,14 +60,9 @@ class RankResult(TypedDict):
     recommendations: list[ScoredCandidate]
 
 
-# Fixed order to break reason-contribution ties deterministically. ``self`` is a
-# self-declared skill, ``skill`` an inferred one (distinct provenance wording).
+# Fixed order to break reason-contribution ties deterministically.
 _REASON_TYPE_ORDER = {
-    "cert": 0,
-    "self": 1,
-    "skill": 2,
     "answers": 3,
-    "project": 4,
     "question_fit": 6,  # #405: question↔past-answer semantic match
     "recency": 7,
     "load": 9,
@@ -144,12 +133,9 @@ class ExpertiseScorer:
         ans_counts = self._repo.recent_answer_counts(since, now, candidates)
         answers_by_person = self._group_answers_by_person(self._repo.answers_by_topics(topic_list))
 
-        # Batch every per-candidate evidence lookup into one query each (was O(4·N)
-        # queries in the loop — #58). The scorer reads them via ``.get(id, [])``.
+        # Batch every per-candidate lookup into one query each (no per-candidate
+        # query in the loop — #58). The scorer reads them via ``.get(id, [])``.
         employees = self._repo.employees_by_ids(candidates)
-        certs_by_person = self._repo.certifications_for_many(candidates)
-        skills_by_person = self._repo.skills_for_many(candidates)
-        memberships_by_person = self._repo.project_memberships_for_many(candidates)
         # #247: 直接相談のふりかえり. NOT flag-gated — these rows only ever come from
         # runtime submissions, so the fixtures contain none and the query returns {}
         # on every eval/CI run (byte-identical scores). Gating it would make the
@@ -166,9 +152,6 @@ class ExpertiseScorer:
                 employee_id=person_id,
                 employee_name=employee.name,
                 employee_dept=employee.department,
-                certifications=certs_by_person.get(person_id, []),
-                skills=skills_by_person.get(person_id, []),
-                memberships=memberships_by_person.get(person_id, []),
                 answers=answers_by_person.get(person_id, []),
                 offline_consults=consults_by_person.get(person_id, []),
                 load_count=rec_counts.get(person_id, 0) + ans_counts.get(person_id, 0),
@@ -195,9 +178,6 @@ class ExpertiseScorer:
         employee_id: int,
         employee_name: str,
         employee_dept: str | None,
-        certifications: Sequence[CertificationDTO],
-        skills: Sequence[SkillDTO],
-        memberships: Sequence[ProjectMembershipDTO],
         answers: Sequence[AnswerDTO],
         offline_consults: Sequence[OfflineConsultDTO] = (),
         load_count: int,
@@ -205,13 +185,11 @@ class ExpertiseScorer:
         question_fit_score: float | None = None,
     ) -> tuple[ScoredCandidate, float]:
         # Evidence is pre-fetched in a batch by ``rank`` (no per-candidate query, #58).
-        evidence = collect_topic_evidence(
-            topics, certifications, skills, memberships, answers, offline_consults
-        )
+        evidence = collect_topic_evidence(topics, answers, offline_consults)
         weights = self._weights
 
         topic_fit = edge_weight(evidence)
-        recency_score = recency(now, self._recency_moments(evidence, now))
+        recency_score = recency(now, self._recency_moments(evidence))
         helpful_count = sum(1 for a in answers if a.was_helpful is True)
         reuse_total = sum(a.reuse_count or 0 for a in answers)
         quality = answer_quality(helpful_count, reuse_total, len(answers))
@@ -277,48 +255,12 @@ class ExpertiseScorer:
             share = sum(e.base_score for e in evidence if e.source_type in source_types)
             return weights.topic_fit * topic_fit * (share / base_total)
 
-        cert_names = [e.detail for e in evidence if e.source_type == "cert"]
-        if cert_names:
-            entries.append(
-                (topic_fit_share(("cert",)), {"type": "cert", "detail": "、".join(cert_names)})
-            )
-
-        # Skill evidence: surface it so cold-start candidates (chosen on a skill
-        # alone) are explained by their expertise signal, not just load — worded
-        # by provenance (an inferred skill is never called "declared") and naming
-        # the actual skill topics (multi-topic accurate; e.detail is the topic).
-        self_topics = [e.detail for e in evidence if e.source_type == "self"]
-        if self_topics:
-            entries.append(
-                (
-                    topic_fit_share(("self",)),
-                    {"type": "self", "detail": "自己申告スキル: " + "、".join(self_topics)},
-                )
-            )
-        inferred_topics = [e.detail for e in evidence if e.source_type == "inferred"]
-        if inferred_topics:
-            entries.append(
-                (
-                    topic_fit_share(("inferred",)),
-                    {"type": "skill", "detail": "推定スキル: " + "、".join(inferred_topics)},
-                )
-            )
-
         if answers:
             detail = f"類似の質問に過去{len(answers)}件回答"
             if helpful_count:
                 detail += f"（うち有用と評価{helpful_count}件）"
             answers_weight = topic_fit_share(("answer",)) + weights.answer_quality * quality
             entries.append((answers_weight, {"type": "answers", "detail": detail}))
-
-        project_count = sum(1 for e in evidence if e.source_type == "project")
-        if project_count:
-            entries.append(
-                (
-                    topic_fit_share(("project",)),
-                    {"type": "project", "detail": f"同種の案件を{project_count}件担当"},
-                )
-            )
 
         # #405: explain the question-fit boost. Shown only above a noise floor —
         # below it the cosine is not a meaningful "match" so the assertive detail
@@ -349,31 +291,21 @@ class ExpertiseScorer:
         return [reason for _, reason in entries]
 
     @staticmethod
-    def _recency_moments(
-        evidence: Sequence[Evidence], now: dt.datetime
-    ) -> list[dt.date | dt.datetime]:
-        """Timestamps of the time-decaying evidence (projects/answers).
+    def _recency_moments(evidence: Sequence[Evidence]) -> list[dt.date | dt.datetime]:
+        """Timestamps of the time-decaying evidence (``RECENCY_SOURCE_TYPES``).
 
-        Certifications are omitted on purpose — a qualification does not fade with
-        age, so it must not feed the recency term (RECENCY_SOURCE_TYPES). An
-        ongoing project (``timestamp is None``, i.e. no end_date) is treated as
-        current work: its moment is ``now``, so live engagements stay fresh rather
-        than decaying from their start date.
+        Evidence without a timestamp is skipped.
         """
 
-        moments: list[dt.date | dt.datetime] = []
-        for e in evidence:
-            if e.source_type not in RECENCY_SOURCE_TYPES:
-                continue
-            if e.source_type == "project" and e.timestamp is None:
-                moments.append(now)  # ongoing project = current
-            elif e.timestamp is not None:
-                moments.append(e.timestamp)
-        return moments
+        return [
+            e.timestamp
+            for e in evidence
+            if e.source_type in RECENCY_SOURCE_TYPES and e.timestamp is not None
+        ]
 
     @classmethod
     def _recency_detail(cls, evidence: Sequence[Evidence], now: dt.datetime) -> str:
-        moments = cls._recency_moments(evidence, now)
+        moments = cls._recency_moments(evidence)
         if not moments:
             return ""
         newest = max(

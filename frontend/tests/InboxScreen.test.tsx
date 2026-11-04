@@ -76,7 +76,7 @@ function handoffFor(item: InboxItem): HandoffResponse {
       dept: "技術部",
       score: 0.9,
       confidence: "高",
-      reasons: [{ type: "cert", detail: "情報処理安全確保支援士" }],
+      reasons: [{ type: "answers", detail: "類似の質問に過去3件回答" }],
     },
     draft: `${item.asker.name}さん向けの下書きです。`,
     reuse_count: 3,
