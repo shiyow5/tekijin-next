@@ -35,6 +35,7 @@ from tekijin.data.conversations import (
 )
 from tekijin.data.members import get_or_create_org_for_guild, resolve_discord_member
 from tekijin.data.sources import MANUAL, delete_source_item, upsert_source_item
+from tekijin.data.visibility import record_visibility
 from tekijin.models.tables import ChannelMessage, SourceItem
 from tekijin.retrieval.embedding import Embedder
 
@@ -168,6 +169,15 @@ def seed_circle(
     _forget_removed(session, embedder, circle, messages, org_id=org.id, now=now)
     ingested = ingest_messages(
         session, embedder, org=org, guild_id=GUILD_ID, messages=messages, now=now
+    )
+    # #87: every channel of the circle is open to all, and no thread is private;
+    # without this record the conversations would be hidden from everyone (#85).
+    record_visibility(
+        session,
+        org.id,
+        channels={m.channel_id: True for m in messages},
+        threads={m.thread_id: False for m in messages if m.thread_id is not None},
+        now=now,
     )
     changed = 0
     for document in circle.documents:
