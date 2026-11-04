@@ -11,7 +11,7 @@ each must satisfy.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -34,10 +34,6 @@ class IntentResult:
     question_type: str = "製品QA"
     out_of_scope: bool = False
     confidence: float = 0.0
-    # #83: a location the asker explicitly asked the RESPONDER to be at. ``None``
-    # (the overwhelming majority) means no constraint. Always one of
-    # ``BRANCH_VOCABULARY`` when set — C1's adapter drops anything else.
-    constraint_branch: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,16 +213,6 @@ class SourceSearch(Protocol):
     def evidence(
         self, hits: Sequence[SourceHit], org_id: int, scope: SourceScope
     ) -> list[CitedEvidence]: ...
-
-
-class BranchSource(Protocol):
-    """Candidate -> employee lookup for the #83 branch constraint.
-
-    :class:`~tekijin.data.repository.Repository` satisfies this; tests pass a
-    lightweight fake so the node stays database-free. Only ``.branch`` is read.
-    """
-
-    def employees_by_ids(self, employee_ids: Sequence[int]) -> Mapping[int, Any]: ...
 
 
 class HasEmployeeId(Protocol):

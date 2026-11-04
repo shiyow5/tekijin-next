@@ -350,7 +350,7 @@ PR #18 の ER（A層）に、仕様上あと少し不足がある。実データ
 
 | 対象 | 追加/変更 | 理由 |
 |---|---|---|
-| `EMPLOYEES` | ~~`branch`(拠点) を追加~~ **実装済**（`models/tables.py`） | `proximity`（同支店>同エリア>全社）の計算に必要（技術仕様 §5 `w4·proximity`） |
+| `EMPLOYEES` | ~~`branch`(拠点) を追加~~ **実装済**（`models/tables.py`） | もとは `proximity`（同支店>同エリア>全社）の計算に使った。#93 で `proximity` を消したので、今は読む側が無い。列は後続のPRで消す |
 | `EMPLOYEES` | ~~`role` を追加~~ **実装済**（`department_history` / `password_hash` も追加済） | 職種比率・スコアの説明に使用 |
 | `PROJECTS` | `employees uuid[]` は **`PROJECT_MEMBERS`（役割つき）を正**とする | 配列では lead/member を区別できず base_score(0.8/0.5)を割り当てられない |
 | （算出でよい） | `years`(在籍年数) は `hire_date` から算出 | 冗長カラムにしない |

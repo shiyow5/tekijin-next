@@ -153,22 +153,3 @@ def test_route_labels_come_from_corpus():
     dist = Counter(q["gold_route"] for q in person)
     assert set(dist) == {"person", "prior_answer", "document", "none"}, dist
     assert dist["person"] / len(person) <= 0.80, f"person に偏りすぎ: {dist}"
-
-
-# ------------------------------------------------------------------ #83
-
-
-def test_every_employee_branch_is_in_the_branch_vocabulary():
-    """社員の拠点はすべて `BRANCH_VOCABULARY` に載っていること（#83）。
-
-    `BRANCH_VOCABULARY` は `REGION_OF_BRANCH`（proximity 用に手で保守している地図）
-    から導出している。DB に拠点を足して地図に足し忘れると、C1 はその拠点を
-    **guided decoding で生成できなくなり**、利用者が明示した希望が黙って落ちる。
-    `analyze` の警告はモデルが語彙外を出したときにしか出ないので、そこでは気づけない。
-    """
-
-    from tekijin.scorer.weights import BRANCH_VOCABULARY
-
-    branches = {e.get("branch") for e in _load("people/employees.json")} - {None}
-    unknown = branches - set(BRANCH_VOCABULARY)
-    assert not unknown, f"REGION_OF_BRANCH に無い拠点: {sorted(unknown)}"

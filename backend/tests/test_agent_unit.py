@@ -367,20 +367,6 @@ class _ReturningScorer:
         }
 
 
-class _FakeBranches:
-    """A :class:`BranchSource` double — only ``.branch`` is read (#83)."""
-
-    def __init__(self, branch_of: dict[int, str | None]) -> None:
-        self._branch_of = branch_of
-
-    def employees_by_ids(self, employee_ids: Any) -> dict[int, Any]:
-        return {
-            i: SimpleNamespace(id=i, branch=self._branch_of.get(i))
-            for i in employee_ids
-            if i in self._branch_of
-        }
-
-
 class _FakeRoster:
     """An :class:`EmployeeSource` double — only ``.id`` is read (#87)."""
 
@@ -395,8 +381,6 @@ def _nodes_for_score(
     scorer: Any,
     *,
     question_fit_enabled: bool = False,
-    branch_constraint_enabled: bool = False,
-    employee_branches: Any = None,
     employee_source: Any = None,
 ) -> AgentNodes:
     stub: Any = object()
@@ -408,8 +392,6 @@ def _nodes_for_score(
         retriever=stub,
         scorer=scorer,
         question_fit_enabled=question_fit_enabled,
-        branch_constraint_enabled=branch_constraint_enabled,
-        employee_branches=employee_branches,
         employee_source=employee_source,
     )
 
@@ -495,125 +477,6 @@ def test_c6_referral_pin_takes_precedence_over_prior_answer_pin() -> None:
         "recommendations"
     ]
     assert recs[0]["person_id"] == 9
-
-
-def test_c6_ranks_the_requested_branch_first() -> None:
-    # #83: an explicitly requested branch is a CONDITION, not a scoring term.
-    # `Weights.proximity` is one term in a linear sum, so a stronger candidate
-    # elsewhere just outweighs it; here only the 福岡 people may be ranked.
-    scorer = _RecordingScorer()
-    nodes = _nodes_for_score(
-        scorer,
-        branch_constraint_enabled=True,
-        employee_branches=_FakeBranches({1: "本社", 2: "福岡", 3: "大阪", 4: "福岡"}),
-    )
-    state = _c6_state({})
-    state["retrieval"]["candidate_people"] = [1, 2, 3, 4]
-    state["constraint_branch"] = "福岡"
-    nodes.c6_score(state)
-    # The branch's people are offered FIRST. (This double returns no rows, so the
-    # node then backfills from the rest — that fallback is pinned by the next test.)
-    assert scorer.candidates_seen[0] == [2, 4]
-
-
-def test_c6_fills_from_other_branches_and_says_so() -> None:
-    # Too few people at the branch: fill the remaining slots from elsewhere rather
-    # than returning a short list — and stamp a reason, so "福岡には該当者が足りない"
-    # is visible to the asker instead of the constraint being silently dropped.
-    class _Scorer:
-        def __init__(self) -> None:
-            self.calls: list[tuple[list[int], int]] = []
-
-        def rank(self, topics, candidates, asker_id, now, *, top_k=3, **kwargs) -> dict:
-            self.calls.append((list(candidates), top_k))
-            return {
-                "recommendations": [
-                    {"person_id": c, "name": f"E{c}", "score": 0.5, "reasons": []}
-                    for c in list(candidates)[:top_k]
-                ]
-            }
-
-    scorer = _Scorer()
-    nodes = _nodes_for_score(
-        scorer,
-        branch_constraint_enabled=True,
-        employee_branches=_FakeBranches({1: "本社", 2: "福岡", 3: "大阪", 4: "東京"}),
-    )
-    state = _c6_state({})
-    state["retrieval"]["candidate_people"] = [1, 2, 3, 4]
-    state["constraint_branch"] = "福岡"
-    out = nodes.c6_score(state)
-
-    assert scorer.calls == [([2], 3), ([1, 3, 4], 2)]  # branch first, then the rest
-    recs = out["recommendations"]
-    assert [r["person_id"] for r in recs] == [2, 1, 3]
-    assert not recs[0]["reasons"]  # the 福岡 person needs no explanation
-    assert recs[1]["reasons"][-1]["type"] == "constraint"
-    assert "福岡" in recs[1]["reasons"][-1]["detail"]
-
-
-def test_c6_says_so_when_nobody_is_at_the_requested_branch() -> None:
-    # Zero matches is the case the asker MOST needs to hear (福岡 has 2 employees, so
-    # an empty match is common). Rank everyone, but annotate every candidate — an
-    # earlier version stayed silent here while being loud in less important cases.
-    nodes = _nodes_for_score(
-        _ReturningScorer(),
-        branch_constraint_enabled=True,
-        employee_branches=_FakeBranches({1: "本社", 2: "大阪"}),
-    )
-    state = _c6_state({})
-    state["constraint_branch"] = "福岡"
-    recs = nodes.c6_score(state)["recommendations"]
-    assert [r["person_id"] for r in recs] == [1, 2]
-    assert all(r["reasons"][-1]["type"] == "constraint" for r in recs)
-    assert all("福岡" in r["reasons"][-1]["detail"] for r in recs)
-
-
-def test_c6_does_not_annotate_a_candidate_who_is_at_the_branch() -> None:
-    # The control for the test above: the note must land on the people it is TRUE of.
-    # Without this, "annotate everything" would pass the zero-match test too.
-    nodes = _nodes_for_score(
-        _ReturningScorer(),
-        branch_constraint_enabled=True,
-        employee_branches=_FakeBranches({1: "福岡", 2: "大阪"}),
-    )
-    state = _c6_state({})
-    state["constraint_branch"] = "福岡"
-    recs = nodes.c6_score(state)["recommendations"]
-    by_id = {r["person_id"]: r for r in recs}
-    assert not any(x["type"] == "constraint" for x in by_id[1]["reasons"])  # at 福岡
-    assert by_id[2]["reasons"][-1]["type"] == "constraint"  # elsewhere
-
-
-def test_c6_annotates_the_prior_answer_pin_when_it_violates_the_branch() -> None:
-    # The pin is seated at rank 1 — who C7 drafts for and who `send` interrupts on.
-    # A pin at the wrong branch used to violate the constraint with no explanation at
-    # all, which is the worst place for the note to be missing.
-    nodes = _nodes_for_score(
-        _ReturningScorer(),
-        branch_constraint_enabled=True,
-        employee_branches=_FakeBranches({1: "福岡", 2: "大阪", 50: "大阪"}),
-    )
-    state = _c6_state({})
-    state["retrieval"]["candidate_people"] = [1, 2]
-    state["constraint_branch"] = "福岡"
-    state["route"] = PRIOR_ANSWER
-    state["pinned_responder_id"] = 50
-    recs = nodes.c6_score(state)["recommendations"]
-    assert recs[0]["person_id"] == 50  # the pin still wins rank 1 (#159)
-    assert recs[0]["reasons"][-1]["type"] == "constraint"  # …but says the branch missed
-    assert "福岡" in recs[0]["reasons"][-1]["detail"]
-
-
-def test_c6_ignores_the_constraint_when_the_feature_is_off() -> None:
-    # OFF (default): `constraint_branch` is not read at all, so ranking is
-    # develop-identical even when C1 extracted one.
-    scorer = _RecordingScorer()
-    nodes = _nodes_for_score(scorer, employee_branches=_FakeBranches({1: "本社", 2: "福岡"}))
-    state = _c6_state({})
-    state["constraint_branch"] = "福岡"
-    nodes.c6_score(state)
-    assert scorer.candidates_seen == [[1, 2]]
 
 
 def test_c6_scores_the_whole_roster_when_wired() -> None:

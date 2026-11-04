@@ -15,13 +15,10 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import select
-
 from tekijin.data.repository import Repository
 from tekijin.models.tables import (
     Answer,
     Certification,
-    Employee,
     Project,
     ProjectMember,
     Question,
@@ -293,31 +290,6 @@ def test_only_input_candidates_are_scored(seed_counts, session) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# proximity
-# --------------------------------------------------------------------------- #
-def test_same_branch_candidate_ranks_higher(seed_counts, session) -> None:
-    # Pick an asker and two candidates: one in the asker's branch, one elsewhere.
-    employees = session.scalars(select(Employee).order_by(Employee.id)).all()
-    asker = employees[0]
-    same = next(e for e in employees[1:] if e.branch == asker.branch)
-    diff = next(e for e in employees[1:] if e.branch != asker.branch)
-
-    _add_question(session, "q_prox", asker_id=asker.id)
-    for emp in (same.id, diff.id):
-        _add_skill(session, f"sk_prox_{emp}", emp)  # identical evidence
-
-    scorer = ExpertiseScorer(Repository(session))
-    result = scorer.rank(TOPIC, [diff.id, same.id], asker_id=asker.id, now=NOW, top_k=3)
-
-    assert result["recommendations"][0]["person_id"] == same.id
-    scores = _scores_by_person(result)
-    assert scores[same.id] > scores[diff.id]
-    # The proximity reason reflects the same-branch match.
-    top_reasons = {r["type"] for r in result["recommendations"][0]["reasons"]}
-    assert "proximity" in top_reasons
-
-
-# --------------------------------------------------------------------------- #
 # determinism
 # --------------------------------------------------------------------------- #
 def test_rank_is_deterministic(seed_counts, session) -> None:
@@ -376,7 +348,7 @@ def test_skill_only_candidate_has_self_reason(seed_counts, session) -> None:
 
     rec = result["recommendations"][0]
     self_reasons = [r for r in rec["reasons"] if r["type"] == "self"]
-    assert self_reasons  # the expertise signal is explained, not just load/proximity
+    assert self_reasons  # the expertise signal is explained, not just load
     assert TOPIC in self_reasons[0]["detail"]
 
 

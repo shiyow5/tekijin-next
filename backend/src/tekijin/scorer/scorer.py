@@ -2,7 +2,7 @@
 
 Deterministic, LLM-free. Given a question topic and the candidate people C4
 retrieved, it recomputes each person's topic edge from raw evidence and combines
-it with recency, answer quality, proximity, and a load penalty into a single
+it with recency, answer quality, and a load penalty into a single
 score (technical-spec §5). It returns the top-k with a per-term ``reasons``
 breakdown — the explanation the UI shows and the project's answer to "誤推薦対策".
 
@@ -29,7 +29,6 @@ from tekijin.scorer.features import (
     answer_quality,
     confidence_label,
     load,
-    proximity,
     recency,
 )
 from tekijin.scorer.weights import (
@@ -38,7 +37,6 @@ from tekijin.scorer.weights import (
     LOAD_WINDOW_DAYS,
     QUESTION_FIT_REASON_FLOOR,
     RECENCY_SOURCE_TYPES,
-    REGION_OF_BRANCH,
     Weights,
 )
 
@@ -78,7 +76,6 @@ _REASON_TYPE_ORDER = {
     "project": 4,
     "question_fit": 6,  # #405: question↔past-answer semantic match
     "recency": 7,
-    "proximity": 8,
     "load": 9,
 }
 
@@ -109,7 +106,7 @@ class ExpertiseScorer:
 
         ``topics`` may be a single topic or several — for a multi-topic question
         the topic_fit / recency / answer_quality evidence is aggregated across all
-        of them (load / proximity are topic-independent). Only ids in
+        of them (load is topic-independent). Only ids in
         ``candidate_ids`` that resolve to a real employee are scored; unknown ids
         are dropped. The asker (``asker_id``) is removed — never recommend a
         person to themselves.
@@ -146,7 +143,6 @@ class ExpertiseScorer:
         rec_counts = self._repo.recent_recommendation_counts(since, now, candidates)
         ans_counts = self._repo.recent_answer_counts(since, now, candidates)
         answers_by_person = self._group_answers_by_person(self._repo.answers_by_topics(topic_list))
-        asker_branch = self._asker_branch(asker_id)
 
         # Batch every per-candidate evidence lookup into one query each (was O(4·N)
         # queries in the loop — #58). The scorer reads them via ``.get(id, [])``.
@@ -170,14 +166,12 @@ class ExpertiseScorer:
                 employee_id=person_id,
                 employee_name=employee.name,
                 employee_dept=employee.department,
-                employee_branch=employee.branch,
                 certifications=certs_by_person.get(person_id, []),
                 skills=skills_by_person.get(person_id, []),
                 memberships=memberships_by_person.get(person_id, []),
                 answers=answers_by_person.get(person_id, []),
                 offline_consults=consults_by_person.get(person_id, []),
                 load_count=rec_counts.get(person_id, 0) + ans_counts.get(person_id, 0),
-                asker_branch=asker_branch,
                 now=now,
                 question_fit_score=(
                     question_similarity.get(person_id, 0.0)
@@ -201,14 +195,12 @@ class ExpertiseScorer:
         employee_id: int,
         employee_name: str,
         employee_dept: str | None,
-        employee_branch: str | None,
         certifications: Sequence[CertificationDTO],
         skills: Sequence[SkillDTO],
         memberships: Sequence[ProjectMembershipDTO],
         answers: Sequence[AnswerDTO],
         offline_consults: Sequence[OfflineConsultDTO] = (),
         load_count: int,
-        asker_branch: str | None,
         now: dt.datetime,
         question_fit_score: float | None = None,
     ) -> tuple[ScoredCandidate, float]:
@@ -223,14 +215,12 @@ class ExpertiseScorer:
         helpful_count = sum(1 for a in answers if a.was_helpful is True)
         reuse_total = sum(a.reuse_count or 0 for a in answers)
         quality = answer_quality(helpful_count, reuse_total, len(answers))
-        proximity_score = proximity(asker_branch, employee_branch)
         load_score = load(load_count)
 
         score = (
             weights.topic_fit * topic_fit
             + weights.recency * recency_score
             + weights.answer_quality * quality
-            + weights.proximity * proximity_score
             - weights.load * load_score
         )
         # #405: additive question↔past-answer term. ``None`` -> dormant (develop
@@ -243,13 +233,10 @@ class ExpertiseScorer:
             topic_fit=topic_fit,
             recency_score=recency_score,
             quality=quality,
-            proximity_score=proximity_score,
             load_score=load_score,
             load_count=load_count,
             answers=answers,
             helpful_count=helpful_count,
-            employee_branch=employee_branch,
-            asker_branch=asker_branch,
             now=now,
             question_fit_score=question_fit_score,
         )
@@ -273,13 +260,10 @@ class ExpertiseScorer:
         topic_fit: float,
         recency_score: float,
         quality: float,
-        proximity_score: float,
         load_score: float,
         load_count: int,
         answers: Sequence[AnswerDTO],
         helpful_count: int,
-        employee_branch: str | None,
-        asker_branch: str | None,
         now: dt.datetime,
         question_fit_score: float | None = None,
     ) -> list[ScoredReason]:
@@ -355,15 +339,6 @@ class ExpertiseScorer:
 
         entries.append(
             (
-                weights.proximity * proximity_score,
-                {
-                    "type": "proximity",
-                    "detail": self._proximity_detail(asker_branch, employee_branch),
-                },
-            )
-        )
-        entries.append(
-            (
                 -weights.load * load_score,
                 {"type": "load", "detail": f"今週の対応件数: {self._load_label(load_count)}"},
             )
@@ -411,19 +386,6 @@ class ExpertiseScorer:
         return f"直近の関連実績: 約{round(months)}か月前"
 
     @staticmethod
-    def _proximity_detail(asker_branch: str | None, employee_branch: str | None) -> str:
-        if asker_branch and employee_branch and asker_branch == employee_branch:
-            return f"同じ拠点（{employee_branch}）"
-        if (
-            asker_branch
-            and employee_branch
-            and REGION_OF_BRANCH.get(asker_branch) is not None
-            and REGION_OF_BRANCH.get(asker_branch) == REGION_OF_BRANCH.get(employee_branch)
-        ):
-            return "同じエリア"
-        return "全社から選定"
-
-    @staticmethod
     def _load_label(load_count: int) -> str:
         if load_count <= 1:
             return "少なめ"
@@ -440,9 +402,3 @@ class ExpertiseScorer:
         for answer in answers:
             grouped.setdefault(answer.responder_id, []).append(answer)
         return grouped
-
-    def _asker_branch(self, asker_id: int | None) -> str | None:
-        if asker_id is None:
-            return None
-        asker = self._repo.get_employee(asker_id)
-        return asker.branch if asker is not None else None

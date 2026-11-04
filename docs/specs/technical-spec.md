@@ -323,9 +323,8 @@ events(id, question_id, stage, started_at, ended_at, meta jsonb)
 score(e, q) = w1·topic_fit(e,q)
             + w2·recency(e,q)
             + w3·answer_quality(e)
-            + w4·proximity(e, asker)
-            − w5·load(e)
-            + w6·question_fit(e,q)   // #405 qsim・既定ON
+            − w4·load(e)
+            + w5·question_fit(e,q)   // #405 qsim・既定ON
 ```
 
 | 項 | 内容 | データ源 |
@@ -333,7 +332,6 @@ score(e, q) = w1·topic_fit(e,q)
 | `topic_fit` | 質問トピックとの適合。資格・自己申告・案件・過去回答を統合したRRFスコア | certifications / skills / projects / answers |
 | `recency` | 直近の経験ほど重い。半減期6か月の時間減衰 | projects / answers |
 | `answer_quality` | 過去回答の有用度と再利用数 | answers |
-| `proximity` | 同支店 \> 同エリア \> 全社 | employees.branch |
 | `load` | **直近7日の推薦・回答件数。多いほど減点** | recommendations / answers |
 | `question_fit` | **質問文↔その人の過去回答本文の意味一致（最大コサイン）。#405 qsim・既定ON**。`topic_fit` はタグしか見ず飽和する（ADR-0006）ため、C1 が誤トピックでも正解専門家を救う。実 E2E Hit@3 0.742→0.788 | answers（C4 の answer dense チャネル） |
 

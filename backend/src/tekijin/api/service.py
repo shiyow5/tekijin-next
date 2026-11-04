@@ -201,7 +201,6 @@ class AgentService:
         knowledge_answer_min_similarity: float | None = None,
         query_expansion_enabled: bool = False,
         question_fit_enabled: bool = False,
-        branch_constraint_enabled: bool = False,
         additive_self_answer_enabled: bool = False,
         additive_self_answer_floor: float = 0.20,
         score_all_employees: bool = False,
@@ -249,7 +248,6 @@ class AgentService:
         self._query_expansion_enabled = query_expansion_enabled
         # #405: add the question↔past-answer term to C6 (False = OFF, dormant).
         self._question_fit_enabled = question_fit_enabled
-        self._branch_constraint_enabled = branch_constraint_enabled
         # #413: additive cited answer on the person route (False = OFF, dormant).
         self._additive_self_answer_enabled = additive_self_answer_enabled
         self._additive_self_answer_floor = additive_self_answer_floor
@@ -1567,7 +1565,6 @@ class AgentService:
             knowledge_answer_min_similarity=self._knowledge_answer_min_similarity,
             query_expansion_enabled=self._query_expansion_enabled,
             question_fit_enabled=self._question_fit_enabled,
-            branch_constraint_enabled=self._branch_constraint_enabled,
             additive_self_answer_enabled=self._additive_self_answer_enabled,
             additive_self_answer_floor=self._additive_self_answer_floor,
             score_all_employees=self._score_all_employees,

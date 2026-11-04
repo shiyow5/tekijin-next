@@ -223,7 +223,7 @@ flowchart TD
         { "type": "load",    "detail": "今週の対応件数: 少なめ" } ] } ] }
 ```
 
-- **式（要点）**: `score = w1·topic_fit + w2·recency + w3·answer_quality + w4·proximity − w5·load + w6·question_fit`。
+- **式（要点）**: `score = w1·topic_fit + w2·recency + w3·answer_quality − w4·load + w5·question_fit`。
   各項の寄与をそのまま UI の「選ばれた理由」に出す（説明可能性＝誤推薦対策）。
 - **質問一致項 `question_fit`（#405 qsim・既定ON）**: `topic_fit` はトピック**タグ**しか見ず飽和する（ADR-0006）ため、
   質問文と各候補の過去回答本文の意味一致（最大コサイン・C4 の answer dense チャネル由来）を加点する。C1 がトピックを

@@ -5,9 +5,9 @@
  * the separately-labelled evidence confidence, and the evidence `reasons`. The
  * raw `score` is a weighted internal ranking value (not a percentage) and is never
  * shown. The top-ranked card is `expanded` (full reason detail); lower
- * ranks show compact reason labels — EXCEPT the two comparison signals 距離
- * (proximity) and 現在の負荷 (load), whose values are shown on every card so the
- * asker can actually compare 2nd/3rd against the top pick (#204).
+ * ranks show compact reason labels — EXCEPT the comparison signal 現在の負荷
+ * (load), whose value is shown on every card so the asker can actually compare
+ * 2nd/3rd against the top pick (#204).
  *
  * `onSelect` lets the asker hand off to any of the shown candidates, not only
  * the top pick (#200).
@@ -88,17 +88,9 @@ export function CandidateCard({
       {candidate.reasons.length > 0 ? (
         <ul className="mb-md flex flex-col gap-xs">
           {candidate.reasons.map((reason) => {
-            // Distance and current load are comparison signals: show their values
-            // on every card, not only the expanded top one (#204). `constraint` (#83)
-            // is not a signal at all — it is the reason the asker's explicit branch
-            // request was not met for this person, so hiding its detail on the
-            // non-expanded cards would leave a bare "拠点の希望" bullet that says
-            // nothing. The backfilled candidates are exactly the non-first ones.
-            const showDetail =
-              expanded ||
-              reason.type === "proximity" ||
-              reason.type === "load" ||
-              reason.type === "constraint";
+            // Current load is a comparison signal: show its value on every card,
+            // not only the expanded top one (#204).
+            const showDetail = expanded || reason.type === "load";
             return (
               <li
                 key={`${reason.type}-${reason.detail}`}

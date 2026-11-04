@@ -10,17 +10,17 @@
  * as a separate evidence badge (ConfidenceGauge shows both).
  *
  * The raw `score` is a weighted sum (scorer/weights.py). The base positive weights
- * (topic_fit .45 + recency .15 + answer_quality .20 + proximity .10) sum to 0.90,
+ * (topic_fit .45 + recency .15 + answer_quality .20) sum to 0.80,
  * BUT the question-fit term (#405, `question_fit_enabled` default ON) adds
  * `question_fit(1.0) · qsim` on top, where qsim ∈ [0, 1]. So the real composite
- * ceiling is 0.90 + 1.0 = 1.90, not 0.90 (#498). Normalising against 0.90 made any
+ * ceiling is 0.80 + 1.0 = 1.80, not 0.80 (#498). Normalising against the base made any
  * candidate with a non-trivial qsim saturate at 100% — the "適合度が100ばかり" bug.
  * We normalise against the qsim-inclusive ceiling so the gauge de-saturates and
  * differentiates candidates again.
  *
  * TRADE-OFF (interim): because the frontend only receives the FINAL score, it
  * cannot separate the base term from qsim, so a genuinely strong topic expert with
- * NO matching past answer (base ~0.9, qsim 0) now reads ~47% rather than ~100%.
+ * NO matching past answer (base ~0.8, qsim 0) now reads ~44% rather than ~100%.
  * The proper fix is to have the backend — which knows the components and the active
  * weights — compute and send a normalised fit percent (follow-up to #498), removing
  * this single-ceiling guess entirely. The exact ceiling is theoretical, not eval-
@@ -28,8 +28,8 @@
  */
 
 /** Base positive scorer weights: topic_fit .45 + recency .15 + answer_quality .20
- * + proximity .10 (scorer/weights.py). */
-const BASE_POSITIVE_WEIGHTS = 0.9;
+ * (scorer/weights.py). */
+const BASE_POSITIVE_WEIGHTS = 0.8;
 /** #405 question-fit weight (scorer/weights.py `question_fit`); qsim ∈ [0, 1] is
  * added as `question_fit · qsim`, so its max contribution is this value. */
 const QUESTION_FIT_WEIGHT = 1.0;
