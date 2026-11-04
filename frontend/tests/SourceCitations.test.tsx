@@ -22,6 +22,16 @@ describe("SourceCitations", () => {
     );
   });
 
+  it("shows an unknown kind as a label, not a link (#91)", () => {
+    // A "daily" citation stored before #91 is no longer in the type, but old
+    // history still carries it. It must not link to a page that does not exist.
+    const stale = { source_id: "daily_42", kind: "daily" } as unknown as SourceCitation;
+    renderCitations([stale]);
+    expect(screen.getByText("出典 daily_42")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByText(/過去の回答/)).toBeNull();
+  });
+
   it("labels a knowledge unit as knowledge, not as a past answer (#366)", () => {
     // #357 slice 4c emits `{source_id: "ku_…", kind: "knowledge"}` when a grounded
     // knowledge answer fires. The renderer's final branch is a catch-all that says
