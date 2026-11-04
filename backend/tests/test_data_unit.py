@@ -297,7 +297,7 @@ def test_knowledge_unit_dto_from_row() -> None:
         result="受注",
         topics=["CRM・営業支援"],
         industry="製造業",
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id="1234",
         confidence=0.8,
         review_status="approved",
@@ -306,7 +306,7 @@ def test_knowledge_unit_dto_from_row() -> None:
     dto = KnowledgeUnitDTO.from_row(row)
     assert dto.id == 3 and dto.kind == "case"
     assert dto.topics == ("CRM・営業支援",)
-    assert dto.source_type == "daily_report" and dto.source_id == "1234"
+    assert dto.source_type == "slack_thread" and dto.source_id == "1234"
     assert dto.review_status == "approved" and dto.has_embedding is False
     # topics=None -> empty tuple (mirrors the other DTOs)
     bare = KnowledgeUnitDTO.from_row(

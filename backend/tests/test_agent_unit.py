@@ -64,7 +64,6 @@ def _retrieval(
         "document_confidence": document,
         "people_confidence": people_sim,
         "person_question_similarity": {},
-        "daily_reports": [],
     }
 
 

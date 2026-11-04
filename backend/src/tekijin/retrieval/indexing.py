@@ -22,7 +22,6 @@ from tekijin.ingest.chunking import passage_text
 from tekijin.models.tables import (
     Answer,
     Chunk,
-    DailyReport,
     Document,
     EmployeeProfile,
     Question,
@@ -34,12 +33,6 @@ def _document_text(row: Document) -> str:
     return f"{row.title or ''}\n{row.body or ''}".strip()
 
 
-def _daily_text(row: DailyReport) -> str:
-    # #433: index the report's PROBLEM (issue) and ACTIVITY (content) — that is
-    # where a daily report's tacit knowledge lives, so a question can retrieve it.
-    return f"{row.issue or ''}\n{row.content or ''}".strip()
-
-
 # (logical name, model, text extractor). Order is irrelevant; each is independent.
 # ``Any`` for the model so mypy allows the pgvector ``.embedding`` column access.
 _SPECS: tuple[tuple[str, Any, Callable[[Any], str | None]], ...] = (
@@ -47,8 +40,6 @@ _SPECS: tuple[tuple[str, Any, Callable[[Any], str | None]], ...] = (
     ("questions", Question, lambda r: r.body),
     ("answers", Answer, lambda r: r.body),
     ("documents", Document, _document_text),
-    # #433: daily reports as a searchable knowledge source for System 1.
-    ("daily_reports", DailyReport, _daily_text),
     # #70: ingested chunks, so an embedding-model change can re-embed them.
     ("chunks", Chunk, lambda r: passage_text(r.source_item.title, r.text)),
 )

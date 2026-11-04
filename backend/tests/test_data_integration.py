@@ -553,21 +553,6 @@ def test_batch_evidence_lookups_match_singular(seed_counts, session) -> None:
     assert repo.project_memberships_for_many([]) == {}
 
 
-def test_daily_reports_for_many(seed_counts, session) -> None:
-    """#355: batch daily reports, only topic-bearing ones, keyed by employee."""
-    repo = Repository(session)
-    ids = [1, 2, 3]
-    daily_many = repo.daily_reports_for_many(ids)
-
-    assert set(daily_many) <= set(ids)
-    for eid, reports in daily_many.items():
-        assert reports  # no empty lists
-        for r in reports:
-            assert r.employee_id == eid
-            assert r.topics  # only reports carrying topics are returned (evidence)
-    assert repo.daily_reports_for_many([]) == {}
-
-
 def test_answers_by_topic(seed_counts, session) -> None:
     repo = Repository(session)
     topic = "ネットワーク・VPN"
@@ -876,12 +861,12 @@ def test_knowledge_unit_upsert_is_idempotent_on_provenance(seed_counts, session)
         result=None,
         topics=["CRM・営業支援"],
         industry="製造業",
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id="9001",
         confidence=0.7,
     )
     session.flush()
-    first = kb.get_knowledge_unit_by_source(session, "daily_report", "9001")
+    first = kb.get_knowledge_unit_by_source(session, "slack_thread", "9001")
     assert first is not None
     assert first.review_status == "unreviewed"  # server default
     assert first.result is None and first.topics == ("CRM・営業支援",)
@@ -897,13 +882,13 @@ def test_knowledge_unit_upsert_is_idempotent_on_provenance(seed_counts, session)
         result="受注",  # now known
         topics=["CRM・営業支援"],
         industry="製造業",
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id="9001",
         confidence=0.9,
     )
     session.flush()
     again = kb.list_knowledge_units(session)
-    same = [u for u in again if u.source_type == "daily_report" and u.source_id == "9001"]
+    same = [u for u in again if u.source_type == "slack_thread" and u.source_id == "9001"]
     assert len(same) == 1  # upsert, not insert
     assert same[0].id == first.id
     assert same[0].result == "受注" and same[0].confidence == 0.9
@@ -921,7 +906,7 @@ def test_knowledge_units_by_topics_gates_on_review(seed_counts, session) -> None
         problem="p-approved",
         action="a",
         topics=["CRM・営業支援"],
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id="9101",
     )
     kb.upsert_knowledge_unit(
@@ -930,11 +915,11 @@ def test_knowledge_units_by_topics_gates_on_review(seed_counts, session) -> None
         problem="p-unreviewed",
         action="a",
         topics=["CRM・営業支援"],
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id="9102",
     )
     session.flush()
-    approved = kb.get_knowledge_unit_by_source(session, "daily_report", "9101")
+    approved = kb.get_knowledge_unit_by_source(session, "slack_thread", "9101")
     kb.set_review_status(session, approved.id, "approved")
     session.flush()
 

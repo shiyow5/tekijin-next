@@ -396,7 +396,13 @@ class OfflineConsult(Base):
 
 
 class DailyReport(Base):
-    """Daily report submitted by an employee."""
+    """Daily report submitted by an employee.
+
+    Nothing reads this table any more (#91 removed daily reports as a feature). It
+    stays, with its fixture and seed loading, until a later PR drops the table and
+    the seed/migration code together. ``topics`` and ``embedding`` are still added
+    to an older table by ``_apply_schema_upgrades`` but are no longer filled.
+    """
 
     __tablename__ = "daily_reports"
 

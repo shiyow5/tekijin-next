@@ -127,8 +127,6 @@ def build_agent(
     bm25_weight: float | None = None,
     prior_answer_reuse_min: int | None = None,
     prior_answer_relevance_floor: float = 0.15,
-    daily_evidence: bool = False,
-    daily_knowledge_enabled: bool = False,
     knowledge_answer_min_similarity: float | None = None,
     query_expansion_enabled: bool = False,
     question_fit_enabled: bool = False,
@@ -181,11 +179,8 @@ def build_agent(
             top_k=retriever_top_k,
             rrf_k=rrf_k,
             bm25_weight=bm25_weight,
-            # #433: search daily reports as a knowledge source (False = OFF, dormant).
-            daily_knowledge_enabled=daily_knowledge_enabled,
         ),
-        scorer=scorer
-        or ExpertiseScorer(Repository(session), weights=weights, daily_evidence=daily_evidence),
+        scorer=scorer or ExpertiseScorer(Repository(session), weights=weights),
         answerability_model=answerability_model,
         answerability_threshold=answerability_threshold,
         self_answer_model=self_answer_model,

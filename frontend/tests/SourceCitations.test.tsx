@@ -22,10 +22,14 @@ describe("SourceCitations", () => {
     );
   });
 
-  it("shows a daily report as a label, not a link (#433)", () => {
-    renderCitations([{ source_id: "daily_1", kind: "daily" }]);
-    expect(screen.getByText("日報より")).toBeInTheDocument();
+  it("shows an unknown kind as a label, not a link (#91)", () => {
+    // A "daily" citation stored before #91 is no longer in the type, but old
+    // history still carries it. It must not link to a page that does not exist.
+    const stale = { source_id: "daily_42", kind: "daily" } as unknown as SourceCitation;
+    renderCitations([stale]);
+    expect(screen.getByText("出典 daily_42")).toBeInTheDocument();
     expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByText(/過去の回答/)).toBeNull();
   });
 
   it("labels a knowledge unit as knowledge, not as a past answer (#366)", () => {

@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tekijin.models.tables import Answer, DailyReport, Document, EmployeeProfile, Question
+from tekijin.models.tables import Answer, Document, EmployeeProfile, Question
 
 # Retrieval target -> (ORM model, primary-key attribute exposed as the hit id).
 # ``Any`` for the model so mypy allows the pgvector ``.embedding`` column access
@@ -29,8 +29,6 @@ _TARGETS: dict[str, tuple[Any, str]] = {
     "documents": (Document, "id"),
     "questions": (Question, "id"),
     "employee_profiles": (EmployeeProfile, "employee_id"),
-    # #433: daily reports as a searchable knowledge source (System 1).
-    "daily_reports": (DailyReport, "id"),
 }
 
 TARGETS: tuple[str, ...] = tuple(_TARGETS)

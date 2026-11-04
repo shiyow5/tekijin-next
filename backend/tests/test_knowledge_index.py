@@ -30,7 +30,7 @@ def _upsert(session, source_id: str, problem: str, action: str, result: str | No
         action=action,
         result=result,
         topics=["CRM・営業支援"],
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id=source_id,
     )
     session.flush()
@@ -57,7 +57,7 @@ def test_embed_knowledge_units_fills_missing(seed_counts, session, fake_embedder
     embedded = embed_knowledge_units(session, fake_embedder)
     assert embedded == 2
     for sid in ("90001", "90002"):
-        dto = get_knowledge_unit_by_source(session, "daily_report", sid)
+        dto = get_knowledge_unit_by_source(session, "slack_thread", sid)
         assert dto is not None and dto.has_embedding is True
     # only_missing default: a second run embeds nothing new.
     assert embed_knowledge_units(session, fake_embedder) == 0
@@ -73,7 +73,7 @@ def test_embed_knowledge_units_skips_empty_text(seed_counts, session, fake_embed
         problem=None,
         action=None,
         topics=[],
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id="90099",
     )
     session.flush()
@@ -85,13 +85,13 @@ def test_embed_knowledge_units_skips_rejected(seed_counts, session, fake_embedde
     # A human-rejected unit is never embedded (waste avoidance, #354).
     _upsert(session, "90201", "keep this", "action a")
     _upsert(session, "90202", "discard this", "action b")
-    rejected = get_knowledge_unit_by_source(session, "daily_report", "90202")
+    rejected = get_knowledge_unit_by_source(session, "slack_thread", "90202")
     set_review_status(session, rejected.id, "rejected")
     session.flush()
     embedded = embed_knowledge_units(session, fake_embedder)
     assert embedded == 1  # only the non-rejected unit
-    assert get_knowledge_unit_by_source(session, "daily_report", "90201").has_embedding is True
-    assert get_knowledge_unit_by_source(session, "daily_report", "90202").has_embedding is False
+    assert get_knowledge_unit_by_source(session, "slack_thread", "90201").has_embedding is True
+    assert get_knowledge_unit_by_source(session, "slack_thread", "90202").has_embedding is False
 
 
 def test_embed_knowledge_units_rejects_bad_batch_size(seed_counts, session, fake_embedder) -> None:
@@ -108,7 +108,7 @@ def test_search_ranks_nearest_and_gates_on_review(seed_counts, session, fake_emb
     _upsert(session, "91003", "gamma other token", "resolve gamma")
     # Approve two; leave 91003 unreviewed.
     for sid in ("91001", "91002"):
-        dto = get_knowledge_unit_by_source(session, "daily_report", sid)
+        dto = get_knowledge_unit_by_source(session, "slack_thread", sid)
         set_review_status(session, dto.id, "approved")
     session.flush()
     embed_knowledge_units(session, fake_embedder)
@@ -129,7 +129,7 @@ def test_search_ranks_nearest_and_gates_on_review(seed_counts, session, fake_emb
 def test_search_excludes_null_embeddings(seed_counts, session, fake_embedder) -> None:
     # An approved but NOT-yet-embedded unit never surfaces (NULL embedding excluded).
     _upsert(session, "92001", "unembedded problem", "unembedded action")
-    dto = get_knowledge_unit_by_source(session, "daily_report", "92001")
+    dto = get_knowledge_unit_by_source(session, "slack_thread", "92001")
     set_review_status(session, dto.id, "approved")
     session.flush()  # deliberately NOT embedded
     hits = search_knowledge_units(session, _vec(fake_embedder, "unembedded problem"), top_k=5)

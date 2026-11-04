@@ -39,13 +39,6 @@ class DocumentHit(TypedDict):
     score: float
 
 
-class DailyHit(TypedDict):
-    """One daily-report hit from C4 (#433). A daily report as a knowledge source."""
-
-    daily_id: int
-    score: float
-
-
 class SourceHit(TypedDict):
     """One chunk of something the organization ingested (#81)."""
 
@@ -76,10 +69,6 @@ class RetrievalResult(TypedDict):
     answer_confidence: float
     document_confidence: float
     people_confidence: float
-    # #433: daily-report hits — a searchable knowledge source for System 1. Always
-    # present but EMPTY unless ``daily_knowledge_enabled`` (develop byte-identical
-    # when off). self-answer / #413 additive cite these alongside answers/documents.
-    daily_reports: list[DailyHit]
     # #405: per-person max cosine of the QUESTION against that person's past
     # answers (from the answer dense channel), keyed by responder_id. C6 adds it as
     # a question-fit term when ``question_fit_enabled``; absent people default to
@@ -105,7 +94,6 @@ def empty_retrieval() -> RetrievalResult:
         "document_confidence": 0.0,
         "people_confidence": 0.0,
         "person_question_similarity": {},
-        "daily_reports": [],
         "sources": [],
         "source_confidence": 0.0,
     }

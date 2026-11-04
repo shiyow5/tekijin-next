@@ -11,7 +11,6 @@ DISCORD_MESSAGE_LIMIT = 2000
 _SOURCE_LABELS = {
     "qa": "過去の回答",
     "document": "文書",
-    "daily": "日報",
     "knowledge": "知識",
 }
 

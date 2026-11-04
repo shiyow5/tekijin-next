@@ -198,8 +198,6 @@ class AgentService:
         bm25_weight: float | None = None,
         prior_answer_reuse_min: int | None = None,
         prior_answer_relevance_floor: float = 0.15,
-        daily_evidence: bool = False,
-        daily_knowledge_enabled: bool = False,
         knowledge_answer_min_similarity: float | None = None,
         query_expansion_enabled: bool = False,
         question_fit_enabled: bool = False,
@@ -247,11 +245,6 @@ class AgentService:
         # build_agent so C5 can revive the route on reuse_count when calibrated.
         self._prior_answer_reuse_min = prior_answer_reuse_min
         self._prior_answer_relevance_floor = prior_answer_relevance_floor
-        # #355: include daily reports as C6 evidence. Passed to build_agent's default
-        # scorer (None = dormant). Ignored when a scorer is injected (tests).
-        self._daily_evidence = daily_evidence
-        # #433: daily reports as a System 1 knowledge source (False = OFF, dormant).
-        self._daily_knowledge_enabled = daily_knowledge_enabled
         # #371: fold C1 topics into the C4 retrieval query (False = OFF, dormant).
         self._query_expansion_enabled = query_expansion_enabled
         # #405: add the question↔past-answer term to C6 (False = OFF, dormant).
@@ -1571,8 +1564,6 @@ class AgentService:
             bm25_weight=self._bm25_weight,
             prior_answer_reuse_min=self._prior_answer_reuse_min,
             prior_answer_relevance_floor=self._prior_answer_relevance_floor,
-            daily_evidence=self._daily_evidence,
-            daily_knowledge_enabled=self._daily_knowledge_enabled,
             knowledge_answer_min_similarity=self._knowledge_answer_min_similarity,
             query_expansion_enabled=self._query_expansion_enabled,
             question_fit_enabled=self._question_fit_enabled,

@@ -14,7 +14,6 @@ import pytest
 from tekijin.data.dto import (
     AnswerDTO,
     CertificationDTO,
-    DailyReportDTO,
     OfflineConsultDTO,
     ProjectMembershipDTO,
     SkillDTO,
@@ -32,13 +31,11 @@ from tekijin.scorer.topics import (
 )
 from tekijin.scorer.weights import (
     BASE_SCORE_CERTIFICATION,
-    BASE_SCORE_DAILY,
     BASE_SCORE_HELPFUL_ANSWER,
     BASE_SCORE_OFFLINE_CONSULT,
     BASE_SCORE_PROJECT_LEAD,
     BASE_SCORE_PROJECT_MEMBER,
     BASE_SCORE_SKILL,
-    DAILY_EVIDENCE_CAP,
     OFFLINE_CONSULT_EVIDENCE_CAP,
 )
 
@@ -85,10 +82,6 @@ def _answer(helpful: bool | None, reuse: int | None, created: dt.datetime) -> An
     )
 
 
-def _daily(topics: tuple[str, ...], report_date: dt.date | None = None) -> DailyReportDTO:
-    return DailyReportDTO(id=1, employee_id=1, topics=topics, report_date=report_date)
-
-
 def _consult(
     topics: tuple[str, ...],
     resolution: str = "resolved",
@@ -127,11 +120,10 @@ def test_offline_consult_is_weaker_than_a_self_declared_skill() -> None:
 
     A self-declared skill is at least first-hand about oneself; a retrospective is
     one person's paraphrase of another's words. So it must sit below
-    ``BASE_SCORE_SKILL`` — and above ``BASE_SCORE_DAILY``, because unlike a daily
-    report it records an actual consultation on an explicitly tagged topic.
+    ``BASE_SCORE_SKILL``.
     """
 
-    assert BASE_SCORE_DAILY < BASE_SCORE_OFFLINE_CONSULT < BASE_SCORE_SKILL
+    assert 0 < BASE_SCORE_OFFLINE_CONSULT < BASE_SCORE_SKILL
 
 
 def test_unresolved_offline_consult_is_not_evidence() -> None:
@@ -157,7 +149,7 @@ def test_partially_resolved_offline_consult_counts() -> None:
 
 
 def test_collect_topic_evidence_offline_consult_capped() -> None:
-    """Volume must not saturate topic_fit — same guard as daily reports (#355)."""
+    """Volume must not saturate topic_fit."""
 
     consults = [_consult((TOPIC,)) for _ in range(OFFLINE_CONSULT_EVIDENCE_CAP + 4)]
     ev = collect_topic_evidence(TOPIC, [], [], [], [], offline_consults=consults)
@@ -289,39 +281,6 @@ def test_collect_topic_evidence_single_and_multi_are_consistent() -> None:
     one = collect_topic_evidence(TOPIC, [], [_skill(TOPIC)], [], [])
     seq = collect_topic_evidence([TOPIC], [], [_skill(TOPIC)], [], [])
     assert [e.source_type for e in one] == [e.source_type for e in seq]
-
-
-# --------------------------------------------------------------------------- #
-# #355: daily reports as evidence
-# --------------------------------------------------------------------------- #
-def test_collect_topic_evidence_daily_default_is_empty() -> None:
-    """No daily arg → no daily evidence (backward-compatible, dormant)."""
-    ev = collect_topic_evidence(TOPIC, [], [], [], [])
-    assert not any(e.source_type == "daily" for e in ev)
-
-
-def test_collect_topic_evidence_includes_on_topic_daily() -> None:
-    ev = collect_topic_evidence(
-        TOPIC, [], [], [], [], daily_reports=[_daily((TOPIC,)), _daily(("経理・決算",))]
-    )
-    daily = [e for e in ev if e.source_type == "daily"]
-    assert len(daily) == 1  # off-topic report excluded
-    assert daily[0].base_score == BASE_SCORE_DAILY
-
-
-def test_collect_topic_evidence_daily_capped() -> None:
-    """A prolific reporter cannot saturate: at most DAILY_EVIDENCE_CAP count."""
-    reports = [_daily((TOPIC,)) for _ in range(DAILY_EVIDENCE_CAP + 4)]
-    ev = collect_topic_evidence(TOPIC, [], [], [], [], daily_reports=reports)
-    assert sum(1 for e in ev if e.source_type == "daily") == DAILY_EVIDENCE_CAP
-
-
-def test_collect_topic_evidence_daily_unions_topics() -> None:
-    """A report matches if ANY of its topics overlaps the queried topic set."""
-    ev = collect_topic_evidence(
-        [TOPIC, "セキュリティ"], [], [], [], [], daily_reports=[_daily(("セキュリティ",))]
-    )
-    assert sum(1 for e in ev if e.source_type == "daily") == 1
 
 
 def test_collect_topic_evidence_project_role_base_scores() -> None:

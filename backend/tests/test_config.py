@@ -28,10 +28,9 @@ def test_defaults(monkeypatch) -> None:
     assert settings.embedding_trust_remote_code is True
     assert settings.bm25_weight == 0.2
     # System-1 knowledge surfacing enabled by default after the task3 DGX floor
-    # sweep (#413 additive / #433 daily), both routing-safe (person recall 1.000).
+    # sweep (#413 additive), routing-safe (person recall 1.000).
     assert settings.additive_self_answer_enabled is True
     assert settings.additive_self_answer_floor == 0.20
-    assert settings.daily_knowledge_enabled is True
     assert settings.cors_origins == ("http://localhost:3000",)
     assert isinstance(settings.fixtures_dir, Path)
     assert settings.fixtures_dir.name == "synthetic"

@@ -1037,12 +1037,12 @@ def _seed_approved_knowledge(session, fake_embedder, source_id, problem, action)
         action=action,
         result="受注",
         topics=["CRM・営業支援"],
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id=source_id,
         confidence=0.9,
     )
     session.flush()
-    dto = get_knowledge_unit_by_source(session, "daily_report", source_id)
+    dto = get_knowledge_unit_by_source(session, "slack_thread", source_id)
     set_review_status(session, dto.id, "approved")
     session.flush()
     embed_knowledge_units(session, fake_embedder)

@@ -65,11 +65,6 @@ def build_default_service(settings: Settings | None = None) -> AgentService:
         # (None = OFF keeps prior_answer dormant, C5 unchanged).
         prior_answer_reuse_min=settings.prior_answer_reuse_min,
         prior_answer_relevance_floor=settings.prior_answer_relevance_floor,
-        # #355: daily reports as C6 evidence (False = dormant, develop unchanged).
-        daily_evidence=settings.daily_evidence_enabled,
-        # #433: daily reports as a System 1 knowledge source (OFF until DGX
-        # confirms grounded up + person recall unchanged; needs daily embeddings).
-        daily_knowledge_enabled=settings.daily_knowledge_enabled,
         # #371: fold C1 topics into the C4 retrieval query. DORMANT (False) and must
         # stay OFF: the #380 full-graph E2E run showed folding real C1 topics
         # (acc@1=0.750) into the query BREAKS routing (person recall 1.000->0.776);

@@ -877,7 +877,7 @@ class SourceCitation(BaseModel):
     """
 
     source_id: str
-    # "qa" (past Q&A) | "document" (internal doc) | "daily" (daily report, #433)
+    # "qa" (past Q&A) | "document" (internal doc)
     # | "knowledge" (structured knowledge unit, #357 — emitted by `knowledge_answer`)
     # | "source" (something the organization ingested, #81)
     kind: str

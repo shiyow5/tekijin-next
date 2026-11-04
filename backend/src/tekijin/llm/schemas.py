@@ -59,13 +59,13 @@ class AnswerabilitySchema(BaseModel):
 class CaseExtractionSchema(BaseModel):
     """Knowledge-unit extraction structured output (#357 slice 2, case type).
 
-    The model reads ONE raw record (a sales daily report for the PoC) and, if it
+    The model reads ONE raw record (a chat conversation or a resolved thread) and, if it
     holds a reusable *case*, distils it into ``問題(状況) → 打ち手 → 結果``. Not every
     record is a case — a status note with no problem/action is not — so
     ``extractable`` lets the model pass (the caller then stores nothing, keeping a
     non-case out of the knowledge base). For a source that CARRIES precomputed tags
-    (daily reports) ``topics`` come from those tags, never the model, so the
-    knowledge vocabulary can never drift from the eval gold's. For a source with NO
+    (a thread's question) ``topics`` come from those tags, never the model, so the
+    knowledge vocabulary can never drift. For a source with NO
     tags (chat, #448) the model instead proposes ``topic_hints`` and the caller snaps
     them onto the canonical vocabulary (``normalize_topics``) — same drift exposure
     as C1 routing, and anything off-vocabulary is dropped. The model must ground
@@ -88,7 +88,7 @@ class CaseExtractionSchema(BaseModel):
         default_factory=list,
         description=(
             "この知識が属するトピック候補（タグの無いチャット等の抽出でのみ使用）。"
-            "決められた語彙から選ぶ。タグを持つ日報では空のままでよい。"
+            "決められた語彙から選ぶ。タグを持つ記録では空のままでよい。"
         ),
     )
 

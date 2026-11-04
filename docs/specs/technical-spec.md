@@ -250,7 +250,7 @@ graph = g.compile(checkpointer=PostgresSaver(...))
 > `additive_answer` ノードが C5 の後・C6 の前に走り（既定 ON・`additive_self_answer_enabled=True`・floor 0.20）、
 > grounded な引用回答を `reference` イベントで取次ぎと並べて出す（**取次ぎは置き換えない**・routing 不変・
 > best-effort で失敗時は取次ぎのみ）。終端の自己回答（`self_answered`）は従来どおりデータ由来経路のみ。
-> 既定は `self_answer_enabled=True` / `additive_self_answer_enabled=True` / `daily_knowledge_enabled=True` /
+> 既定は `self_answer_enabled=True` / `additive_self_answer_enabled=True` /
 > `question_fit_enabled=True`（すべて #380 以降の DGX full-graph E2E 検証を経て有効化）。
 
 > 「なぜ LangGraph を使うのか」は審査で聞かれうる。
@@ -289,10 +289,9 @@ recommendations(id, question_id, employee_id, rank, score, reasons jsonb,
 -- 文書
 documents(id, title, body, source, updated_at, embedding vector)
 
--- 日報（#355 topics / #433 embedding を後付け・migrate で ADD COLUMN IF NOT EXISTS）
+-- 日報（#91 で機能を削除。表と合成データは後続のPRで消すまで残す・読む側は無い）
 daily_reports(id, employee_id, report_date, content, issue, created_at,
-              topics text[],          -- #355: C6 証拠源のトピックタグ
-              embedding vector)        -- #433: 自己回答の知識源（dense チャネル・kind="daily"）
+              topics text[], embedding vector)
 
 -- 形式知（#357/#448・知識抽出パイプラインの出力・graph 外で upsert）
 knowledge_units(id, kind, problem, action, result, topics text[], industry,
@@ -300,7 +299,7 @@ knowledge_units(id, kind, problem, action, result, topics text[], industry,
                 created_at)
   -- kind ∈ {case, procedure, decision} / review_status ∈ {unreviewed, approved, rejected}
   -- UNIQUE(source_type, source_id)（出典で冪等）/ GIN(topics)
-  -- 生データ（日報 knowledge/extract.py・チャット knowledge/chat.py）から蒸留
+  -- 生データ（チャット knowledge/chat.py・解決済スレッド knowledge/slack_thread.py）から蒸留
 
 -- 計測
 events(id, question_id, stage, started_at, ended_at, meta jsonb)

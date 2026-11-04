@@ -8,7 +8,8 @@ import Link from "next/link";
  * レビュー指摘の再発防止）。`document` は内部文書ビューアへ、`qa` はナレッジ詳細
  * （#293 part2, `/knowledge/[id]`）へリンク — `source_id` は自己回答の citation と
  * 同じ実体（`Answer.id`）を指すので、それぞれの詳細ページがそのまま解決できる。
- * `daily`（#433）と `knowledge`（#357）は詳細ページが無いのでラベルチップ。
+ * `knowledge`（#357）は詳細ページが無いのでラベルチップ。型に無い種類（保存済みの履歴に残る
+ * 旧 `daily` など）は、存在しないページへリンクしないよう「出典」のラベルチップにする。
  */
 export function SourceCitations({
   citations,
@@ -37,18 +38,11 @@ export function SourceCitations({
               </Link>
             ) : citation.kind === "knowledge" ? (
               // #357/#366: a structured knowledge unit. No detail page yet (that
-              // arrives with #354), so a label chip — but a DISTINCT one: the
-              // catch-all below says 「過去の回答」, which would be a false claim
-              // about where the answer came from.
+              // arrives with #354), so a label chip — but a DISTINCT one: 「過去の回答」
+              // would be a false claim about where the answer came from.
               <span className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm font-bold text-on-surface-variant text-sm">
                 <span aria-hidden="true">📚</span>
                 ナレッジ {citation.source_id}
-              </span>
-            ) : citation.kind === "daily" ? (
-              // #433: a daily report has no detail page — show a non-link label chip.
-              <span className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm text-sm font-bold text-on-surface-variant">
-                <span aria-hidden="true">📝</span>
-                日報より
               </span>
             ) : citation.kind === "document" ? (
               <Link
@@ -60,7 +54,7 @@ export function SourceCitations({
                 <span aria-hidden="true">📄</span>
                 {citation.source_id}
               </Link>
-            ) : (
+            ) : citation.kind === "qa" ? (
               <Link
                 href={`/knowledge/${encodeURIComponent(citation.source_id)}`}
                 className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm text-sm font-bold text-primary transition-colors hover:bg-surface-container"
@@ -68,6 +62,12 @@ export function SourceCitations({
                 <span aria-hidden="true">💬</span>
                 過去の回答 {citation.source_id}
               </Link>
+            ) : (
+              // A kind the type does not list (e.g. a "daily" citation stored before
+              // #91 removed daily reports). It has no page, so never link it.
+              <span className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm font-bold text-on-surface-variant text-sm">
+                出典 {citation.source_id}
+              </span>
             )}
           </li>
         ))}

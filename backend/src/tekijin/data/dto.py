@@ -17,7 +17,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from tekijin.models.tables import (
         Answer,
         Certification,
-        DailyReport,
         Document,
         Employee,
         EmployeeProfile,
@@ -111,42 +110,11 @@ class SkillDTO:
 
 
 @dataclass(frozen=True, slots=True)
-class DailyReportDTO:
-    """A daily report as topic evidence (#355).
-
-    ``topics`` is precomputed at seed time (``build_fixtures`` ``match_topics``),
-    mirroring the eval gold's daily-topic derivation, so the scorer needs no
-    keyword vocabulary at runtime — it just checks topic-set overlap.
-    """
-
-    id: int
-    employee_id: int
-    topics: tuple[str, ...]
-    report_date: dt.date | None
-    # #433: the report text, so a daily report can be re-hydrated as a cited
-    # knowledge source for System 1 (self-answer). ``issue`` is the problem,
-    # ``content`` the activity — both carry tacit knowledge worth citing.
-    content: str | None = None
-    issue: str | None = None
-
-    @classmethod
-    def from_row(cls, row: DailyReport) -> DailyReportDTO:
-        return cls(
-            id=row.id,
-            employee_id=row.employee_id,
-            topics=tuple(row.topics or ()),
-            report_date=row.report_date,
-            content=row.content,
-            issue=row.issue,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class OfflineConsultDTO:
     """A 直接相談 retrospective as topic evidence (#247).
 
     ``topics`` are validated against ``TOPIC_VOCABULARY`` at the API boundary, so
-    the scorer joins on them directly (same contract as :class:`DailyReportDTO`).
+    the scorer joins on them directly.
     ``resolution`` decides whether this counts at all — see
     ``collect_topic_evidence``.
     """

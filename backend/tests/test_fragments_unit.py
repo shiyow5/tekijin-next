@@ -9,7 +9,7 @@ repository protocol — tested here with an in-memory fake, no database.
 from __future__ import annotations
 
 from tekijin.agent.state import empty_retrieval
-from tekijin.data.dto import AnswerDTO, DailyReportDTO, DocumentDTO, QuestionDTO
+from tekijin.data.dto import AnswerDTO, DocumentDTO, QuestionDTO
 from tekijin.retrieval.fragments import collect_cited_evidence, collect_context_fragments
 
 
@@ -50,25 +50,13 @@ def _document(doc_id: str, title: str, body: str) -> DocumentDTO:
     )
 
 
-def _daily(daily_id: int, issue: str, content: str) -> DailyReportDTO:
-    return DailyReportDTO(
-        id=daily_id,
-        employee_id=1,
-        topics=(),
-        report_date=None,
-        content=content,
-        issue=issue,
-    )
-
-
 class _FakeSource:
     """Minimal stand-in for the repository's id-keyed batch lookups."""
 
-    def __init__(self, *, answers=(), questions=(), documents=(), dailies=()) -> None:
+    def __init__(self, *, answers=(), questions=(), documents=()) -> None:
         self._answers = {a.id: a for a in answers}
         self._questions = {q.id: q for q in questions}
         self._documents = {d.id: d for d in documents}
-        self._dailies = {d.id: d for d in dailies}
 
     def answers_by_ids(self, ids):
         return {i: self._answers[i] for i in ids if i in self._answers}
@@ -78,9 +66,6 @@ class _FakeSource:
 
     def documents_by_ids(self, ids):
         return {i: self._documents[i] for i in ids if i in self._documents}
-
-    def daily_reports_by_ids(self, ids):
-        return {i: self._dailies[i] for i in ids if i in self._dailies}
 
 
 def test_empty_retrieval_yields_no_fragments() -> None:
@@ -237,36 +222,6 @@ def test_cited_evidence_keeps_source_id_and_kind() -> None:
     assert "UTMのファームウェア更新手順を教えて" in qa.text  # question body
     assert "UTMのファーム更新は保守時間内に実施します" in qa.text  # answer body
     assert "セキュリティ運用手順" in items[1].text and "ファイアウォール" in items[1].text
-
-
-def test_cited_evidence_daily_report_knowledge() -> None:
-    # #433: a daily-report hit becomes a cited knowledge source with kind="daily"
-    # and a prefixed source_id ("daily_<id>") that cannot collide with a qa/doc id.
-    source = _FakeSource(
-        answers=[_answer("a1", "q1", "回答本文")],
-        questions=[_question("q1", "質問本文")],
-        dailies=[_daily(42, "在庫連携APIの遅延", "バッチ間隔を5分に短縮して解消した")],
-    )
-    retrieval = empty_retrieval()
-    retrieval["past_answers"] = [{"qa_id": "a1", "score": 0.9, "responder_id": 1}]
-    retrieval["daily_reports"] = [{"daily_id": 42, "score": 0.8}]
-
-    items = collect_cited_evidence(source, retrieval)
-
-    kinds = {(e.source_id, e.kind) for e in items}
-    assert ("a1", "qa") in kinds
-    assert ("daily_42", "daily") in kinds  # prefixed id, distinct kind
-    daily = next(e for e in items if e.kind == "daily")
-    assert "在庫連携APIの遅延" in daily.text and "バッチ間隔を5分" in daily.text
-
-
-def test_cited_evidence_daily_absent_when_channel_off() -> None:
-    # #433: with no daily_reports hits (channel off), no daily lookup/citation.
-    source = _FakeSource(answers=[_answer("a1", "q1", "本文")], questions=[_question("q1", "質問")])
-    retrieval = empty_retrieval()
-    retrieval["past_answers"] = [{"qa_id": "a1", "score": 0.9, "responder_id": 1}]
-    items = collect_cited_evidence(source, retrieval)
-    assert all(e.kind != "daily" for e in items)
 
 
 def test_cited_evidence_skips_missing_and_empty() -> None:

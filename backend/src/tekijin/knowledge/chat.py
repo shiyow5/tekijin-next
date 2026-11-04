@@ -2,7 +2,7 @@
 
 Raw chat is mostly noise — a single line ("了解です" / "在宅です") carries no
 reusable knowledge, and feeding raw messages to System 1 as evidence measured as
-near-useless (and harmful when combined with daily reports). The value in chat is
+near-useless. The value in chat is
 in the *exchanges*: a question that gets a substantive answer, an issue that gets
 resolved. So the unit of extraction is a **conversation**, not a message.
 
