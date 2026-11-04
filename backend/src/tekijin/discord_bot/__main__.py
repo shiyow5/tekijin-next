@@ -50,7 +50,7 @@ from tekijin.discord_bot.ingest import (
     parse_ids,
 )
 from tekijin.discord_bot.visibility import (
-    batches,
+    VisibilityReporter,
     channel_report,
     readable_channels,
     reader_scope,
@@ -69,6 +69,8 @@ _FLUSH_INTERVAL_S = 10.0
 _CURSOR_RETRY_S = 30.0
 # How long to wait before reading history again when part of it could not be listed.
 _HISTORY_RETRY_S = 60.0
+# How often to send again what the backend did not take of a visibility report.
+_VISIBILITY_RETRY_S = 30.0
 
 
 def _user(interaction: discord.Interaction) -> dict:
@@ -106,13 +108,21 @@ def main() -> None:
     async def send_stream_deletes(stream_ids: list[int]) -> bool:
         return await post_stream_deletes(http, guild_id=guild_id, stream_ids=stream_ids, **backend)
 
-    async def report(channels: list[dict], threads: list[dict]) -> None:
-        """Tell the backend who may read what (#85). A failed report leaves the
-        conversations concerned hidden, so it is only logged."""
+    async def send_visibility(part: dict) -> bool:
+        return await post_visibility(http, guild_id=guild_id, report=part, **backend)
 
-        for part in batches(channels, threads):
-            if not await post_visibility(http, guild_id=guild_id, report=part, **backend):
-                logger.warning("could not report channel visibility")
+    # #85: what could not be sent is kept and sent again (see retry_visibility).
+    reporter = VisibilityReporter(send_visibility)
+
+    async def report(channels: list[dict], threads: list[dict]) -> None:
+        if not await reporter.report(channels, threads):
+            logger.warning("could not report channel visibility; will retry")
+
+    async def retry_visibility() -> None:
+        while True:
+            await asyncio.sleep(_VISIBILITY_RETRY_S)
+            if reporter.pending and not await reporter.flush():
+                logger.warning("could not report channel visibility; will retry")
 
     async def report_channels(guild: discord.Guild) -> None:
         await report(channel_report(readable_channels(guild), guild.default_role), [])
@@ -394,6 +404,12 @@ def main() -> None:
             await report([], thread_report([thread]))
 
     @client.event
+    async def on_thread_join(thread: discord.Thread) -> None:
+        # An existing thread the bot can newly see (thread_create is not sent).
+        if thread.guild.id == guild_id:
+            await report([], thread_report([thread]))
+
+    @client.event
     async def on_thread_update(before: discord.Thread, after: discord.Thread) -> None:
         if after.guild.id == guild_id:
             await report([], thread_report([after]))
@@ -416,6 +432,8 @@ def main() -> None:
             logger.warning("could not sync the commands", exc_info=True)
         # on_ready fires again after a reconnect. The flush loop runs once; history
         # is read again, which costs only what was missed meanwhile.
+        if "visibility" not in tasks:
+            tasks["visibility"] = asyncio.create_task(retry_visibility())
         if "flush" not in tasks:
             tasks["flush"] = asyncio.create_task(
                 batcher.run(_FLUSH_INTERVAL_S, start_history, ready=ready)

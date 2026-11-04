@@ -8,7 +8,8 @@ discord.py hands the bot, so they are tested without Discord.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import asyncio
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 # How many entries one report carries; the backend accepts up to 1000 channels and
@@ -75,3 +76,44 @@ def batches(
         for i in range(0, len(threads), REPORT_BATCH)
     ]
     return reports
+
+
+class VisibilityReporter:
+    """Sends reports, and keeps what could not be sent until it is (#85).
+
+    A dropped report could leave a channel that became private recorded as public,
+    so nothing is dropped: a failed report stays pending, a newer report for the
+    same channel or thread replaces it, and :meth:`flush` is retried."""
+
+    def __init__(self, send: Callable[[dict[str, list[dict[str, Any]]]], Awaitable[bool]]) -> None:
+        self._send = send
+        self._channels: dict[int, dict[str, Any]] = {}
+        self._threads: dict[int, dict[str, Any]] = {}
+        self._lock = asyncio.Lock()
+
+    @property
+    def pending(self) -> bool:
+        return bool(self._channels or self._threads)
+
+    async def report(
+        self, channels: Iterable[dict[str, Any]], threads: Iterable[dict[str, Any]]
+    ) -> bool:
+        self._channels.update({c["id"]: c for c in channels})
+        self._threads.update({t["id"]: t for t in threads})
+        return await self.flush()
+
+    async def flush(self) -> bool:
+        """Send everything pending. False when something is still pending."""
+
+        async with self._lock:
+            for part in batches(list(self._channels.values()), list(self._threads.values())):
+                if not await self._send(part):
+                    return False
+                # Keep an entry a newer report replaced while this one was sent.
+                for entry in part["channels"]:
+                    if self._channels.get(entry["id"]) == entry:
+                        del self._channels[entry["id"]]
+                for entry in part["threads"]:
+                    if self._threads.get(entry["id"]) == entry:
+                        del self._threads[entry["id"]]
+            return not self.pending

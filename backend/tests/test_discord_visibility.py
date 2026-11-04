@@ -18,6 +18,7 @@ from tekijin.data.visibility import PUBLIC, SourceScope
 from tekijin.discord_bot.backend import ask_backend, post_visibility
 from tekijin.discord_bot.visibility import (
     REPORT_BATCH,
+    VisibilityReporter,
     batches,
     channel_report,
     reader_scope,
@@ -192,3 +193,40 @@ def test_ask_hands_the_asker_scope_to_the_question(client, monkeypatch) -> None:
 def test_an_older_bot_gets_what_everyone_can_read(client, monkeypatch) -> None:
     app, service = client
     assert _ask_scope(app, service, monkeypatch) == PUBLIC
+
+
+def _reporter(results):
+    sent: list = []
+
+    async def send(part):
+        sent.append(part)
+        return results.pop(0) if results else True
+
+    return VisibilityReporter(send), sent
+
+
+def test_a_failed_report_is_kept_and_sent_again() -> None:
+    reporter, sent = _reporter([False])
+
+    async def run():
+        first = await reporter.report([{"id": 101, "public": True}], [])
+        newer = [{"id": 101, "public": False}]
+        reporter._channels.update({c["id"]: c for c in newer})
+        second = await reporter.flush()
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first is False and second is True
+    assert sent[-1]["channels"] == [{"id": 101, "public": False}]
+    assert not reporter.pending
+
+
+def test_a_newer_report_replaces_a_pending_one() -> None:
+    reporter, sent = _reporter([False, True])
+
+    async def run():
+        await reporter.report([], [{"id": 201, "private": False}])
+        return await reporter.report([], [{"id": 201, "private": True}])
+
+    assert asyncio.run(run()) is True
+    assert sent[-1]["threads"] == [{"id": 201, "private": True}]
