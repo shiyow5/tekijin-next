@@ -10,6 +10,8 @@ from sqlalchemy import func, select, text
 
 from tekijin.data.circle import GUILD_ID, external_id, load_circle, seed_circle
 from tekijin.data.db import get_sessionmaker
+from tekijin.data.sources import count_source_items
+from tekijin.data.visibility import PUBLIC
 from tekijin.models.tables import ChannelMessage, Chunk, Employee, Organization, SourceItem
 
 NOW = dt.datetime(2026, 11, 1, 12, 0, 0)
@@ -25,6 +27,8 @@ def session(engine):
         cleanup.execute(text("DELETE FROM chunks"))
         cleanup.execute(text("DELETE FROM source_items"))
         cleanup.execute(text("DELETE FROM channel_messages"))
+        cleanup.execute(text("DELETE FROM discord_channels"))
+        cleanup.execute(text("DELETE FROM discord_threads"))
         cleanup.execute(text("DELETE FROM identities"))
         cleanup.execute(text("DELETE FROM employees WHERE org_id IS NOT NULL"))
         cleanup.execute(text("DELETE FROM organizations"))
@@ -49,6 +53,16 @@ def test_seed_stores_the_whole_circle(session, fake_embedder) -> None:
     assert _count(session, ChannelMessage, org.id) == lines
     assert _count(session, SourceItem, org.id) == len(circle.conversations) + len(circle.documents)
     assert _count(session, Chunk, org.id) >= _count(session, SourceItem, org.id)
+
+
+def test_everyone_can_see_the_whole_circle(session, fake_embedder) -> None:
+    circle = load_circle()
+    org_id = seed_circle(session, fake_embedder, circle, now=NOW).org_id
+    session.flush()
+
+    assert count_source_items(session, org_id=org_id, scope=PUBLIC) == _count(
+        session, SourceItem, org_id
+    )
 
 
 def test_seed_twice_changes_nothing(session, fake_embedder) -> None:
