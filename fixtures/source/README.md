@@ -1,6 +1,9 @@
 # `fixtures/source/` — 合成データの生成元（一次データ）
 
-`scripts/build_fixtures.py` の**入力**。ここから `fixtures/synthetic/` を生成する。
+`scripts/build_fixtures.py` の**入力**だった。ここから `fixtures/synthetic/` を生成していた。
+
+> 生成スクリプトは #89 で、日報・案件から作った合成データは #97 で develop から消した(`company-v1` タグに残る)。
+> 今の develop にはここを読むコードが無い。会社向けの版の生成元の記録として残してある。
 
 | ファイル | 中身 | 作成 |
 |---|---|---|
@@ -10,7 +13,7 @@
 | `chat_history_dummy.json` | チャット2,000件 | reona（#17） |
 
 ```bash
-python3 scripts/build_fixtures.py     # ここを入力に fixtures/synthetic/ を再生成
+python3 scripts/build_fixtures.py     # company-v1 タグで実行する。ここを入力に fixtures/synthetic/ を再生成
 ```
 
 ## なぜここに置くか

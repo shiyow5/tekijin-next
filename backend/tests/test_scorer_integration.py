@@ -16,15 +16,7 @@ from __future__ import annotations
 import datetime as dt
 
 from tekijin.data.repository import Repository
-from tekijin.models.tables import (
-    Answer,
-    Certification,
-    Project,
-    ProjectMember,
-    Question,
-    Recommendation,
-    Skill,
-)
+from tekijin.models.tables import Answer, Question, Recommendation
 from tekijin.scorer import ExpertiseScorer
 
 # Well past the newest seed answer (2026-08-21), so no seeded activity falls in
@@ -321,39 +313,6 @@ def test_rank_is_deterministic(seed_counts, session) -> None:
     first = scorer.rank(TOPIC, [1, 2, 3], asker_id=None, now=NOW, top_k=3)
     second = scorer.rank(TOPIC, [1, 2, 3], asker_id=None, now=NOW, top_k=3)
     assert first == second
-
-
-# --------------------------------------------------------------------------- #
-# #95: certifications, skills and projects are no longer evidence
-# --------------------------------------------------------------------------- #
-def test_certifications_skills_and_projects_are_not_evidence(seed_counts, session) -> None:
-    """The tables stay (a later PR drops them with the seed code), but C6 must not
-    read them: adding a matching cert, skill and project lead changes nothing."""
-
-    real_topic = "CRM・営業支援"
-    emp = 7
-    scorer = ExpertiseScorer(Repository(session))
-    before = scorer.rank(real_topic, [emp], asker_id=None, now=NOW, top_k=3)
-
-    # Each of these matched CRM・営業支援 under the old maps (中小企業診断士 /
-    # skills.topic / product CRM導入支援).
-    session.add(
-        Certification(
-            id="cert_scorer_test", employee_id=emp, name="中小企業診断士", acquired_at=None
-        )
-    )
-    session.add(Skill(id="sk_scorer_test", employee_id=emp, topic=real_topic, source="self"))
-    session.add(
-        Project(id=990001, subject="s", product="CRM導入支援", start_date=None, end_date=None)
-    )
-    session.flush()
-    session.add(ProjectMember(project_id=990001, employee_id=emp, role="lead"))
-    session.flush()
-
-    after = scorer.rank(real_topic, [emp], asker_id=None, now=NOW, top_k=3)
-    assert after == before
-    reason_types = {r["type"] for r in after["recommendations"][0]["reasons"]}
-    assert not reason_types & {"cert", "self", "skill", "project"}
 
 
 # --------------------------------------------------------------------------- #

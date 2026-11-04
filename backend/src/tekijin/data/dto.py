@@ -33,7 +33,6 @@ class EmployeeDTO:
     department: str | None
     section: str | None
     position: str | None
-    branch: str | None
     role: str | None
     hire_date: dt.date | None
 
@@ -46,7 +45,6 @@ class EmployeeDTO:
             department=row.department,
             section=row.section,
             position=row.position,
-            branch=row.branch,
             role=row.role,
             hire_date=row.hire_date,
         )

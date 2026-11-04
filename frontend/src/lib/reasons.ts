@@ -2,7 +2,7 @@
  * Labels and helpers for recommendation `reasons` (the "why this person" chips).
  *
  * Reason `type` values come from the scorer (model-definition): answers / load /
- * recency (and question_fit). Certifications, skills and projects stopped being
+ * recency / question_fit. Certifications, skills and projects stopped being
  * evidence in #95. Unknown types fall back to the raw string so a new scorer
  * signal still renders.
  */
@@ -13,6 +13,7 @@ export const REASON_LABELS: Record<string, string> = {
   answers: "過去回答",
   load: "現在の負荷",
   recency: "直近の活動",
+  question_fit: "質問と過去の回答の近さ",
 };
 
 export function reasonLabel(type: string): string {

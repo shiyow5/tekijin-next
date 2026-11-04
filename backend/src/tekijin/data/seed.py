@@ -38,6 +38,11 @@ from tekijin.data.mappers import build_all
 # TRUNCATE statement. It is a hard-coded allow-list — never build it from user
 # input, request data, or any external source, since the names are spliced into
 # raw SQL (identifiers cannot be passed as bind parameters).
+#
+# #97: a database created before daily_reports / projects / project_members /
+# certifications / skills were removed still has those tables (nothing drops
+# them). They are not listed here; CASCADE empties the ones that reference
+# ``employees``, and the code never reads or writes any of them.
 _TRUNCATE_ORDER: tuple[str, ...] = (
     "knowledge_units",
     "events",
@@ -49,14 +54,9 @@ _TRUNCATE_ORDER: tuple[str, ...] = (
     "answers",
     "questions",
     "documents",
-    "daily_reports",
     "ai_chat_history",
     "employee_chat_history",
-    "project_members",
-    "skills",
-    "certifications",
     "employee_profiles",
-    "projects",
     "employees",
 )
 
@@ -288,19 +288,6 @@ def _apply_schema_upgrades(engine: Engine) -> None:
         conn.execute(
             text("ALTER TABLE questions ADD COLUMN IF NOT EXISTS consult_method VARCHAR(32)")
         )
-        # #355: precomputed daily-report topics for the C6 scorer. daily_reports is
-        # a pre-existing table, so create_all() never adds this column to a live DB
-        # — reseeding would then insert DailyReport(topics=...) and 500. ADD IF NOT
-        # EXISTS makes an old DGX DB pick it up on the next deploy/reseed.
-        conn.execute(text("ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS topics TEXT[]"))
-        # #433: daily-report embedding so a report can be a searchable knowledge
-        # source for System 1. daily_reports pre-exists, so create_all never adds
-        # this to a live DB — ADD IF NOT EXISTS gives an old DGX DB the column on
-        # the next deploy/reseed; ``make embed`` then fills it. The width is fixed
-        # up by the widen block below if an older narrower vector already exists.
-        conn.execute(
-            text(f"ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS embedding vector({dim})")
-        )
         # #451: the chat-extraction batch (knowledge/chat.py) reads the ENTIRE
         # history ordered by (channel, sent_at, id), filtered to rows that actually
         # carry a message and a timestamp. Without a matching index that is a Seq
@@ -326,7 +313,7 @@ def _apply_schema_upgrades(engine: Engine) -> None:
                 "  cur text;\n"
                 "BEGIN\n"
                 "  FOREACH tbl IN ARRAY ARRAY['employee_profiles','questions',"
-                "'answers','documents','daily_reports','chunks'] LOOP\n"
+                "'answers','documents','chunks'] LOOP\n"
                 # #70: a table newer than the DB (chunks) is skipped; create_all
                 # builds it at the current width.
                 "    CONTINUE WHEN to_regclass(tbl) IS NULL;\n"

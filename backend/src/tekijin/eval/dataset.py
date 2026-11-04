@@ -1,8 +1,9 @@
 """Load the offline evaluation query set (``eval_person.json``, v2).
 
 ``eval_person.json`` is the **primary** eval set (fixtures README / Issue #43):
-its gold experts are derived from ``projects`` + ``daily_reports`` and
-deliberately NOT from ``answers`` — the evidence the scorer weighs most — so it
+its gold experts were derived from ``projects`` + ``daily_reports`` (both
+fixtures removed in #97; the labels are kept as they are) and deliberately NOT
+from ``answers`` — the evidence the scorer weighs most — so it
 actually measures recommendation quality. (The older ``eval_queries.json`` is
 deprecated: its labels came from ``answers``, so an "answers-count" baseline
 reproduced all 40, measuring nothing.)

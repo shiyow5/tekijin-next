@@ -1,5 +1,7 @@
 # `docs/benchmarks/` — モデル選定の実測結果
 
+> **このフォルダは過去の計測記録である。** ここに出てくる研究用・生成用のスクリプト（`scripts/research_latency.py` 以外の `scripts/research_*.py`、`build_fixtures.py`、`build_eval_v2.py` など）と、日報・資格・スキル・案件の合成データは、R3（#89・#97）で develop から消した。再現するときは `company-v1` タグを使う。
+
 測定日: **2026-08-21** / 実機: `internship-dgx1`（NVIDIA GB10 / 121GB ユニファイドメモリ / aarch64 / CUDA 13.0）
 
 詳細な読み解きは `analysis/20_モデル実測結果.md`（非gitの検討資料）にある。ここには**数字と再現方法**を置く。

@@ -10,6 +10,10 @@ describe("reasonLabel", () => {
     expect(reasonLabel("recency")).toBe("直近の活動");
   });
 
+  it("labels the question_fit reason instead of showing the raw type", () => {
+    expect(reasonLabel("question_fit")).toBe("質問と過去の回答の近さ");
+  });
+
   it("has no labels for the evidence removed in #95", () => {
     for (const removed of ["cert", "self", "skill", "project"]) {
       expect(REASON_LABELS[removed]).toBeUndefined();

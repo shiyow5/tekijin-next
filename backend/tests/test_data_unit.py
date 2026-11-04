@@ -41,18 +41,12 @@ from tekijin.data.mappers import (
 from tekijin.data.seed import _format_counts
 from tekijin.models import tables as t
 
-# Expected fixture row counts (from the synthetic dataset).
-# NOTE: #51/#52 で合成データにトピック差・部署横断メンバーを入れた際、
-# skills だけ 58 -> 61 に変わった（他は不変）。fixtures を再生成したらここも更新すること。
+# Expected fixture row counts (from the synthetic dataset). #97 で日報・資格・
+# スキル・案件の合成データを消した。fixtures を変えたらここも更新すること。
 EXPECTED_COUNTS = {
     "employees": 40,
-    "projects": 120,
     "profiles": 40,
-    "certifications": 98,
-    "skills": 61,
-    "project_members": 237,
     "employee_chat": 2000,
-    "daily_reports": 3070,
     "questions": 150,
     "answers": 150,
     "documents": 36,  # #296: 型番/製品文書6件を追加（30 -> 36）
@@ -116,70 +110,6 @@ def test_all_fixtures_load() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# #326: 営業部日報の CRS 訪問日報フォーマット
-# --------------------------------------------------------------------------- #
-def _sales_and_other_reports() -> tuple[list[dict], list[dict]]:
-    fixtures_dir = get_settings().fixtures_dir
-    employees = load_fixture(fixtures_dir, "employees")
-    daily = load_fixture(fixtures_dir, "daily_reports")
-    sales_ids = {e["id"] for e in employees if e["department"] == "営業部"}
-    assert sales_ids, "営業部の社員が存在する前提"
-    sales = [d for d in daily if d["employee_id"] in sales_ids]
-    other = [d for d in daily if d["employee_id"] not in sales_ids]
-    assert sales and other
-    return sales, other
-
-
-def test_sales_daily_reports_use_crs_visit_format() -> None:
-    """営業部の日報はすべて CRS 訪問日報フォーマット、他部署は不変（#326）。"""
-    sales, other = _sales_and_other_reports()
-    for d in sales:
-        c = d["content"]
-        assert c.startswith("【訪問】"), c
-        assert "要件:" in c and "所要" in c and "当社:" in c, c
-        # 粒度は 1〜2 文（実態）。見出し＋詳細で過剰に長くならない。
-        assert len(c) <= 160, c
-        assert d["issue"], "営業日報は課題タグを持つ"
-    # 他部署の日報は CRS 見出しを持たない（不変性の担保）。
-    assert not any(d["content"].startswith("【訪問】") for d in other)
-
-
-def test_daily_reports_have_precomputed_topics() -> None:
-    """#355: daily reports carry a precomputed ``topics`` list for scorer evidence."""
-    daily = load_fixture(get_settings().fixtures_dir, "daily_reports")
-    assert all("topics" in d and isinstance(d["topics"], list) for d in daily)
-    # Some (not all) reports are on-topic; sales reports (#326) always are.
-    assert any(d["topics"] for d in daily)
-
-
-def test_sales_daily_reports_carry_topic_keywords() -> None:
-    """CRS 日報がトピック語を含み、証拠被覆に寄与する（#326・ADR-0006）。"""
-    sales, _ = _sales_and_other_reports()
-    # build_fixtures の TOPICS 語彙（SALES_TOPIC_SCRIPT の課題句/商材句が含む）。
-    keys = (
-        "CRM",
-        "顧客情報",
-        "営業活動",
-        "業務効率化",
-        "手作業",
-        "業務フロー",
-        "契約",
-        "基幹システム",
-        "システム間連携",
-        "老朽化",
-        "ネットワーク",
-        "VPN",
-        "接続トラブル",
-        "セキュリティ",
-        "UTM",
-        "脆弱性",
-        "クラウド",
-        "データ基盤",
-    )
-    assert all(any(k in d["content"] for k in keys) for d in sales)
-
-
-# --------------------------------------------------------------------------- #
 # mappers
 # --------------------------------------------------------------------------- #
 def test_map_employee_full() -> None:
@@ -191,7 +121,6 @@ def test_map_employee_full() -> None:
             "department": "営業部",
             "section": "第1課",
             "position": "部長",
-            "branch": "大阪",
             "role": "営業",
             "hire_date": "2011-04-01",
             "department_history": [{"department": "営業部"}],
@@ -216,9 +145,8 @@ def test_mappers_leave_embeddings_none() -> None:
 def test_build_all_counts_and_order() -> None:
     groups = build_all(get_settings().fixtures_dir)
     names = [name for name, _ in groups]
-    # employees and projects must come before their FK dependants.
+    # employees and questions must come before their FK dependants.
     assert names.index("employees") < names.index("profiles")
-    assert names.index("projects") < names.index("project_members")
     assert names.index("questions") < names.index("answers")
     counts = {name: len(rows) for name, rows in groups}
     assert counts == EXPECTED_COUNTS
@@ -235,12 +163,11 @@ def test_employee_dto_from_row() -> None:
         department="d",
         section="s",
         position="p",
-        branch="b",
         role="r",
         hire_date=dt.date(2020, 1, 1),
     )
     dto = EmployeeDTO.from_row(row)
-    assert dto.id == 7 and dto.branch == "b" and dto.hire_date == dt.date(2020, 1, 1)
+    assert dto.id == 7 and dto.position == "p" and dto.hire_date == dt.date(2020, 1, 1)
 
 
 def test_profile_and_question_has_embedding_flag() -> None:
@@ -347,8 +274,8 @@ def test_get_engine_and_sessionmaker_no_connect() -> None:
 
 
 def test_format_counts() -> None:
-    out = _format_counts({"employees": 40, "projects": 120})
-    assert "employees" in out and "TOTAL" in out and "160" in out
+    out = _format_counts({"employees": 40, "questions": 150})
+    assert "employees" in out and "TOTAL" in out and "190" in out
 
 
 def test_main_prints_counts(monkeypatch, capsys) -> None:

@@ -17,15 +17,10 @@ from typing import Any
 FIXTURE_FILES: dict[str, str] = {
     "employees": "people/employees.json",
     "profiles": "people/employee_profiles.json",
-    "certifications": "certifications/certifications.json",
-    "projects": "projects/projects.json",
-    "project_members": "projects/project_members.json",
     "employee_chat": "chat/employee_chat_history.json",
-    "daily_reports": "daily_reports/daily_reports.json",
     "questions": "questions/questions.json",
     "answers": "answers/answers.json",
     "documents": "documents/documents.json",
-    "skills": "self_declared/skills.json",
 }
 
 
