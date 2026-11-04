@@ -211,6 +211,16 @@ def _apply_schema_upgrades(engine: Engine) -> None:
         # No REFERENCES here: create_all builds the foreign key on a fresh DB, and
         # an upgraded one is only ever written through the ORM.
         conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+        # #85: a Discord conversation's channel and thread. Guarded: source_items
+        # may be newer than the DB, and create_all builds them on a fresh one.
+        conn.execute(
+            text(
+                "DO $$ BEGIN IF to_regclass('source_items') IS NOT NULL THEN "
+                "ALTER TABLE source_items ADD COLUMN IF NOT EXISTS discord_channel_id BIGINT; "
+                "ALTER TABLE source_items ADD COLUMN IF NOT EXISTS discord_thread_id BIGINT; "
+                "END IF; END $$"
+            )
+        )
         conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP"))
         conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS opted_out_at TIMESTAMP"))
         conn.execute(text("ALTER TABLE questions ADD COLUMN IF NOT EXISTS route VARCHAR(32)"))

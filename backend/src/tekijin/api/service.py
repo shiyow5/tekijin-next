@@ -71,6 +71,7 @@ from tekijin.data.db import session_scope
 from tekijin.data.feedback import record_feedback
 from tekijin.data.handoff import employee_brief, question_consult_method, responder_reuse_stats
 from tekijin.data.messages import create_message, thread_parties
+from tekijin.data.visibility import PUBLIC, SourceScope, scope_to_state
 from tekijin.data.writes import (
     create_answer,
     detach_question_session,
@@ -495,7 +496,14 @@ class AgentService:
                 session.close()
 
     # -- /ask : start a new question -------------------------------------- #
-    def start_question(self, session_id: str, asker_id: int, question: str) -> None:
+    def start_question(
+        self,
+        session_id: str,
+        asker_id: int,
+        question: str,
+        *,
+        source_scope: SourceScope = PUBLIC,
+    ) -> None:
         """Queue a NEW question; reject (409) if the session is busy or paused.
 
         Validates ``asker_id`` exists (404) before persisting, so a bad id is a
@@ -531,6 +539,8 @@ class AgentService:
                 "question": question,
                 "asker": {"id": asker_id},
                 "org_id": org_id,
+                # #85: what this asker may see of the organization's conversations.
+                "source_scope": scope_to_state(source_scope),
                 "now": now,
                 "question_id": question_id,
             }

@@ -20,6 +20,7 @@ from tekijin.data.sources import (
     search_chunks,
     upsert_source_item,
 )
+from tekijin.data.visibility import EVERYTHING
 from tekijin.models.tables import Chunk, Employee, Organization, SourceItem
 
 NOW = dt.datetime(2026, 10, 28, 12, 0, 0)
@@ -126,7 +127,7 @@ def test_search_finds_the_nearest_chunk_in_the_same_organization(
         _add(session, fake_embedder, other_id, external_id="note:keys")
         session.commit()
         query = fake_embedder.encode(["部室 鍵 借りる"])[0]
-        hits = search_chunks(session, org_id=org_id, query_vec=query, top_k=5)
+        hits = search_chunks(session, org_id=org_id, query_vec=query, scope=EVERYTHING, top_k=5)
         assert [h.title for h in hits] == ["部室の使い方", "合宿"]
         assert hits[0].similarity > hits[1].similarity
         # The other organization's identical note never shows up.
@@ -141,7 +142,7 @@ def test_list_and_delete(engine, fake_embedder, org_and_member):
         a = _add(session, fake_embedder, org_id, external_id="note:a", url="https://example.com/a")
         _add(session, fake_embedder, org_id, external_id="note:b", title="二つ目")
         session.commit()
-        items = list_source_items(session, org_id=org_id)
+        items = list_source_items(session, org_id=org_id, scope=EVERYTHING)
         assert [i.title for i in items] == ["二つ目", "部室の使い方"]
         assert items[1].url == "https://example.com/a"
         assert items[1].chunks == 1

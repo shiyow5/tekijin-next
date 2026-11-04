@@ -13,6 +13,7 @@ from tekijin.agent.protocols import IntentResult, SelfAnswerResult
 from tekijin.agent.state import empty_retrieval
 from tekijin.data.db import get_sessionmaker
 from tekijin.data.sources import upsert_source_item
+from tekijin.data.visibility import EVERYTHING
 from tekijin.models.tables import Employee, Organization
 from tekijin.retrieval.fragments import CitedEvidence
 from tekijin.retrieval.sources import ChunkSearch, source_citation_id
@@ -59,7 +60,7 @@ def _add(session, embedder, org_id, key, body, *, title="部室", url=None):
 
 def _search(session, embedder, org_id, query):
     vector = embedder.encode([query])[0]
-    return ChunkSearch(session).search(query, org_id, vector)
+    return ChunkSearch(session).search(query, org_id, vector, EVERYTHING)
 
 
 def test_search_finds_the_matching_chunk_with_its_confidence(engine, fake_embedder, orgs):
@@ -81,7 +82,7 @@ def test_search_never_crosses_organizations(engine, fake_embedder, orgs):
         session.commit()
         result = _search(session, fake_embedder, org_id, KEYS)
         evidence = ChunkSearch(session).evidence(
-            _search(session, fake_embedder, other_id, KEYS).hits, org_id
+            _search(session, fake_embedder, other_id, KEYS).hits, org_id, EVERYTHING
         )
 
     assert result.hits == []
@@ -95,7 +96,7 @@ def test_keyword_match_is_found_even_when_the_vector_is_far(engine, fake_embedde
         target = _add(session, fake_embedder, org_id, "scope", "望遠鏡 EM200 赤道儀 手順")
         session.commit()
         unrelated = fake_embedder.encode(["まったく 別の 話"])[0]
-        result = ChunkSearch(session).search("EM200", org_id, unrelated)
+        result = ChunkSearch(session).search("EM200", org_id, unrelated, EVERYTHING)
 
     assert target.item_id in {h["source_item_id"] for h in result.hits}
 
@@ -110,7 +111,7 @@ def test_evidence_groups_chunks_by_source_and_carries_title_and_url(engine, fake
         session.commit()
         search = ChunkSearch(session)
         result = _search(session, fake_embedder, org_id, "鍵 手順")
-        evidence = search.evidence(result.hits, org_id)
+        evidence = search.evidence(result.hits, org_id, EVERYTHING)
 
     assert len(result.hits) > 1
     assert len(evidence) == 1

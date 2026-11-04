@@ -18,7 +18,7 @@ import datetime as dt
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -311,6 +311,12 @@ def _rebuild(
         now=now,
         # A conversation has many authors and belongs to none of them.
         override_owner=True,
+    )
+    # #85: also on an unchanged body, so a conversation stored before is filled in.
+    session.execute(
+        update(SourceItem)
+        .where(SourceItem.id == result.item_id)
+        .values(discord_channel_id=first.channel_id, discord_thread_id=first.thread_id)
     )
     return result.status != "unchanged"
 

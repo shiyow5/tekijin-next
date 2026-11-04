@@ -26,6 +26,7 @@ from tekijin.data.conversations import (
 )
 from tekijin.data.db import session_scope
 from tekijin.data.members import get_or_create_org_for_guild
+from tekijin.data.visibility import record_visibility
 
 router = APIRouter(prefix="/internal/discord", include_in_schema=False)
 
@@ -75,6 +76,27 @@ class DiscordStreamsDeleteRequest(BaseModel):
 class DiscordDeleteResponse(BaseModel):
     status: Literal["ok", "unlinked"]
     deleted: int = 0
+
+
+class DiscordChannelVisibility(BaseModel):
+    id: int = Field(ge=0)
+    # Everyone in the server can read it.
+    public: bool
+
+
+class DiscordThreadVisibility(BaseModel):
+    id: int = Field(ge=0)
+    private: bool
+
+
+class DiscordVisibilityRequest(BaseModel):
+    guild_id: str = Field(pattern=_SNOWFLAKE)
+    channels: list[DiscordChannelVisibility] = Field(default_factory=list, max_length=1000)
+    threads: list[DiscordThreadVisibility] = Field(default_factory=list, max_length=20000)
+
+
+class DiscordVisibilityResponse(BaseModel):
+    status: Literal["ok", "unlinked"]
 
 
 class DiscordCursorsResponse(BaseModel):
@@ -203,3 +225,26 @@ def discord_cursors(
     return DiscordCursorsResponse(
         status="ok", cursors={str(stream): last for stream, last in cursors.items()}
     )
+
+
+@router.post("/visibility", response_model=DiscordVisibilityResponse)
+def discord_visibility(
+    req: DiscordVisibilityRequest,
+    request: Request,
+    settings: Settings = Depends(require_bot_secret),
+) -> DiscordVisibilityResponse:
+    """Record which channels everyone can read and which threads are private (#85)."""
+
+    if not _ours(settings, req.guild_id):
+        return DiscordVisibilityResponse(status="unlinked")
+    service = _service(request)
+    with session_scope(service.session_factory) as session:
+        org = get_or_create_org_for_guild(session, req.guild_id, name=f"Discord {req.guild_id}")
+        record_visibility(
+            session,
+            org.id,
+            channels={c.id: c.public for c in req.channels},
+            threads={t.id: t.private for t in req.threads},
+            now=service.now(),
+        )
+    return DiscordVisibilityResponse(status="ok")
