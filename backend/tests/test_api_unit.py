@@ -584,47 +584,17 @@ class _FakeStructured:
 
 def test_vllm_intent_adapter_converts_schema() -> None:
     model = _FakeStructured(
-        IntentSchema(
-            topics=["セキュリティ"], products=["UTM"], question_type="技術相談", confidence=0.8
-        )
+        IntentSchema(products=["UTM"], question_type="技術相談", confidence=0.8)
     )
     result = VllmIntentModel(model=model).analyze("UTM移行の相談", {"id": 1})
     assert isinstance(result, IntentResult)
-    assert result.topics == ["セキュリティ"] and result.products == ["UTM"]
+    assert result.topics == [] and result.products == ["UTM"]
     assert result.question_type == "技術相談" and result.confidence == 0.8
     assert result.out_of_scope is False  # informative -> not over-refused
     # prompt() is pure and mentions the question.
     assert any(
         "UTM移行の相談" in msg for _role, msg in VllmIntentModel.prompt("UTM移行の相談", None)
     )
-
-
-def test_intent_schema_constrains_topics_to_the_vocabulary_enum() -> None:
-    # #64: the JSON Schema handed to the model must pin `topics` to the 22-topic
-    # vocabulary, so guided decoding CANNOT emit a free-text topic. Asserting on the
-    # OpenAI tool form (not just model_json_schema) is the point: that is the payload
-    # `with_structured_output` actually sends, and it is what vLLM builds the grammar
-    # from. A topic outside the vocabulary joins no evidence and randomises the
-    # recommendation (#116).
-    from langchain_core.utils.function_calling import convert_to_openai_tool
-
-    from tekijin.scorer.topics import TOPIC_VOCABULARY
-
-    tool = convert_to_openai_tool(IntentSchema)
-    items = tool["function"]["parameters"]["properties"]["topics"]["items"]
-    assert items["enum"] == list(TOPIC_VOCABULARY)
-    assert items["type"] == "string"
-
-
-def test_intent_schema_still_parses_an_off_vocabulary_topic() -> None:
-    # Deliberately lenient the other way (#64): the enum constrains GENERATION, but a
-    # backend without guided decoding must not blow up the whole C1 call with a
-    # ValidationError — `analyze` snaps the value onto the vocabulary instead.
-    assert IntentSchema(topics=["ネットワーク"]).topics == ["ネットワーク"]
-    result = VllmIntentModel(model=_FakeStructured(IntentSchema(topics=["ネットワーク"]))).analyze(
-        "VPNが切れる", None
-    )
-    assert result.topics == ["ネットワーク・VPN"]
 
 
 def test_vllm_intent_prompt_fences_context_fragments() -> None:
@@ -737,8 +707,7 @@ def test_vllm_intent_forwards_context_to_the_model() -> None:
 def test_is_uninformative_intent_detects_empty_call() -> None:
     # A default-everything schema == the ``{}`` an injection attempt triggers (#118).
     assert _is_uninformative_intent(IntentSchema()) is True
-    # Any real signal (topic / product / situation / confidence) is informative.
-    assert _is_uninformative_intent(IntentSchema(topics=["ネットワーク"])) is False
+    # Any real signal (product / situation / confidence) is informative.
     assert _is_uninformative_intent(IntentSchema(products=["UTM"])) is False
     assert _is_uninformative_intent(IntentSchema(situation="移行中")) is False
     assert _is_uninformative_intent(IntentSchema(confidence=0.6)) is False
@@ -865,15 +834,14 @@ def test_openai_model_kwargs_wires_temperature_and_max_tokens() -> None:
     assert "max_tokens" not in _openai_model_kwargs(_settings(llm_max_tokens=None))
 
 
-def test_intent_system_prompt_lists_the_topic_vocabulary() -> None:
+def test_intent_system_prompt_has_no_vocabulary() -> None:
     from tekijin.llm.vllm import _INTENT_SYSTEM
     from tekijin.scorer.topics import TOPIC_VOCABULARY
 
-    # #116: C1 must be told the closed topic list so it stops inventing free-text
-    # topics. Every canonical topic appears verbatim in the system prompt.
-    for topic in TOPIC_VOCABULARY:
-        assert topic in _INTENT_SYSTEM
-    # And the client-facing rejection wording no longer trips on "照会" alone (#199).
+    # #83: no organization shares the old company's 22 topics or its branches.
+    assert not [topic for topic in TOPIC_VOCABULARY if topic in _INTENT_SYSTEM]
+    assert "拠点" not in _INTENT_SYSTEM
+    # The client-facing rejection wording no longer trips on "照会" alone (#199).
     assert "照会" in _INTENT_SYSTEM
 
 
@@ -886,23 +854,9 @@ def test_intent_system_prompt_scopes_to_any_organization() -> None:
     assert "社内Q&A" not in _INTENT_SYSTEM
     assert "業務と無関係" not in _INTENT_SYSTEM
     assert "有給" not in _INTENT_SYSTEM
-    assert "それを理由に範囲外にしてはいけません" in _INTENT_SYSTEM
     # The safety classes stay.
     for marker in ("プライバシー", "プロンプトインジェクション", "APIキー"):
         assert marker in _INTENT_SYSTEM
-
-
-def test_vllm_intent_normalizes_topics_to_the_vocabulary() -> None:
-    # #116: the real model splits compound topic names into words; analyze() must
-    # snap them back onto the canonical vocabulary the scorer joins on.
-    model = _FakeStructured(
-        IntentSchema(
-            topics=["購買", "仕入れ", "値段交渉"], question_type="技術相談", confidence=0.7
-        )
-    )
-    result = VllmIntentModel(model=model).analyze("取引先との値段交渉の相談", None)
-    assert result.topics == ["購買・仕入れ"]  # merged + de-duped, "値段交渉" dropped
-    assert result.out_of_scope is False  # still informative (raw topics were present)
 
 
 def test_sufficiency_system_prompt_scopes_to_routing() -> None:
@@ -912,17 +866,6 @@ def test_sufficiency_system_prompt_scopes_to_routing() -> None:
     # prompt must frame the decision as "誰に取り次ぐか判断できるか".
     assert "取り次" in _SUFFICIENCY_SYSTEM
     assert "曖昧" in _SUFFICIENCY_SYSTEM  # only ask when too vague to route
-
-
-def test_vllm_intent_warns_when_all_topics_drop(caplog) -> None:
-    # #116 review: if C1's topics are non-empty but none map to the vocabulary, the
-    # recommend step gets no topic evidence — log it so vocabulary gaps are visible.
-    model = _FakeStructured(IntentSchema(topics=["値段交渉", "取引先"], confidence=0.6))
-    with caplog.at_level("WARNING", logger="tekijin.llm.vllm"):
-        result = VllmIntentModel(model=model).analyze("q", None)
-    assert result.topics == []  # all dropped
-    assert result.out_of_scope is False  # raw topics were present -> not uninformative
-    assert any("did not map to the vocabulary" in r.message for r in caplog.records)
 
 
 def test_draft_temperature_is_separate_from_structured() -> None:

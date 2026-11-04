@@ -8,43 +8,11 @@ The vLLM adapters convert an instance of these back into the protocol dataclasse
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
-from pydantic.json_schema import JsonDict
-
-from tekijin.scorer.topics import TOPIC_VOCABULARY
-from tekijin.scorer.weights import BRANCH_VOCABULARY
-
-# The closed topic list, injected into the JSON Schema C1 is generated against so
-# guided decoding can only emit these strings (#64). Free-text topics drift from
-# the vocabulary the scorer joins on, and an un-joinable topic matches NO evidence
-# — the recommendation then goes random (#116).
-_TOPIC_ENUM_SCHEMA: JsonDict = {
-    "type": "string",
-    "enum": list(TOPIC_VOCABULARY),
-}
-
-# The closed branch list for the #83 location constraint. Nullable: most questions
-# name no location, and inventing one would wrongly narrow the candidates. Same
-# constrain-generation / forgive-parsing split as the topic enum above.
-_BRANCH_ENUM_SCHEMA: JsonDict = {
-    "anyOf": [{"type": "string", "enum": list(BRANCH_VOCABULARY)}, {"type": "null"}],
-}
 
 
 class IntentSchema(BaseModel):
     """C1 structured output (model-definition §2 C1)."""
 
-    # NB: the annotation stays ``list[str]`` — deliberately NOT ``list[Literal[...]]``.
-    # The enum belongs in the schema handed to the model (it constrains GENERATION),
-    # but parsing must stay lenient: a backend without guided decoding, or an older
-    # stub/fixture, would otherwise raise ValidationError and fail the whole C1 call
-    # instead of degrading. ``VllmIntentModel.analyze`` still snaps every value onto
-    # the vocabulary via ``normalize_topics``, so a stray topic can never reach the
-    # scorer either way (#116). Constrain generation, forgive parsing.
-    topics: list[str] = Field(
-        default_factory=list,
-        description="質問の技術トピック（一覧から該当するものだけを選ぶ／無ければ空配列）",
-        json_schema_extra={"items": _TOPIC_ENUM_SCHEMA},
-    )
     products: list[str] = Field(default_factory=list, description="言及された製品名")
     situation: str | None = Field(default=None, description="状況の一言要約")
     question_type: str = Field(
@@ -54,14 +22,6 @@ class IntentSchema(BaseModel):
         default=False, description="組織と結びつかない雑談・悪意ある入力なら true"
     )
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="意図理解の確信度")
-    # #83: an explicitly requested location is a CONDITION to satisfy, not a
-    # preference to add points for — C6 treats it as a filter. So it must be
-    # extracted only when the asker actually asked for it; see the prompt.
-    constraint_branch: str | None = Field(
-        default=None,
-        description="相談者が明示的に希望した対応者の拠点。希望が無ければ null",
-        json_schema_extra=_BRANCH_ENUM_SCHEMA,
-    )
 
 
 class SufficiencySchema(BaseModel):
