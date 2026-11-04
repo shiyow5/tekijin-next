@@ -159,6 +159,36 @@ class SourceItem(Base):
     content_hash: Mapped[str] = mapped_column(String(64))
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+    # #85: where a Discord conversation was said, so it is shown only to readers of
+    # that channel. ``NULL`` on a Discord row means not known yet, and hides it.
+    discord_channel_id: Mapped[int | None] = mapped_column(BigInteger)
+    discord_thread_id: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class DiscordChannel(Base):
+    """Whether everyone in the server can read a channel, as the bot reported (#85)."""
+
+    __tablename__ = "discord_channels"
+
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
+    )
+    channel_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public: Mapped[bool] = mapped_column(Boolean)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime)
+
+
+class DiscordThread(Base):
+    """Whether a thread is private, as the bot reported (#85)."""
+
+    __tablename__ = "discord_threads"
+
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True
+    )
+    thread_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    private: Mapped[bool] = mapped_column(Boolean)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime)
 
 
 class ChannelMessage(Base):

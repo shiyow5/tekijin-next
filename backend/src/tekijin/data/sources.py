@@ -18,6 +18,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from tekijin.data.visibility import SourceScope, visible
 from tekijin.ingest.chunking import passage_text, split_text
 from tekijin.models.tables import Chunk, SourceItem
 from tekijin.retrieval.embedding import PASSAGE, Embedder
@@ -196,17 +197,19 @@ def _count_chunks(session: Session, item_id: int) -> int:
     return int(count or 0)
 
 
-def count_source_items(session: Session, *, org_id: int) -> int:
+def count_source_items(session: Session, *, org_id: int, scope: SourceScope) -> int:
     count = session.scalar(
-        select(func.count()).select_from(SourceItem).where(SourceItem.org_id == org_id)
+        select(func.count())
+        .select_from(SourceItem)
+        .where(SourceItem.org_id == org_id, visible(org_id, scope))
     )
     return int(count or 0)
 
 
 def list_source_items(
-    session: Session, *, org_id: int, offset: int = 0, limit: int = 100
+    session: Session, *, org_id: int, scope: SourceScope, offset: int = 0, limit: int = 100
 ) -> list[SourceItemSummary]:
-    """One page of the organization's items, newest first."""
+    """One page of the organization's items that ``scope`` may see, newest first."""
 
     chunk_count = (
         select(func.count())
@@ -216,7 +219,7 @@ def list_source_items(
     )
     rows = session.execute(
         select(SourceItem, chunk_count)
-        .where(SourceItem.org_id == org_id)
+        .where(SourceItem.org_id == org_id, visible(org_id, scope))
         .order_by(SourceItem.id.desc())
         .offset(offset)
         .limit(limit)
@@ -236,12 +239,17 @@ def list_source_items(
 
 
 def get_source_item(
-    session: Session, *, item_id: int, org_id: int
+    session: Session, *, item_id: int, org_id: int, scope: SourceScope
 ) -> tuple[SourceItemSummary, str] | None:
-    """One item and its body, or ``None`` when it is not in this organization."""
+    """One item and its body, or ``None`` when it is not in this organization or
+    ``scope`` may not see it."""
 
-    item = session.get(SourceItem, item_id)
-    if item is None or item.org_id != org_id:
+    item = session.scalars(
+        select(SourceItem).where(
+            SourceItem.id == item_id, SourceItem.org_id == org_id, visible(org_id, scope)
+        )
+    ).first()
+    if item is None:
         return None
     summary = SourceItemSummary(
         id=item.id,
@@ -265,15 +273,20 @@ def delete_source_item(session: Session, *, item_id: int, org_id: int) -> bool:
 
 
 def search_chunks(
-    session: Session, *, org_id: int, query_vec: Sequence[float], top_k: int = 10
+    session: Session,
+    *,
+    org_id: int,
+    query_vec: Sequence[float],
+    scope: SourceScope,
+    top_k: int = 10,
 ) -> list[ChunkHit]:
-    """The organization's chunks nearest to ``query_vec``, most similar first."""
+    """The chunks ``scope`` may see nearest to ``query_vec``, most similar first."""
 
     distance = Chunk.embedding.cosine_distance(query_vec).label("distance")
     rows = session.execute(
         select(Chunk, SourceItem.title, SourceItem.url, distance)
         .join(SourceItem, SourceItem.id == Chunk.source_item_id)
-        .where(Chunk.org_id == org_id, Chunk.embedding.isnot(None))
+        .where(Chunk.org_id == org_id, Chunk.embedding.isnot(None), visible(org_id, scope))
         # Ties broken on the id so equal vectors come back in a stable order.
         .order_by(distance, Chunk.id)
         .limit(top_k)

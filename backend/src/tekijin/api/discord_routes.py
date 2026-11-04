@@ -47,6 +47,7 @@ from tekijin.data.sources import (
     manual_external_id,
     upsert_source_item,
 )
+from tekijin.data.visibility import PUBLIC, SourceScope
 from tekijin.models.tables import Employee
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,25 @@ class DiscordUser(BaseModel):
     display_name: str = Field(default="", max_length=255)
 
 
+# A server has at most 500 channels; threads are not listed here.
+_MAX_CHANNELS = 1000
+
+
 class DiscordAskRequest(DiscordUser):
     question: str = Field(min_length=1, max_length=_MAX_QUESTION_LENGTH)
+    # #85: the channels the asker can read, and those where they may manage threads,
+    # as the bot computed them. ``None`` (an older bot) is what everyone can read.
+    readable_channel_ids: list[int] | None = Field(default=None, max_length=_MAX_CHANNELS)
+    thread_manager_channel_ids: list[int] = Field(default_factory=list, max_length=_MAX_CHANNELS)
+
+    def source_scope(self) -> SourceScope:
+        if self.readable_channel_ids is None:
+            return PUBLIC
+        readable = frozenset(self.readable_channel_ids)
+        return SourceScope(
+            channels=readable,
+            thread_channels=frozenset(self.thread_manager_channel_ids) & readable,
+        )
 
     @field_validator("question")
     @classmethod
@@ -167,7 +185,7 @@ def discord_ask(
 
     session_id = f"discord_{uuid.uuid4().hex}"
     try:
-        service.start_question(session_id, asker_id, req.question)
+        service.start_question(session_id, asker_id, req.question, source_scope=req.source_scope())
     except ServiceBusy as exc:
         raise HTTPException(
             status_code=503,

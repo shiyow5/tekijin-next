@@ -121,6 +121,9 @@ class AgentState(TypedDict, total=False):
     # The asker's organization (#81). ``None`` for an account without one, which
     # still reads the older, undivided tables.
     org_id: int | None
+    # #85: which of the organization's Discord conversations the asker may see, as
+    # ``visibility.scope_to_state`` writes it. ``None`` is what everyone can read.
+    source_scope: dict[str, Any] | None
 
     # -- durable persistence identity (set by the API layer) ---------------
     # These live in the checkpoint so that outcome recording survives a

@@ -33,6 +33,7 @@ from tekijin.data.sources import (
     manual_external_id,
     upsert_source_item,
 )
+from tekijin.data.visibility import EVERYTHING, PUBLIC, SourceScope
 from tekijin.models.tables import Employee, Organization, SourceItem
 
 router = APIRouter(prefix="/sources")
@@ -128,8 +129,9 @@ def list_sources(
 ) -> SourceListResponse:
     with _service(request).session_factory() as session:
         org_id = _org_id(session, principal)
-        total = count_source_items(session, org_id=org_id)
-        items = list_source_items(session, org_id=org_id, offset=offset, limit=limit)
+        scope = _scope(principal)
+        total = count_source_items(session, org_id=org_id, scope=scope)
+        items = list_source_items(session, org_id=org_id, scope=scope, offset=offset, limit=limit)
         names = _author_names(session, items)
     return SourceListResponse(items=[_list_item(i, names, principal) for i in items], total=total)
 
@@ -139,12 +141,21 @@ def source_detail(
     item_id: int, request: Request, principal: Principal = Depends(require_principal)
 ) -> SourceDetail:
     with _service(request).session_factory() as session:
-        found = get_source_item(session, item_id=item_id, org_id=_org_id(session, principal))
+        found = get_source_item(
+            session, item_id=item_id, org_id=_org_id(session, principal), scope=_scope(principal)
+        )
         if found is None:
             raise HTTPException(status_code=404, detail="資料が見つかりません。")
         summary, body = found
         names = _author_names(session, [summary])
     return SourceDetail(**_list_item(summary, names, principal).model_dump(), body=body)
+
+
+def _scope(principal: Principal) -> SourceScope:
+    """The web does not know a member's Discord permissions, so a member sees what
+    everyone in the server can read (#85). The admin sees everything."""
+
+    return EVERYTHING if principal.is_admin else PUBLIC
 
 
 def _author_names(session: Session, items: list[SourceItemSummary]) -> dict[int, str]:

@@ -31,14 +31,18 @@ async def ask_backend(
     secret: str,
     user: dict[str, Any],
     question: str,
+    scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the backend's outcome dict, or a ``no_answer``/``error`` stand-in.
 
     Never raises: the bot has already deferred the interaction and must always send
-    a follow-up, so every failure becomes a reply the user can read.
+    a follow-up, so every failure becomes a reply the user can read. ``scope`` is
+    what :func:`~tekijin.discord_bot.visibility.reader_scope` computed (#85).
     """
 
-    return await _post(http, base_url, secret, "ask", {**user, "question": question})
+    return await _post(
+        http, base_url, secret, "ask", {**user, "question": question, **(scope or {})}
+    )
 
 
 async def member_backend(
@@ -116,6 +120,22 @@ async def post_stream_deletes(
         secret,
         "streams/delete",
         {"guild_id": str(guild_id), "stream_ids": stream_ids},
+    )
+    return result.get("status") == "ok"
+
+
+async def post_visibility(
+    http: httpx.AsyncClient,
+    *,
+    base_url: str,
+    secret: str,
+    guild_id: int,
+    report: dict[str, list[dict[str, Any]]],
+) -> bool:
+    """Report which channels are public and which threads private (#85)."""
+
+    result = await _post(
+        http, base_url, secret, "visibility", {"guild_id": str(guild_id), **report}
     )
     return result.get("status") == "ok"
 

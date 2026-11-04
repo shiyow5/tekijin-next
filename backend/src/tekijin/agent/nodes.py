@@ -38,6 +38,7 @@ from tekijin.agent.stubs import (
     missing_required_slots,
 )
 from tekijin.data.questions import count_similar_prior_askers
+from tekijin.data.visibility import scope_from_state
 from tekijin.knowledge.answer import answer_from_knowledge
 from tekijin.retrieval.embedding import QUERY, Embedder
 from tekijin.retrieval.fragments import CitedEvidence, FragmentSource, collect_cited_evidence
@@ -394,7 +395,12 @@ class AgentNodes:
         question = state["question"]
         org_id = state.get("org_id")
         if org_id is not None and self._source_search is not None:
-            found = self._source_search.search(question, org_id, state.get("query_vector") or [])
+            found = self._source_search.search(
+                question,
+                org_id,
+                state.get("query_vector") or [],
+                scope_from_state(state.get("source_scope")),
+            )
             return {
                 "retrieval": {
                     **empty_retrieval(),
@@ -819,7 +825,9 @@ class AgentNodes:
         sources = retrieval.get("sources") or []
         org_id = state.get("org_id")
         if sources and org_id is not None and self._source_search is not None:
-            return self._source_search.evidence(sources, org_id)
+            return self._source_search.evidence(
+                sources, org_id, scope_from_state(state.get("source_scope"))
+            )
         assert self._fragment_source is not None  # wired with the composer
         return collect_cited_evidence(self._fragment_source, retrieval)
 
