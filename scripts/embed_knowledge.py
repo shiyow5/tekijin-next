@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Embed knowledge units into their pgvector column (#357 slice 3).
 
-Runs AFTER ``scripts/extract_knowledge.py`` has populated ``knowledge_units``
-(embedding starts NULL). Uses the REAL local embedding model, so it needs the ML
+Runs AFTER an extraction (e.g. ``scripts/extract_chat_knowledge.py``) has populated
+``knowledge_units`` (embedding starts NULL). Uses the REAL local embedding model, so it needs the ML
 deps and the DGX box — never CI. By default only fills NULL embeddings; ``--all``
 re-embeds every unit (e.g. after a re-extraction changed the text).
 

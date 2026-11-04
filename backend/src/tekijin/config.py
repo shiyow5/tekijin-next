@@ -194,32 +194,6 @@ class Settings(BaseSettings):
     prior_answer_reuse_min: int | None = None
     prior_answer_relevance_floor: float = 0.15
 
-    # #355: include daily reports as C6 topic evidence. The eval gold derives from
-    # projects + daily_reports(0.15), but the scorer was blind to daily reports —
-    # so enriching daily activity (#326) could not lift R@3. This closes that
-    # asymmetry. OFF by default (develop behaviour byte-identical); enable only
-    # after DGX confirms a Pareto gain (primary R@3 up, alt not down).
-    daily_evidence_enabled: bool = False
-
-    # #433: search daily reports as a KNOWLEDGE SOURCE for System 1 (distinct from
-    # #355 daily_evidence, which uses topic-overlap for the C6 scorer). When on, C4
-    # runs a question↔daily dense search and self-answer / #413 additive can cite a
-    # report's tacit knowledge (issue + content) alongside answers/documents. OFF by
-    # default (no daily channel, RetrievalResult byte-identical). DGX sizing
-    # (research_knowledge_source.py): person-route self-answer grounded rate
-    # 0.265->0.347 (+0.082, daily cited on 6%) — chat was noise and even hurt, so
-    # ONLY daily is wired. Requires the daily embedding column filled (make embed).
-    #
-    # Enabled by default (#433 → task3): the DGX full-graph run (--additive
-    # --daily-knowledge, floor 0.20) held person route recall at 1.000 and raised the
-    # self-answer grounded rate 0.217->0.261 (+0.044) with source recall +0.010. Daily
-    # is routing-safe (C5 reads retrieval *_confidence, not the daily channel). The
-    # daily embedding column starts NULL after migrate; deploy.sh's embed_missing step
-    # (best-effort, only-missing) fills it on the next deploy, so the flag is inert
-    # (no daily hits, never an error) only until that first post-enable deploy runs —
-    # if that embed is skipped/fails, the channel simply stays empty until it succeeds.
-    daily_knowledge_enabled: bool = True
-
     # #405: add a question↔past-answer similarity (qsim) term to the C6 score. The
     # scorer's topic_fit sees only the topic TAG and saturates (ADR-0006), so it
     # cannot re-rank on the specific question — and when C1 mispredicts the topic it

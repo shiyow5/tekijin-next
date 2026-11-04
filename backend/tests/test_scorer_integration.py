@@ -21,7 +21,6 @@ from tekijin.data.repository import Repository
 from tekijin.models.tables import (
     Answer,
     Certification,
-    DailyReport,
     Employee,
     Project,
     ProjectMember,
@@ -72,19 +71,6 @@ def _add_answer(
 
 def _add_skill(session, sid: str, employee_id: int) -> None:
     session.add(Skill(id=sid, employee_id=employee_id, topic=TOPIC, level="中級", source="self"))
-    session.flush()
-
-
-def _add_daily(session, did: int, employee_id: int, topics: list[str]) -> None:
-    session.add(
-        DailyReport(
-            id=did,
-            employee_id=employee_id,
-            report_date=NOW.date(),
-            content="x",
-            topics=topics,
-        )
-    )
     session.flush()
 
 
@@ -143,30 +129,6 @@ def test_rank_output_shape_and_top_k(seed_counts, session) -> None:
 # --------------------------------------------------------------------------- #
 # expert ranks above a bare candidate
 # --------------------------------------------------------------------------- #
-def test_daily_evidence_flag_gates_daily_topic_signal(seed_counts, session) -> None:
-    """#355: daily reports count as topic evidence only when daily_evidence=True.
-
-    Candidate 2 has ONLY on-topic daily reports (no cert/skill/project/answer for
-    the synthetic TOPIC). OFF → invisible (no topic evidence). ON → the reports
-    lift topic_fit and appear as a ``daily`` reason.
-    """
-    _add_daily(session, 900001, 2, [TOPIC])
-    _add_daily(session, 900002, 2, [TOPIC])
-    _add_daily(session, 900003, 2, ["経理・決算"])  # off-topic, must not count
-
-    off = ExpertiseScorer(Repository(session))
-    off_scores = _scores_by_person(off.rank(TOPIC, [1, 2], asker_id=None, now=NOW, top_k=3))
-
-    on = ExpertiseScorer(Repository(session), daily_evidence=True)
-    on_res = on.rank(TOPIC, [1, 2], asker_id=None, now=NOW, top_k=3)
-    on_scores = _scores_by_person(on_res)
-
-    assert on_scores[2] > off_scores[2]  # daily evidence lifts #2
-    two = next(r for r in on_res["recommendations"] if r["person_id"] == 2)
-    daily_reasons = [r for r in two["reasons"] if r["type"] == "daily"]
-    assert daily_reasons and "2件" in daily_reasons[0]["detail"]  # off-topic excluded
-
-
 def test_expert_outranks_thin_candidate(seed_counts, session) -> None:
     _add_question(session, "q_exp")
     # Expert: skill + three helpful, reused answers.

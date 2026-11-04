@@ -13,7 +13,6 @@ from tekijin.data.knowledge import get_knowledge_unit_by_source, list_knowledge_
 from tekijin.knowledge.extract import (
     CaseExtractor,
     ExtractionSource,
-    daily_report_sources,
     extract_and_store,
 )
 from tekijin.llm.schemas import CaseExtractionSchema
@@ -33,7 +32,7 @@ class _FakeModel:
 
 def _src(source_id: str = "1", text: str = "CRM 導入相談") -> ExtractionSource:
     return ExtractionSource(
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id=source_id,
         text=text,
         topics=("CRM・営業支援",),
@@ -107,13 +106,13 @@ def test_extract_and_store_counts_and_topics(seed_counts, session) -> None:
     )
     extractor = CaseExtractor(model=_FakeModel(schema))
     sources = [
-        ExtractionSource("daily_report", "80001", "text1", ("CRM・営業支援",)),
-        ExtractionSource("daily_report", "80002", "text2", ("ネットワーク・VPN",)),
+        ExtractionSource("slack_thread", "80001", "text1", ("CRM・営業支援",)),
+        ExtractionSource("slack_thread", "80002", "text2", ("ネットワーク・VPN",)),
     ]
     counts = extract_and_store(session, sources, extractor)
     assert counts == {"seen": 2, "stored": 2, "skipped": 0, "errored": 0}
 
-    unit = get_knowledge_unit_by_source(session, "daily_report", "80001")
+    unit = get_knowledge_unit_by_source(session, "slack_thread", "80001")
     assert unit is not None
     assert unit.kind == "case" and unit.result == "受注" and unit.industry == "小売業"
     # ...but topics come from the SOURCE record, never the model (vocabulary lock).
@@ -125,7 +124,7 @@ def test_extract_and_store_skips_non_cases(seed_counts, session) -> None:
     extractor = CaseExtractor(model=_FakeModel(CaseExtractionSchema(extractable=False)))
     counts = extract_and_store(session, [_src("80101"), _src("80102")], extractor)
     assert counts == {"seen": 2, "stored": 0, "skipped": 2, "errored": 0}
-    assert get_knowledge_unit_by_source(session, "daily_report", "80101") is None
+    assert get_knowledge_unit_by_source(session, "slack_thread", "80101") is None
 
 
 class _RaisingModel:
@@ -155,8 +154,8 @@ def test_extract_and_store_isolates_per_source_errors(seed_counts, session) -> N
 
     counts = extract_and_store(session, [_src("80301"), _src("80302"), _src("80303")], _Dispatch())
     assert counts == {"seen": 3, "stored": 1, "skipped": 0, "errored": 2}
-    assert get_knowledge_unit_by_source(session, "daily_report", "80301") is not None
-    assert get_knowledge_unit_by_source(session, "daily_report", "80302") is None
+    assert get_knowledge_unit_by_source(session, "slack_thread", "80301") is not None
+    assert get_knowledge_unit_by_source(session, "slack_thread", "80302") is None
 
 
 def test_extract_and_store_is_idempotent(seed_counts, session) -> None:
@@ -174,24 +173,6 @@ def test_extract_and_store_is_idempotent(seed_counts, session) -> None:
     assert after_second == after_first  # upsert, not duplicate
 
 
-def test_daily_report_sources_reads_topic_bearing_reports(seed_counts, session) -> None:
-    # Pick a topic that actually exists in the seeded daily reports, then assert the
-    # reader returns non-empty, well-formed extraction inputs for it.
-    any_unit = None
-    for topic in ("CRM・営業支援", "ネットワーク・VPN", "セキュリティ"):
-        got = daily_report_sources(session, topic, limit=5)
-        if got:
-            any_unit = (topic, got)
-            break
-    assert any_unit is not None, "seeded daily reports should carry at least one known topic"
-    topic, sources = any_unit
-    assert len(sources) <= 5
-    for s in sources:
-        assert s.source_type == "daily_report" and s.source_id
-        assert s.text  # content (plus issue) is present
-        assert topic in s.topics  # the filter matched via the topics array
-
-
 # --------------------------------------------------------------------------- #
 # chat extraction (#448): topics inferred from LLM hints, snapped to vocabulary
 # --------------------------------------------------------------------------- #
@@ -206,17 +187,12 @@ def _chat_src(source_id: str = "chat_IT問い合わせ_1") -> ExtractionSource:
 
 
 def test_chat_prompt_uses_the_chat_system_instruction() -> None:
-    # A chat source must get the conversation prompt (asks for topic_hints), not the
-    # daily-report prompt.
+    # A chat source gets the conversation prompt (asks for topic_hints).
     fake = _FakeModel(CaseExtractionSchema(extractable=False))
     extractor = CaseExtractor(model=fake)
     extractor.extract(_chat_src())
     system_text = fake.calls[0][0][1]
     assert "会話" in system_text and "topic_hints" in system_text
-    # a daily source still gets the daily prompt
-    fake2 = _FakeModel(CaseExtractionSchema(extractable=False))
-    CaseExtractor(model=fake2).extract(_src())
-    assert "営業日報" in fake2.calls[0][0][1]
 
 
 def test_chat_extract_infers_and_normalizes_topics(seed_counts, session) -> None:
@@ -257,14 +233,14 @@ def test_chat_extract_skips_case_with_no_routable_topic(seed_counts, session) ->
     assert get_knowledge_unit_by_source(session, "chat", "chat_x_9002") is None
 
 
-def test_daily_extract_ignores_topic_hints_when_source_has_tags(seed_counts, session) -> None:
-    # Even if a (daily) model response carried hints, a tagged source keeps its own
+def test_tagged_extract_ignores_topic_hints(seed_counts, session) -> None:
+    # Even if the model response carried hints, a tagged source keeps its own
     # tags — the vocabulary lock for tag-bearing sources is unchanged (#357).
     schema = CaseExtractionSchema(
         extractable=True, problem="p", action="a", topic_hints=["セキュリティ"]
     )
     extractor = CaseExtractor(model=_FakeModel(schema))
-    src = ExtractionSource("daily_report", "80777", "text", ("CRM・営業支援",))
+    src = ExtractionSource("slack_thread", "80777", "text", ("CRM・営業支援",))
     extract_and_store(session, [src], extractor, infer_topics_from_hints=True)
-    unit = get_knowledge_unit_by_source(session, "daily_report", "80777")
+    unit = get_knowledge_unit_by_source(session, "slack_thread", "80777")
     assert unit is not None and unit.topics == ("CRM・営業支援",)

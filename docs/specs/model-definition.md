@@ -6,9 +6,9 @@ version 0.3 / 2026-08-26（#291 方針転換に加え、System1 の本番有効�
 > **この版（0.3）の主な更新**（いずれも実装済み・本番有効）:
 > - **自己回答を取次ぎにも併記**（#413 additive・既定ON）: 専門家が居て `person` 経路に流れる知識質問でも、
 >   引用付きの回答を**人取次ぎと並べて**提示する（取次ぎは必ず残す）。System1 が data 経路だけでなく person 経路でも発火。
-> - **日報を知識源に**（#433 daily・既定ON）: 日報を C4 の dense チャネル／自己回答の証拠源に追加（出典 `kind="daily"`）。
+> - ~~**日報を知識源に**（#433 daily）~~: #91 で日報の機能ごと削除した（`company-v1` タグに残る）。
 > - **C6 に質問一致項**（#405 qsim・既定ON）: 質問↔過去回答の意味一致で専門家順位を質問特異的に補正（経路不変）。
-> - **知識抽出パイプライン**（#357/#448）: 生データ（日報・チャット）から構造化ケース知識（`knowledge_units`）を
+> - **知識抽出パイプライン**（#357/#448）: 生データ（チャット・解決済スレッド）から構造化ケース知識（`knowledge_units`）を
 >   オフライン抽出（蓄積＝主軸の実体化）。
 
 メイン機能は次の**三系統**（2026-08-25 の方針転換・#291）:
@@ -181,13 +181,9 @@ flowchart TD
 ```json
 { "past_answers": [{ "qa_id": "...", "score": 0.62, "responder_id": "E017" }],
   "documents":   [{ "doc_id": "...", "score": 0.31 }],
-  "daily_reports": [{ "daily_id": 42, "score": 0.30 }],   // #433・daily_knowledge_enabled 時のみ
   "candidate_people": ["E017", "E042", "E103"] }
 ```
 
-- **日報 dense チャネル（#433・既定ON）**: `daily_knowledge_enabled=true` のとき、質問↔日報(issue+content)の
-  dense 検索を追加し、自己回答（C7'/C7''）が日報の暗黙知を出典 `kind="daily"` で引用できる。**routing には使わない**
-  （C5 は日報チャネルを読まない＝取次ぎ判定不変）。日報の埋め込みは NULL のとき dense 検索から除外され、無害に空を返す。
 
 ### C5. 解決経路の判定（決定的：確信度 × 閾値）＝「自己回答 vs 取次ぎ」
 
@@ -253,8 +249,8 @@ flowchart TD
 
 - **目的**: 過去QA・社内文書に**答えが既にある**ものを、**その根拠だけ**から出典付きで回答する。人に取り次がない。
 - **配線**: `self_answer_enabled`（既定 true・#380）で gate。データ由来経路（document / prior_answer）で C5 の後に発火。
-- **入力**: 質問＋C4 上位ヒットを**出典ID付き**で再構成した根拠（`collect_cited_evidence`。過去QA=`qa`／文書=`document`／
-  日報=`daily`（#433）、各 `source_id` 付き）。`<evidence>` タグで囲み、質問ともども `_fence_safe` で無害化（注入対策・#282と同型）。
+- **入力**: 質問＋C4 上位ヒットを**出典ID付き**で再構成した根拠（`collect_cited_evidence`。過去QA=`qa`／文書=`document`、
+  各 `source_id` 付き）。`<evidence>` タグで囲み、質問ともども `_fence_safe` で無害化（注入対策・#282と同型）。
 - **出力（JSON Schema 準拠を強制）**:
 
 ```json
@@ -320,8 +316,8 @@ flowchart LR
 `topics`・`embedding`・`review_status`・出典 `source_type/source_id`）へ LLM で蒸留し、冪等に upsert する
 バッチ（graph からは呼ばない）。抽出後に埋め込み索引を張れば、C4／自己回答が再利用できる。
 
-- **日報から**（`knowledge/extract.py`・`scripts/extract_knowledge.py`）: トピックタグは日報の事前タグを継承
-  （語彙固定＝eval gold とドリフトしない）。
+- **解決済スレッドから**（`knowledge/slack_thread.py`・#476）: トピックタグは質問の事前タグを継承
+  （語彙固定＝ドリフトしない）。日報からの抽出（`scripts/extract_knowledge.py`）は #91 で削除した。
 - **チャットから**（`knowledge/chat.py`・`scripts/extract_chat_knowledge.py`・#448）: `employee_chat_history` を
   channel×時間窓で**会話単位**にまとめ（生チャットはノイズなので"やり取り"を単位にする）、会話プロンプトで
   `extractable=false` を強く効かせて雑談を捨てる。チャットはタグを持たないので、LLM の `topic_hints` を正規22語彙へ
@@ -488,7 +484,7 @@ event: error         data: {"error":"内部エラーが発生しました"}
 
 | status | 発生元ノード | 意味 |
 |---|---|---|
-| `self_answered` | self_answered | **データ由来の自己回答（#291）**。`citations`=`[{source_id, kind}]` に使った出典（`kind`=`qa`/`document`/`daily`）。チャットは各出典へのリンクを描画 |
+| `self_answered` | self_answered | **データ由来の自己回答（#291）**。`citations`=`[{source_id, kind}]` に使った出典（`kind`=`qa`/`document`/`knowledge`/`source`）。チャットは各出典へのリンクを描画 |
 | `off_topic` | off_topic | 業務外・悪意ある入力（C1 が `out_of_scope`。個人情報要求/注入含む、#118） |
 | `document` | document | 社内文書ルートで自己解決。`doc_id` に該当文書ID（#143。`GET /documents/{doc_id}` で本文取得） |
 | `unresolved` | unresolved_intent | 逆質問後もトピックを特定できず |
@@ -576,8 +572,7 @@ event: error         data: {"error":"内部エラーが発生しました"}
 - ~~**併記自己回答 C7''（#413 additive）の有効化**（`additive_self_answer_enabled`）~~：**解決済み。DGX floor スイープで
   既定ON**（floor 0.20）。全 floor で person 取次ぎ recall 1.000・floor 0.20 が発火/precision の最適点。日報併用で
   grounded 0.217→0.261。過去回答は #293 ナレッジライブラリで既に org-wide 閲覧可（プロダクトオーナー承認）
-- ~~**日報の知識源化（#433 daily）**（`daily_knowledge_enabled`）~~：**解決済み。既定ON**。deploy.sh の `embed_missing`
-  段が本番の日報埋め込みを冪等に計算する（初回 3070 行・以降 no-op）
+- ~~**日報の知識源化（#433 daily）**（`daily_knowledge_enabled`）~~：既定ONにしたのち、#91 で日報の機能ごと削除した
 - ~~**C6 質問一致項（#405 qsim）**（`question_fit_enabled`）~~：**解決済み。既定ON**（実 E2E Hit@3 0.742→0.788）
 - **証拠十分性クリティック #70 の有効化**（`answerability_enabled`）：DGX の閾値スイープ後（現状 net+6 だが recall 毀損あり）
 - トピックのタクソノミ語彙（OA機器・IT商材の販社の商材体系を想定して種を作る。15_専門性推定とグラフ成長 §1）

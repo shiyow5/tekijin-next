@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from tekijin.data.dto import (
     AnswerDTO,
     CertificationDTO,
-    DailyReportDTO,
     DocumentDTO,
     EmployeeDTO,
     OfflineConsultDTO,
@@ -31,7 +30,6 @@ from tekijin.data.dto import (
 from tekijin.models.tables import (
     Answer,
     Certification,
-    DailyReport,
     Document,
     Employee,
     EmployeeProfile,
@@ -156,32 +154,6 @@ class Repository:
         out: dict[int, list[SkillDTO]] = {}
         for row in self._session.scalars(stmt):
             out.setdefault(row.employee_id, []).append(SkillDTO.from_row(row))
-        return out
-
-    def daily_reports_for_many(
-        self, employee_ids: Sequence[int]
-    ) -> dict[int, list[DailyReportDTO]]:
-        """Daily reports for several employees in one query (scorer evidence, #355).
-
-        Only reports carrying at least one precomputed topic are returned (a
-        report with no topic is not evidence). Ordered newest first so the
-        ``DAILY_EVIDENCE_CAP`` in the scorer keeps the most recent activity.
-        """
-
-        if not employee_ids:
-            return {}
-        stmt = (
-            select(DailyReport)
-            .where(
-                DailyReport.employee_id.in_(employee_ids),
-                DailyReport.topics.isnot(None),
-            )
-            .order_by(DailyReport.employee_id, DailyReport.report_date.desc(), DailyReport.id)
-        )
-        out: dict[int, list[DailyReportDTO]] = {}
-        for row in self._session.scalars(stmt):
-            if row.topics:
-                out.setdefault(row.employee_id, []).append(DailyReportDTO.from_row(row))
         return out
 
     def offline_consults_for_many(
@@ -309,14 +281,6 @@ class Repository:
             return {}
         rows = self._session.scalars(select(Document).where(Document.id.in_(ids)))
         return {row.id: DocumentDTO.from_row(row) for row in rows}
-
-    def daily_reports_by_ids(self, ids: Sequence[int]) -> dict[int, DailyReportDTO]:
-        """Resolve several daily reports by id in one query (#433 knowledge source)."""
-
-        if not ids:
-            return {}
-        rows = self._session.scalars(select(DailyReport).where(DailyReport.id.in_(ids)))
-        return {row.id: DailyReportDTO.from_row(row) for row in rows}
 
     # -- projects --------------------------------------------------------- #
     def list_projects_with_members(self) -> list[ProjectWithMembersDTO]:

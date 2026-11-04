@@ -29,7 +29,7 @@ def _unit(uid: int, problem="CRM 定着", action="SFA 提案", result="受注", 
         result=result,
         topics=("CRM・営業支援",),
         industry=industry,
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id=str(1000 + uid),
         confidence=0.9,
         review_status="approved",
@@ -93,13 +93,13 @@ def _store_approved(session, source_id, problem, action, embed=True, approve=Tru
         action=action,
         result="受注",
         topics=["CRM・営業支援"],
-        source_type="daily_report",
+        source_type="slack_thread",
         source_id=source_id,
         confidence=0.9,
     )
     session.flush()
     if approve:
-        dto = get_knowledge_unit_by_source(session, "daily_report", source_id)
+        dto = get_knowledge_unit_by_source(session, "slack_thread", source_id)
         set_review_status(session, dto.id, "approved")
         session.flush()
 

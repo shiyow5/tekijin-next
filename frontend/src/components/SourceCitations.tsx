@@ -8,7 +8,7 @@ import Link from "next/link";
  * レビュー指摘の再発防止）。`document` は内部文書ビューアへ、`qa` はナレッジ詳細
  * （#293 part2, `/knowledge/[id]`）へリンク — `source_id` は自己回答の citation と
  * 同じ実体（`Answer.id`）を指すので、それぞれの詳細ページがそのまま解決できる。
- * `daily`（#433）と `knowledge`（#357）は詳細ページが無いのでラベルチップ。
+ * `knowledge`（#357）は詳細ページが無いのでラベルチップ。
  */
 export function SourceCitations({
   citations,
@@ -43,12 +43,6 @@ export function SourceCitations({
               <span className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm font-bold text-on-surface-variant text-sm">
                 <span aria-hidden="true">📚</span>
                 ナレッジ {citation.source_id}
-              </span>
-            ) : citation.kind === "daily" ? (
-              // #433: a daily report has no detail page — show a non-link label chip.
-              <span className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm text-sm font-bold text-on-surface-variant">
-                <span aria-hidden="true">📝</span>
-                日報より
               </span>
             ) : citation.kind === "document" ? (
               <Link

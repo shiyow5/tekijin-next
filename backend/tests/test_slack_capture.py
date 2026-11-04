@@ -52,15 +52,14 @@ def _reaction_event(reaction: str = "white_check_mark", **over) -> dict:
 
 def test_slack_thread_uses_chat_hardened_extraction_prompt() -> None:
     # A resolved thread is free-form conversational text, so extraction must use the
-    # chat-hardened system prompt (leans hard on extractable=false), NOT the daily-
-    # report prompt tuned for clean records (#476 security review).
-    from tekijin.knowledge.extract import _CHAT_SYSTEM_PROMPT, _SYSTEM_PROMPT
+    # chat-hardened system prompt (leans hard on extractable=false) (#476 security
+    # review).
+    from tekijin.knowledge.extract import _CHAT_SYSTEM_PROMPT
     from tekijin.knowledge.extract import ExtractionSource as _Source
 
     source = _Source(source_type="slack_thread", source_id="x", text="質問: a\n回答: b", topics=())
     system = CaseExtractor.prompt(source)[0][1]
     assert system == _CHAT_SYSTEM_PROMPT
-    assert system != _SYSTEM_PROMPT
 
 
 def test_reaction_schedules_capture_when_enabled(monkeypatch) -> None:

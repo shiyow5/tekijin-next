@@ -3,8 +3,8 @@
 When a participant marks a Slack pair-channel thread solved (a ✅ reaction), the
 resolved Q&A becomes a candidate *case*: the question is the 課題, the answer /
 follow-up chat is the 打ち手 / 結果. This module assembles that thread into the
-same :class:`~tekijin.knowledge.extract.ExtractionSource` the daily-report and chat
-pipelines feed, so extraction, topic provenance, and idempotent storage are shared
+same :class:`~tekijin.knowledge.extract.ExtractionSource` the chat pipeline
+feeds, so extraction, topic provenance, and idempotent storage are shared
 — a Slack thread is just a new ``source_type``.
 
 Provenance-faithful, like the other sources: the unit's topics come from the

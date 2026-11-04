@@ -22,12 +22,6 @@ describe("SourceCitations", () => {
     );
   });
 
-  it("shows a daily report as a label, not a link (#433)", () => {
-    renderCitations([{ source_id: "daily_1", kind: "daily" }]);
-    expect(screen.getByText("日報より")).toBeInTheDocument();
-    expect(screen.queryByRole("link")).toBeNull();
-  });
-
   it("labels a knowledge unit as knowledge, not as a past answer (#366)", () => {
     // #357 slice 4c emits `{source_id: "ku_…", kind: "knowledge"}` when a grounded
     // knowledge answer fires. The renderer's final branch is a catch-all that says

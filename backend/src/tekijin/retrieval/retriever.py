@@ -35,7 +35,7 @@ from tekijin.retrieval.embedding import QUERY, Embedder
 from tekijin.retrieval.fusion import adaptive_bm25_weight, rrf
 
 if TYPE_CHECKING:  # pragma: no cover - typing only (avoids agent<-retrieval cycle)
-    from tekijin.agent.state import DailyHit, DocumentHit, PastAnswer, RetrievalResult
+    from tekijin.agent.state import DocumentHit, PastAnswer, RetrievalResult
 
 # How many candidates each channel (dense / sparse) retrieves *before* fusion.
 # RRF is applied to these pools and only then truncated to ``top_k``: cutting
@@ -65,7 +65,6 @@ class HybridRetriever:
         top_k: int = 10,
         rrf_k: int = 60,
         bm25_weight: float | None = None,
-        daily_knowledge_enabled: bool = False,
     ) -> None:
         if top_k <= 0:
             raise ValueError(f"top_k must be positive, got {top_k}")
@@ -105,10 +104,6 @@ class HybridRetriever:
             )
         # Per-channel retrieval depth before fusion (see CANDIDATE_POOL).
         self._pool = max(top_k * 5, CANDIDATE_POOL)
-        # #433: search daily reports as a knowledge source. OFF (default) -> the
-        # daily channel is skipped and ``daily_reports`` is empty, so the result is
-        # byte-identical to pre-#433 and no extra dense query runs.
-        self._daily_knowledge_enabled = daily_knowledge_enabled
 
     def _fuse(
         self,
@@ -319,17 +314,6 @@ class HybridRetriever:
             if person in active
         ]
 
-        # --- daily reports (#433) ------------------------------------------ #
-        # A question↔daily-report dense search, so System 1 can cite a report's
-        # tacit knowledge. Dense-only (the report text is prose, not term-heavy)
-        # and gated: OFF -> no query, empty list, byte-identical to pre-#433.
-        daily_reports: list[DailyHit] = []
-        if self._daily_knowledge_enabled:
-            daily_hits = self._dense_hits(query_vec, "daily_reports")
-            daily_reports = [
-                {"daily_id": id_, "score": sim} for id_, sim in daily_hits[: self._top_k]
-            ]
-
         return {
             "past_answers": past_answers,
             "documents": documents_out,
@@ -339,7 +323,6 @@ class HybridRetriever:
             "document_confidence": document_confidence,
             "people_confidence": people_confidence,
             "person_question_similarity": person_question_similarity,
-            "daily_reports": daily_reports,
         }
 
     def _aggregate_people(

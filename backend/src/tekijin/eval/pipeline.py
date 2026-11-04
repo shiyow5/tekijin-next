@@ -200,8 +200,7 @@ def build_pipeline_ranker(
         # Widen the retrieval pool to match the rank depth, so a deeper top_k
         # actually surfaces more candidates (the retriever caps at its own top_k).
         retriever=HybridRetriever(embedder, session, top_k=top_k),
-        # #355: daily reports as C6 evidence from settings (env-toggleable for DGX).
-        scorer=ExpertiseScorer(repo, daily_evidence=settings.daily_evidence_enabled),
+        scorer=ExpertiseScorer(repo),
         now=now,
         top_k=top_k,
         answer_topics=build_answer_topics(repo),

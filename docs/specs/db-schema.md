@@ -2,7 +2,7 @@
 
 TEKIJIN のデータベース設計。**4層**で構成する。
 
-- **A. 入力データ層** … 合成データ（PR #19）が埋める、社員・プロフィール・案件・チャット・日報。PR #18 の ER をベースとし、本ドキュメントを正とする。
+- **A. 入力データ層** … 合成データ（PR #19）が埋める、社員・プロフィール・案件・チャット・日報（日報は #91 で機能を削除し、表だけ残す）。PR #18 の ER をベースとし、本ドキュメントを正とする。
 - **B. アプリ実行時テーブル** … 質問・回答・推薦・計測など、アプリ稼働で溜まるデータ（技術仕様 §4 準拠）。
 - **C. 専門性グラフ** … 表としては持たない。`person_topic_edges` と `evidence` は読む側が無かったため #89 で削除した（`company-v1` タグに残る）。
 - **D. 形式知層** … 生データから抽出した構造化ケース知識 `knowledge_units`（#357/#448＝蓄積＝主軸）。
@@ -160,7 +160,7 @@ erDiagram
 | `created_at` | 記録日時（DB 既定 `now()`） |
 
 **伝聞であることを重みに反映する**: 「質問者が、相談相手の発言を要約して書いたもの」なので、
-自己申告（0.3）より低い **0.25**。件数で `topic_fit` を飽和させないよう、日報と同じく上限
+自己申告（0.3）より低い **0.25**。件数で `topic_fit` を飽和させないよう上限
 （`OFFLINE_CONSULT_EVIDENCE_CAP` = 4）を設ける。
 
 **「誰が書けるか」と「誰について書けるか」は別の制約**: 質問の所有者だけが書ける（前者）と
@@ -178,6 +178,9 @@ erDiagram
 ### DAILY_REPORTS（日報）
 社員が日々提出する日報。業務内容（`content`）と課題（`issue`）を分けて記録する。
 
+> **#91 で日報の機能（C6 の証拠、検索のチャネル、出典 `kind="daily"`、日報からの知識抽出）を削除した。**
+> 表・合成データ・seed での読み込みは、seed とマイグレーションのコードと一緒に後続のPRで消すまで残す。読む側は無い。
+
 | カラム | 説明 |
 |---|---|
 | `employee_id` | 日報を書いた社員 |
@@ -185,8 +188,8 @@ erDiagram
 | `content` | その日行った業務内容 |
 | `issue` | その日感じた課題・困りごと |
 | `created_at` | 日報が登録された日時 |
-| `topics` | **#355**: C6 スコアラーの証拠源に使う事前トピックタグ（`text[]`・seed 時付与） |
-| `embedding` | **#433**: 自己回答（System1）の知識源。日報を dense 検索チャネルに載せ、出典 `kind="daily"` で引用（`daily_knowledge_enabled=true`・既定ON）。`migrate` が `ADD COLUMN IF NOT EXISTS`、`deploy.sh` の `embed_missing` が NULL 行を埋める |
+| `topics` | 事前トピックタグ（`text[]`・seed 時付与）。#355 で C6 の証拠に使っていたが、#91 以降は読まない |
+| `embedding` | #433 で自己回答の知識源に使っていた列。`migrate` が `ADD COLUMN IF NOT EXISTS` で足すが、#91 以降は埋めも読みもしない |
 
 ---
 
@@ -292,7 +295,7 @@ erDiagram
 
 「誰が何に詳しいか」は、行動痕跡（回答・案件・資格）から C6 スコアラーがその場で積み上げて求める（`scorer/evidence.py`）。以前は人×トピックのエッジを `PERSON_TOPIC_EDGES`、その根拠を `EVIDENCE` という表に置く設計だったが、どちらも読む側が無かったため #89 で削除した。設計と定義は `company-v1` タグに残っている。
 
-> `base_score`: 有用回答 1.0 > 案件リード 0.8 > 過去回答 0.7 > 資格 0.6 > 案件メンバー 0.5 > 自己申告 0.3（doc15）> **直接相談のふりかえり 0.25**（#247・伝聞）> 日報 0.15（#355）。断り(declined)は専門性を下げず余裕度のみ下げる。
+> `base_score`: 有用回答 1.0 > 案件リード 0.8 > 過去回答 0.7 > 資格 0.6 > 案件メンバー 0.5 > 自己申告 0.3（doc15）> **直接相談のふりかえり 0.25**（#247・伝聞）。断り(declined)は専門性を下げず余裕度のみ下げる。
 >
 > **同じ規則をふりかえりにも適用する**: `resolution=unresolved`（解決しなかった）は記録は残るが
 > 専門性の証拠にならず、**下げもしない**。一度うまくいかなかったことが、その人が実際に知っている
@@ -302,8 +305,8 @@ erDiagram
 
 ## D. 形式知層（#357/#448＝蓄積＝主軸の実体）
 
-生データ（日報・社員間チャット）から LLM で蒸留した**構造化ケース知識**。graph からは呼ばない
-オフライン抽出バッチ（`knowledge/extract.py` 日報／`knowledge/chat.py` チャット）が upsert し、
+生データ（社員間チャット・解決済スレッド）から LLM で蒸留した**構造化ケース知識**。graph からは呼ばない
+オフライン抽出バッチ（`knowledge/chat.py` チャット）と解決済スレッドの取り込み（`knowledge/slack_thread.py`）が upsert し、
 埋め込み索引を張れば C4／自己回答（System1）が再利用する。承認（`review_status`）まで検索経路に出さない（#354）。
 
 ```mermaid
@@ -329,9 +332,9 @@ erDiagram
 |---|---|
 | `kind` | `case`（問題→打ち手→結果）/ `procedure` / `decision`（CHECK 制約） |
 | `problem` / `action` / `result` | ケースの中身（`result` は未確定なら NULL） |
-| `topics` | 正規22語彙のトピック（日報はタグ継承、チャットは LLM 提案を `normalize_topics` でスナップ） |
+| `topics` | 正規22語彙のトピック（解決済スレッドは質問のタグ継承、チャットは LLM 提案を `normalize_topics` でスナップ） |
 | `industry` | 業種（明示があるときのみ） |
-| `source_type` / `source_id` | 出典（`daily_report`/`chat` 等）。**`UNIQUE(source_type, source_id)`** で冪等 upsert |
+| `source_type` / `source_id` | 出典（`chat`/`slack_thread` 等）。**`UNIQUE(source_type, source_id)`** で冪等 upsert |
 | `confidence` | 抽出の確信度（0.0–1.0） |
 | `review_status` | `unreviewed` / `approved` / `rejected`（CHECK）。既定は検索で `approved` のみ露出 |
 | `embedding` | ケーステキスト（problem+action+result）の dense ベクトル。索引後に検索で再利用 |

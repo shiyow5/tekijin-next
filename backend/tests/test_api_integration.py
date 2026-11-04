@@ -1185,12 +1185,12 @@ def test_knowledge_answer_persists_route_and_self_resolution(
             action="SFA/CRM を提案",
             result="受注",
             topics=["CRM・営業支援"],
-            source_type="daily_report",
+            source_type="slack_thread",
             source_id="kb_api_1",
             confidence=0.9,
         )
         setup.flush()
-        dto = get_knowledge_unit_by_source(setup, "daily_report", "kb_api_1")
+        dto = get_knowledge_unit_by_source(setup, "slack_thread", "kb_api_1")
         set_review_status(setup, dto.id, "approved")
         setup.flush()
         embed_knowledge_units(setup, fake_embedder)

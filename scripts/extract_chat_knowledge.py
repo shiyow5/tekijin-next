@@ -1,14 +1,14 @@
 """#448: 社内チャット → ケース知識単位の抽出バッチ（オフライン）。
 
 生チャットはノイズ（挨拶・連絡・雑談）が大半で、そのまま知識源にしても System1 の
-grounded 率はほぼ動かず、日報と混ぜるとむしろ悪化する（research_knowledge_source.py 実測）。
+grounded 率はほぼ動かない（research_knowledge_source.py 実測）。
 価値は「やり取り」＝課題に対して具体的な回答/打ち手が付いた会話にある。そこで抽出単位を
 **会話**（同一チャンネル・時間窓でまとめた連続メッセージ）とし、本番 vLLM(:18080) の
 structured output で `問題→打ち手/回答→結果` に蒸留、extractable=false でチャットの大半を捨てる。
 チャットにはタグが無いので topics は LLM の topic_hints を正規語彙へスナップ（off-vocab は破棄）。
 graph からは呼ばれない純オフライン。人手レビュー（#354）は review_status=unreviewed のまま。
 
-extract_knowledge.py（日報版）と対になる。抽出品質を測れるよう、格納後に件数と
+抽出品質を測れるよう、格納後に件数と
 サンプル数件（source_id/topics/problem/action/result/confidence）を出力する。
 
 使い方（DGX・throwaway pgvector を prepare 済み・本番 vLLM 稼働前提）:

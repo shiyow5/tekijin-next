@@ -216,25 +216,6 @@ describe("ResultScreen — terminal-only replay (hard reload)", () => {
     const qaLink = screen.getByRole("link", { name: /ans_0042/ });
     expect(qaLink).toHaveAttribute("href", "/knowledge/ans_0042");
   });
-
-  it("renders a daily-report citation as a non-link label chip (#433)", () => {
-    // A daily report has no detail page, so its citation is a label ("日報より"),
-    // not a link — verifiability without a dead route.
-    renderResult(
-      state({
-        terminal: true,
-        message: {
-          status: "self_answered",
-          message: "過去の日報によると、バッチ間隔の短縮で解消できます。",
-          citations: [{ source_id: "daily_42", kind: "daily" }],
-        },
-      }),
-    );
-    expect(screen.getByText("出典")).toBeInTheDocument();
-    expect(screen.getByText("日報より")).toBeInTheDocument();
-    // It must NOT be a link (no detail page to route to).
-    expect(screen.queryByRole("link", { name: /日報より/ })).not.toBeInTheDocument();
-  });
 });
 
 describe("ResultScreen — thinking progress (#512)", () => {

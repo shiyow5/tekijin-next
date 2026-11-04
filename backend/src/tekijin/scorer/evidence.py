@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from tekijin.data.dto import (
     AnswerDTO,
     CertificationDTO,
-    DailyReportDTO,
     OfflineConsultDTO,
     ProjectMembershipDTO,
     SkillDTO,
@@ -27,13 +26,11 @@ from tekijin.scorer.topics import cert_matches_topic, product_matches_topic
 from tekijin.scorer.weights import (
     BASE_SCORE_ANSWER,
     BASE_SCORE_CERTIFICATION,
-    BASE_SCORE_DAILY,
     BASE_SCORE_HELPFUL_ANSWER,
     BASE_SCORE_OFFLINE_CONSULT,
     BASE_SCORE_PROJECT_LEAD,
     BASE_SCORE_PROJECT_MEMBER,
     BASE_SCORE_SKILL,
-    DAILY_EVIDENCE_CAP,
     OFFLINE_CONSULT_EVIDENCE_CAP,
     OFFLINE_CONSULT_POSITIVE_RESOLUTIONS,
 )
@@ -50,7 +47,7 @@ class Evidence:
     an ongoing project as current work for recency; see ``_recency_moments``).
     """
 
-    source_type: str  # cert | self | inferred | project | answer | daily | offline_consult
+    source_type: str  # cert | self | inferred | project | answer | offline_consult
     base_score: float
     timestamp: dt.date | dt.datetime | None
     detail: str
@@ -62,7 +59,6 @@ def collect_topic_evidence(
     skills: Sequence[SkillDTO],
     memberships: Sequence[ProjectMembershipDTO],
     on_topic_answers: Sequence[AnswerDTO],
-    daily_reports: Sequence[DailyReportDTO] = (),
     offline_consults: Sequence[OfflineConsultDTO] = (),
 ) -> list[Evidence]:
     """Assemble every piece of evidence a person has for ``topics``.
@@ -74,24 +70,15 @@ def collect_topic_evidence(
     double-counted. ``on_topic_answers`` must already be this person's answers for
     the topic set, de-duplicated by the caller (the topic *join* lives in the
     repository; the strict subtopic *filter* in the scorer). Ordering is
-    deterministic: certs, skills, projects, answers, daily, in input order.
-
-    ``daily_reports`` (#355) is this person's daily reports whose precomputed
-    ``topics`` overlap the topic set. Off by default (empty) — the scorer passes
-    them only when built with ``daily_evidence=True``. A single report is faint
-    (``BASE_SCORE_DAILY``); at most ``DAILY_EVIDENCE_CAP`` on-topic reports count,
-    so a prolific reporter cannot saturate ``topic_fit`` on shallow activity. This
-    mirrors the eval gold, which sums daily activity at the same weight
-    (``build_eval_v2.build_gold_evidence``); before #355 the scorer was blind to
-    the very daily signal the gold rewards.
+    deterministic: certs, skills, projects, answers, consults, in input order.
 
     ``offline_consults`` (#247) are 直接相談 retrospectives written by the ASKER
     about this person. Hearsay, so ``BASE_SCORE_OFFLINE_CONSULT`` sits below a
-    self-declared skill; capped at ``OFFLINE_CONSULT_EVIDENCE_CAP`` for the same
-    reason as daily reports. A retrospective whose ``resolution`` is not in
+    self-declared skill; capped at ``OFFLINE_CONSULT_EVIDENCE_CAP`` so a chatty pair
+    cannot saturate ``topic_fit``. A retrospective whose ``resolution`` is not in
     ``OFFLINE_CONSULT_POSITIVE_RESOLUTIONS`` (i.e. 「解決しなかった」) contributes
     nothing and never subtracts — the decline rule (断り≠非専門) applied to
-    consultations. Unlike daily reports this is NOT flag-gated: the rows only ever
+    consultations. This is NOT flag-gated: the rows only ever
     come from runtime submissions, so there is nothing in the fixtures to measure
     against and a dormant flag would just make the feature dead on arrival.
     """
@@ -127,16 +114,6 @@ def collect_topic_evidence(
         base = BASE_SCORE_HELPFUL_ANSWER if helpful else BASE_SCORE_ANSWER
         detail = "有用と評価された回答" if helpful else "過去の回答"
         evidence.append(Evidence("answer", base, answer.created_at, detail))
-
-    # #355: daily reports whose precomputed topics overlap the set. Capped so
-    # volume supports but does not dominate; deterministic (input order).
-    daily_used = 0
-    for report in daily_reports:
-        if daily_used >= DAILY_EVIDENCE_CAP:
-            break
-        if topic_set & set(report.topics):
-            daily_used += 1
-            evidence.append(Evidence("daily", BASE_SCORE_DAILY, report.report_date, "日報での活動"))
 
     # #247: 直接相談のふりかえり. The resolution filter comes BEFORE the cap so an
     # unresolved consultation cannot consume a slot a helpful one would have used.

@@ -73,22 +73,11 @@ BASE_SCORE_ANSWER = 0.7
 BASE_SCORE_CERTIFICATION = 0.6
 BASE_SCORE_PROJECT_MEMBER = 0.5
 BASE_SCORE_SKILL = 0.3
-# Daily-report evidence (#355): the weakest per-item signal, matching the eval
-# gold's daily weight (``build_eval_v2.build_gold_evidence`` adds 0.15 per
-# on-topic daily report). A single report is faint; volume is what counts. To
-# keep a prolific reporter from saturating ``topic_fit`` on shallow activity, at
-# most ``DAILY_EVIDENCE_CAP`` on-topic reports contribute per (person, topic set)
-# — 5 × 0.15 = 0.75, comparable to one project membership. Dormant unless the
-# scorer is built with ``daily_evidence=True`` (``daily_evidence_enabled``).
-BASE_SCORE_DAILY = 0.15
-DAILY_EVIDENCE_CAP = 5
-
 # 直接相談のふりかえり (#247): the asker's written summary of a face-to-face
 # consultation. It sits BELOW a self-declared skill (0.3) because it is HEARSAY —
-# one person paraphrasing another's words — and ABOVE a daily report (0.15)
-# because, unlike ambient activity, it records an actual consultation the asker
-# explicitly tagged with a topic and rated. Capped like daily reports so a chatty
-# pair cannot saturate topic_fit: 4 × 0.25 = 1.0, comparable to one helpful
+# one person paraphrasing another's words — yet it records an actual consultation
+# the asker explicitly tagged with a topic and rated. Capped so a chatty pair
+# cannot saturate topic_fit: 4 × 0.25 = 1.0, comparable to one helpful
 # answer. A retrospective marked ``unresolved`` contributes NOTHING (and never
 # subtracts — 断り≠非専門), so the cap counts only the ones that did help.
 BASE_SCORE_OFFLINE_CONSULT = 0.25

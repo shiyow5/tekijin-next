@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from tekijin.agent.route import PERSON, PRIOR_ANSWER_SIM, decide_route
 from tekijin.data.repository import Repository
-from tekijin.models.tables import Answer, DailyReport, Document, EmployeeProfile, Question
+from tekijin.models.tables import Answer, Document, EmployeeProfile, Question
 from tekijin.retrieval import dense
 from tekijin.retrieval.indexing import embed_corpus
 from tekijin.retrieval.retriever import HybridRetriever
@@ -192,14 +192,11 @@ def test_hybrid_retriever_end_to_end(seed_counts, session, fake_embedder) -> Non
         "document_confidence",
         "people_confidence",
         "person_question_similarity",
-        "daily_reports",
         # #506: responders of past_answers who have left, so the prior_answer pin
         # can refuse them without consulting the candidate pool it is allowed to
         # reach past.
         "departed_people",
     }
-    # #433: daily channel is OFF by default -> the key is present but empty.
-    assert result["daily_reports"] == []
     # Confidences are absolute cosine similarities in [0, 1].
     for key in ("answer_confidence", "document_confidence", "people_confidence"):
         assert 0.0 <= result[key] <= 1.0
@@ -245,26 +242,6 @@ def test_hybrid_retriever_document_channel(seed_counts, session, fake_embedder) 
 
     doc_ids = [d["doc_id"] for d in result["documents"]]
     assert doc.id in doc_ids
-
-
-def test_hybrid_retriever_daily_knowledge_gated(seed_counts, session, fake_embedder) -> None:
-    # #433: the daily channel is OFF by default (empty), and ON populates daily hits
-    # from the question↔daily dense search. Give one report a unique body so it is
-    # the unambiguous top daily hit for that phrase.
-    target = session.scalars(select(DailyReport).where(DailyReport.content.isnot(None))).first()
-    target.content = "UNIQD7777 特異な日報マーカー本文"
-    target.issue = "UNIQD7777 の課題"
-    session.flush()
-    embed_corpus(session, fake_embedder)  # now embeds daily_reports too (#433)
-
-    off = HybridRetriever(fake_embedder, session, top_k=5)
-    assert off.search("UNIQD7777 特異な日報マーカー本文")["daily_reports"] == []  # gated off
-
-    on = HybridRetriever(fake_embedder, session, top_k=5, daily_knowledge_enabled=True)
-    hits = on.search("UNIQD7777 特異な日報マーカー本文")["daily_reports"]
-    assert hits, "expected a daily hit when the channel is enabled"
-    assert all(set(h) == {"daily_id", "score"} and isinstance(h["daily_id"], int) for h in hits)
-    assert hits[0]["daily_id"] == target.id  # unique body -> the exact-match top hit
 
 
 def test_hybrid_retriever_respects_top_k(seed_counts, session, fake_embedder) -> None:

@@ -1,15 +1,15 @@
 """Case-unit extraction pipeline (#357 slice 2).
 
-Reads raw records (sales daily reports for the PoC), asks the LLM to distil each
-into a *case* knowledge unit (``問題 → 打ち手 → 結果``) via forced structured
+Reads raw records (chat conversations, resolved Slack threads), asks the LLM to
+distil each into a *case* knowledge unit (``問題 → 打ち手 → 結果``) via forced structured
 output, and upserts the result with its provenance. Deliberately an OFFLINE batch
 (a script drives it), not a graph node — the graph never calls this, so it stays
 inert until a later slice wires knowledge retrieval.
 
 Design invariants (see the #357 RFC):
-- **Provenance-faithful topics**: the unit's ``topics`` come from the source
-  record's precomputed tags, never from the LLM, so the knowledge vocabulary can
-  not drift from the eval gold's.
+- **Provenance-faithful topics**: when the source record carries precomputed
+  tags, the unit's ``topics`` come from them, never from the LLM. A tag-less
+  source takes the model's hints snapped onto the canonical vocabulary.
 - **Non-cases are skipped**: a record the model marks ``extractable=false`` stores
   nothing — a status note is not a case.
 - **Idempotent**: storage goes through :func:`upsert_knowledge_unit`, keyed on
@@ -26,36 +26,24 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tekijin.config import Settings, get_settings
 from tekijin.data.knowledge import upsert_knowledge_unit
 from tekijin.llm.schemas import CaseExtractionSchema
-from tekijin.models.tables import DailyReport
 from tekijin.scorer.topics import TOPIC_VOCABULARY, normalize_topics
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = (
-    "あなたは営業日報から再利用可能な『ケース知識』を抽出するアナリストです。"
-    "与えられた1件の記録だけを根拠に、顧客の課題(problem)・打ち手(action)・結果(result)を"
-    "日本語で簡潔に切り出してください。厳守事項: "
-    "(1) 記録に書かれていないことを創作しない。結果が書かれていなければ result は null。"
-    "(2) 明確な課題と打ち手の両方が読み取れる場合のみ extractable=true。"
-    "単なる状況メモ・課題や打ち手が無いものは extractable=false で構いません。"
-    "(3) 業種(industry)は記録に明示があるときだけ入れる。"
-    "(4) confidence は抽出の確からしさ(0.0-1.0)。"
-)
-
-# Chat conversations carry NO precomputed tags (unlike daily reports), so the chat
-# prompt additionally asks the model to propose ``topic_hints`` from the canonical
-# vocabulary; the caller snaps them with ``normalize_topics`` and drops anything
-# off-vocabulary, so the model can never invent a topic (#448). Raw chat is mostly
-# noise (measured: raw chat as evidence barely moved grounded rate and hurt when
-# combined with daily), so the prompt leans HARD on extractable=false: only a real
-# problem→action exchange (a question that got a substantive answer, a resolved
-# issue) is a case; status pings / chit-chat / logistics are not.
+# Chat conversations carry NO precomputed tags, so the prompt asks the model to
+# propose ``topic_hints`` from the canonical vocabulary; the caller snaps them with
+# ``normalize_topics`` and drops anything off-vocabulary, so the model can never
+# invent a topic (#448). Raw chat is mostly noise (measured: raw chat as evidence
+# barely moved grounded rate), so the prompt leans HARD on extractable=false: only a
+# real problem→action exchange (a question that got a substantive answer, a resolved
+# issue) is a case; status pings / chit-chat / logistics are not. A resolved Slack
+# thread (#476) is also free-form conversational text (a question + its answer /
+# chat follow-up), so every source kind uses this one prompt.
 _CHAT_SYSTEM_PROMPT = (
     "あなたは社内チャットのやり取りから再利用可能な『ケース知識』を抽出するアナリストです。"
     "与えられた1つの会話だけを根拠に、誰かの課題(problem)・打ち手/回答(action)・結果(result)を"
@@ -70,19 +58,6 @@ _CHAT_SYSTEM_PROMPT = (
     + "。該当が無ければ空でよい。"
 )
 
-# System prompt per source kind; daily reports keep the tag-faithful prompt, chat
-# uses the case-from-conversation prompt above. A resolved Slack thread (#476) is
-# also free-form conversational text (a question + its answer / chat follow-up), so
-# it uses the SAME chat-hardened prompt — which leans hard on extractable=false —
-# rather than the daily-report prompt tuned for clean records. The key is the literal
-# ``SLACK_THREAD_SOURCE_TYPE`` value from ``knowledge.slack_thread``; it is inlined
-# (not imported) because that module imports ``ExtractionSource`` from here, and an
-# import back would be circular.
-_SYSTEM_PROMPTS: dict[str, str] = {
-    "chat": _CHAT_SYSTEM_PROMPT,
-    "slack_thread": _CHAT_SYSTEM_PROMPT,
-}
-
 
 @dataclass(frozen=True, slots=True)
 class ExtractionSource:
@@ -96,40 +71,6 @@ class ExtractionSource:
     source_id: str
     text: str
     topics: tuple[str, ...]
-
-
-def daily_report_sources(
-    session: Session, topic: str, *, limit: int | None = None
-) -> list[ExtractionSource]:
-    """Topic-bearing daily reports as extraction inputs, newest first.
-
-    Selects reports whose precomputed ``topics`` array contains ``topic`` (the same
-    ``= ANY(topics)`` filter the repository uses for questions). ``limit`` bounds a
-    PoC run to a slice of the corpus. The report's ``content`` plus its ``issue``
-    (if any) form the text the model reads.
-    """
-
-    stmt = (
-        select(DailyReport)
-        .where(DailyReport.topics.any(topic))  # type: ignore[arg-type]
-        .order_by(DailyReport.report_date.desc(), DailyReport.id)
-    )
-    if limit is not None:
-        stmt = stmt.limit(limit)
-    sources: list[ExtractionSource] = []
-    for row in session.scalars(stmt):
-        text = row.content or ""
-        if row.issue:
-            text = f"{text}\n課題: {row.issue}"
-        sources.append(
-            ExtractionSource(
-                source_type="daily_report",
-                source_id=str(row.id),
-                text=text,
-                topics=tuple(row.topics or ()),
-            )
-        )
-    return sources
 
 
 class CaseExtractor:
@@ -153,8 +94,7 @@ class CaseExtractor:
 
     @staticmethod
     def prompt(source: ExtractionSource) -> list[tuple[str, str]]:
-        system = _SYSTEM_PROMPTS.get(source.source_type, _SYSTEM_PROMPT)
-        return [("system", system), ("human", source.text)]
+        return [("system", _CHAT_SYSTEM_PROMPT), ("human", source.text)]
 
     def extract(self, source: ExtractionSource) -> CaseExtractionSchema | None:
         """Return the extracted case, or ``None`` if the record is not a case.
@@ -213,8 +153,8 @@ def extract_and_store(
     ``infer_topics_from_hints`` (chat, #448): for a source with no precomputed tags,
     take the unit's topics from the model's ``topic_hints`` via ``normalize_topics``.
     A case that snaps to NO canonical topic is skipped (counted as ``skipped``) — an
-    untopiced unit matches no evidence and would only add retrieval noise. Daily
-    reports keep tag-faithful topics and are unaffected (default False).
+    untopiced unit matches no evidence and would only add retrieval noise. A
+    source that carries tags keeps them either way.
     """
 
     counts = {"seen": 0, "stored": 0, "skipped": 0, "errored": 0}
