@@ -9,6 +9,10 @@ from tekijin.discord_bot.output import OutputGate
 
 _QUESTION_MAX = 500
 _DRAFT_MAX = 1000
+# Five drafts of these sizes, with the header and the footer, stay within one
+# message, so every draft that gets buttons is also shown.
+_REVIEW_ISSUE_MAX = 120
+_REVIEW_RESOLUTION_MAX = 200
 
 _ERROR = "処理中にエラーが起きました。しばらくしてから、もう一度お試しください。"
 _UNLINKED = "このサーバーでは、TEKIJINを使えません。"
@@ -122,8 +126,9 @@ def format_review(result: dict[str, Any]) -> str:
     lines = [f"確認を待っている下書きが{total}件あります。よく求められているものから並べています。"]
     for a in articles:
         kind = _KIND_LABELS.get(a.get("kind", ""), a.get("kind", ""))
-        resolution = a.get("resolution") or "(回答がまだ書かれていません)"
-        lines.append(f"#{a['id']} [{kind}] {a.get('issue', '')}\n> {' '.join(resolution.split())}")
+        issue = clip(" ".join((a.get("issue") or "").split()), _REVIEW_ISSUE_MAX)
+        resolution = " ".join((a.get("resolution") or "(回答がまだ書かれていません)").split())
+        lines.append(f"#{a['id']} [{kind}] {issue}\n> {clip(resolution, _REVIEW_RESOLUTION_MAX)}")
     if total > len(articles):
         lines.append("残りは、ここにある分を処理したあとに `/tekijin review` で表示されます。")
     return clip("\n\n".join(lines))

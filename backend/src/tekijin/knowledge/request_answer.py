@@ -29,7 +29,7 @@ from tekijin.data.knowledge import (
 )
 from tekijin.data.writes import create_answer
 from tekijin.knowledge.slack_thread import thread_org_id
-from tekijin.models.tables import Answer, Question
+from tekijin.models.tables import Answer, KnowledgeArticle, Question
 
 #: How much of the answers is kept as the draft's resolution and the source quote.
 _RESOLUTION_MAX = 4000
@@ -73,7 +73,12 @@ def record_thread_answer(
     existing = articles_from_question(session, question_id)
     if existing:
         article = existing[0]
-        if article.state not in REVIEW_STATES:
+        # Lock the row before reading its state: a review that verifies it at the
+        # same moment must not have this answer slipped into what was verified.
+        locked = session.get(
+            KnowledgeArticle, article.id, with_for_update=True, populate_existing=True
+        )
+        if locked is None or locked.state not in REVIEW_STATES:
             return None
         update_article(
             session, article.id, org_id=article.org_id, changes={"resolution": resolution}, now=now

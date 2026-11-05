@@ -24,7 +24,13 @@ from sqlalchemy import ColumnElement, exists, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from tekijin.models.tables import DiscordOutbox, DiscordRequest, Question, Recommendation
+from tekijin.models.tables import (
+    DiscordOutbox,
+    DiscordRequest,
+    DiscordThreadMessage,
+    Question,
+    Recommendation,
+)
 
 #: Every session ``/ask`` starts on Discord has this prefix (``api/discord_routes.py``).
 DISCORD_SESSION_PREFIX = "discord_"
@@ -89,6 +95,24 @@ def request_for_thread(session: Session, thread_id: str) -> DiscordRequest | Non
     return session.scalars(
         select(DiscordRequest).where(DiscordRequest.thread_id == thread_id)
     ).first()
+
+
+def message_seen(session: Session, message_id: str) -> bool:
+    return session.get(DiscordThreadMessage, message_id) is not None
+
+
+def mark_message_seen(session: Session, message_id: str, recommendation_id: int) -> bool:
+    """Record a thread message as handled. ``False`` when it already was."""
+
+    try:
+        with session.begin_nested():
+            session.add(
+                DiscordThreadMessage(message_id=message_id, recommendation_id=recommendation_id)
+            )
+            session.flush()
+    except IntegrityError:
+        return False
+    return True
 
 
 def enqueue_post(session: Session, recommendation_id: int, text: str) -> bool:

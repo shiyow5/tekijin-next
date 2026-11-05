@@ -41,6 +41,8 @@ from tekijin.data.db import session_scope
 from tekijin.data.discord_requests import (
     REQUEST,
     enqueue_post,
+    mark_message_seen,
+    message_seen,
     pending_outbox,
     record_delivery,
     request_for_recommendation,
@@ -107,7 +109,9 @@ class DiscordThreadMessage(DiscordUser):
 
 
 class DiscordThreadResponse(BaseModel):
-    status: Literal["stored", "answered", "ignored", "not_accepted", "disabled", "unlinked"]
+    status: Literal[
+        "stored", "answered", "ignored", "not_accepted", "duplicate", "disabled", "unlinked"
+    ]
 
 
 class OutboxItemResponse(BaseModel):
@@ -328,18 +332,29 @@ def discord_thread_message(
         if found is None:
             return DiscordThreadResponse(status="ignored")
         rec_id = found.recommendation_id
+        if message_seen(session, req.message_id):
+            return DiscordThreadResponse(status="duplicate")
         sender = find_discord_member(session, guild_id, req.discord_user_id)
         parties = thread_parties(session, rec_id)
-    if sender is None:
-        return DiscordThreadResponse(status="ignored")
-    if parties is None:
-        return DiscordThreadResponse(status="not_accepted")
-    if sender not in (parties["asker_id"], parties["responder_id"]):
-        return DiscordThreadResponse(status="ignored")
+        status: Literal["ignored", "not_accepted"] | None = None
+        if sender is None:
+            status = "ignored"
+        elif parties is None:
+            status = "not_accepted"
+        elif sender not in (parties["asker_id"], parties["responder_id"]):
+            status = "ignored"
+        if status is not None:
+            # Remembered, so the bot sending it again (after a restart, once the
+            # request is accepted) does not turn it into an answer.
+            mark_message_seen(session, req.message_id, rec_id)
+            return DiscordThreadResponse(status=status)
+    assert parties is not None and sender is not None
     is_answer = sender == parties["responder_id"]
     embedding = _embed(service, req.body) if is_answer else None
     now = _now()
     with session_scope(service.session_factory) as session:
+        if not mark_message_seen(session, req.message_id, rec_id):
+            return DiscordThreadResponse(status="duplicate")
         create_message(session, rec_id, sender, req.body, now)
         if not is_answer:
             return DiscordThreadResponse(status="stored")
@@ -348,6 +363,9 @@ def discord_thread_message(
             text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 114, "obj": rec_id}
         )
         record_thread_answer(session, parties=parties, body=req.body, embedding=embedding, now=now)
+    # The draft has no embedding yet (or lost it to the new resolution); without
+    # one it cannot be matched to new questions or rise in the review queue.
+    service.schedule_knowledge_embed()
     return DiscordThreadResponse(status="answered")
 
 

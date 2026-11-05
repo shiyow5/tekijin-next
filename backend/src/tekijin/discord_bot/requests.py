@@ -47,6 +47,10 @@ REVIEW_TEMPLATE = r"tk:rev:(?P<action>verify|back):(?P<article>[0-9]{1,12})"
 #: How often the outbox is read when nothing asks for it sooner.
 OUTBOX_INTERVAL_S = 5.0
 _THREAD_MESSAGE_MAX = 4000
+#: Thread messages kept for sending again while the backend is away.
+_RETRY_MAX = 1000
+#: How far back each open request thread is read again after a (re)connect.
+_REPLAY_LIMIT = 200
 _UNAVAILABLE = "いまは処理できません。しばらくしてから、もう一度お試しください。"
 
 
@@ -143,6 +147,8 @@ class RequestUI:
         self.gate = gate
         self.kick = asyncio.Event()
         self._lock = asyncio.Lock()
+        # Thread messages the backend did not take; sent again with the outbox.
+        self._retry: dict[str, dict[str, Any]] = {}
 
     async def _call(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         return await internal_post(
@@ -237,17 +243,48 @@ class RequestUI:
         content = (message.content or "").strip()
         if not content:
             return
-        result = await self._call(
-            "thread-message",
-            {
-                **discord_user(message.author.id, message.guild.id, message.author.display_name),
-                "thread_id": str(message.channel.id),
-                "message_id": str(message.id),
-                "body": content[:_THREAD_MESSAGE_MAX],
-            },
+        body = {
+            **discord_user(message.author.id, message.guild.id, message.author.display_name),
+            "thread_id": str(message.channel.id),
+            "message_id": str(message.id),
+            "body": content[:_THREAD_MESSAGE_MAX],
+        }
+        await self._forward(body)
+
+    async def _forward(self, body: dict[str, Any]) -> bool:
+        """Send one thread message; keep it for later when the backend is away.
+
+        The backend remembers every message id it handled, so sending one again
+        (a retry, or a replay after a restart) never makes a second answer."""
+
+        result = await self._call("thread-message", body)
+        if "status" in result:
+            self._retry.pop(body["message_id"], None)
+            return True
+        logger.warning(
+            "could not forward request thread message %s; will retry", body["message_id"]
         )
-        if "status" not in result:
-            logger.warning("could not forward request thread message %s", message.id)
+        if len(self._retry) < _RETRY_MAX or body["message_id"] in self._retry:
+            self._retry[body["message_id"]] = body
+        return False
+
+    async def retry_messages(self) -> None:
+        for body in list(self._retry.values()):
+            if not await self._forward(body):
+                return  # still away; try the rest next time
+
+    async def replay(self, threads: Any) -> None:
+        """Read the open request threads again, so messages written while the bot
+        was away (or before a failed send) still reach the backend."""
+
+        for thread in threads:
+            if not self.gate.is_request_thread(thread):
+                continue
+            try:
+                async for message in thread.history(limit=_REPLAY_LIMIT, oldest_first=True):
+                    await self.on_thread_message(message)
+            except discord.DiscordException:
+                logger.warning("could not read request thread %s again", thread.id, exc_info=True)
 
     # -- the outbox -------------------------------------------------------- #
     async def deliver(self, client: Any) -> int:
@@ -256,6 +293,7 @@ class RequestUI:
         if not self.gate.enabled:
             return 0
         async with self._lock:
+            await self.retry_messages()
             items = await get_outbox(self.http, base_url=self.base_url, secret=self.secret)
             posted = 0
             for item in items:

@@ -372,3 +372,52 @@ def test_persistent_items_rebuild_from_their_ids() -> None:
     for cls, template, custom_id in cases:
         item = asyncio.run(cls.from_custom_id(None, None, re.fullmatch(template, custom_id)))
         assert item.item.custom_id == custom_id
+
+
+def test_review_text_shows_every_draft_it_has_buttons_for() -> None:
+    articles = [
+        {"id": 100 + i, "kind": "procedure", "issue": "問" * 200, "resolution": "答" * 300}
+        for i in range(5)
+    ]
+    text = format_review({"status": "ok", "total": 40, "articles": articles})
+    assert len(text) <= 2000
+    assert all(f"#{a['id']}" in text for a in articles)
+    assert "残り" in text
+
+
+def test_a_thread_message_the_backend_missed_is_sent_again(monkeypatch, calls) -> None:
+    answers = iter([{"kind": "error"}, {"status": "answered"}])
+
+    async def flaky(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        return next(answers)
+
+    monkeypatch.setattr(bot_requests, "internal_post", flaky)
+    ui = _ui()
+    asyncio.run(ui.on_thread_message(_thread_message(_Channel(700, parent_id=OUTPUT))))
+    asyncio.run(ui.retry_messages())
+    assert [b["message_id"] for _, b in calls] == ["55", "55"]
+    asyncio.run(ui.retry_messages())  # nothing left
+    assert len(calls) == 2
+
+
+class _History(_Channel):
+    def __init__(self, cid: int, *, parent_id: int | None, messages: list) -> None:
+        super().__init__(cid, parent_id=parent_id)
+        self.messages = messages
+
+    def history(self, **kwargs):
+        async def gen():
+            for m in self.messages:
+                yield m
+
+        return gen()
+
+
+def test_replay_reads_only_request_threads(calls) -> None:
+    request_thread = _History(700, parent_id=OUTPUT, messages=[])
+    request_thread.messages = [_thread_message(request_thread)]
+    other = _History(31, parent_id=30, messages=[])
+    other.messages = [_thread_message(other)]
+    asyncio.run(_ui().replay([request_thread, other]))
+    assert [b["thread_id"] for _, b in calls] == ["700"]

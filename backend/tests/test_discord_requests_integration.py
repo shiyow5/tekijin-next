@@ -8,6 +8,8 @@ write becomes an answer and a case draft; ``/tekijin review`` is admin-only.
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
@@ -103,6 +105,7 @@ class _Flow:
         self.engine = engine
         self.service = _bot_service(engine, embedder)
         self.client = TestClient(create_app(agent_service=self.service))
+        self._message_ids = itertools.count(1000)
 
     def post(self, path: str, body: dict) -> dict:
         resp = self.client.post(f"{BASE}{path}", json=body, headers=HEADERS)
@@ -186,7 +189,12 @@ class _Flow:
     def write(self, discord_id: str, thread: str, body: str) -> dict:
         return self.post(
             "/thread-message",
-            {**_user(discord_id), "thread_id": thread, "message_id": "1", "body": body},
+            {
+                **_user(discord_id),
+                "thread_id": thread,
+                "message_id": str(next(self._message_ids)),
+                "body": body,
+            },
         )
 
 
@@ -405,3 +413,26 @@ def test_an_unsent_hand_off_is_not_in_the_inbox(output_on, flow) -> None:
     flow.post("/request", {**_user(ASKER), "session_id": out["session_id"]})
     inbox, bell = pending()
     assert inbox == [out["session_id"]] and len(bell) == 1
+
+
+def test_a_thread_message_is_handled_once(output_on, flow, monkeypatch) -> None:
+    scheduled = []
+    monkeypatch.setattr(flow.service, "schedule_knowledge_embed", lambda: scheduled.append(1))
+    _, rec, thread = flow.requested()
+
+    def write(message_id: str, body: str) -> str:
+        return flow.post(
+            "/thread-message",
+            {**_user(RESPONDER), "thread_id": thread, "message_id": message_id, "body": body},
+        )["status"]
+
+    # Written before accepting: not kept, and not kept when sent again later.
+    assert write("10", "受ける前") == "not_accepted"
+    flow.act(RESPONDER, rec, "accept")
+    assert write("10", "受ける前") == "duplicate"
+    assert write("11", "答え") == "answered"
+    assert write("11", "答え") == "duplicate"
+    question_id = flow.scalar(select(Recommendation.question_id).where(Recommendation.id == rec))
+    assert flow.scalars(select(Answer.body).where(Answer.question_id == question_id)) == ["答え"]
+    # The draft is queued for embedding so it can be matched and rise in review.
+    assert scheduled == [1]

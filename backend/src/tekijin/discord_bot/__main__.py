@@ -515,6 +515,13 @@ def main() -> None:
             tasks["reactions"] = asyncio.create_task(reactions.run(_REACTION_RETRY_S))
         if "outbox" not in tasks and gate.enabled:
             tasks["outbox"] = asyncio.create_task(requests_ui.run_outbox(client))
+        guild_now = client.get_guild(guild_id)
+        if (
+            gate.enabled
+            and guild_now is not None
+            and ("replay" not in tasks or tasks["replay"].done())
+        ):
+            tasks["replay"] = asyncio.create_task(requests_ui.replay(list(guild_now.threads)))
         if "flush" not in tasks:
             tasks["flush"] = asyncio.create_task(
                 batcher.run(_FLUSH_INTERVAL_S, start_history, ready=ready)

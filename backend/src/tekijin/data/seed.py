@@ -54,6 +54,7 @@ _TRUNCATE_ORDER: tuple[str, ...] = (
     "offline_consults",
     # #114: runtime-only, FK recommendations (ON DELETE CASCADE).
     "discord_outbox",
+    "discord_thread_messages",
     "discord_requests",
     "messages",
     "recommendations",

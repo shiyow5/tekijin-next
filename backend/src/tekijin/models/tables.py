@@ -584,6 +584,22 @@ class DiscordRequest(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class DiscordThreadMessage(Base):
+    """A message of a request thread the backend has already handled (#114).
+
+    The bot sends a thread's messages again after a failure or a restart; this
+    keeps each one from becoming a second chat message or answer.
+    """
+
+    __tablename__ = "discord_thread_messages"
+
+    message_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("discord_requests.recommendation_id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class DiscordOutbox(Base):
     """What the bot still has to post (#114).
 
@@ -791,6 +807,7 @@ __all__ = [
     "Message",
     "DiscordRequest",
     "DiscordOutbox",
+    "DiscordThreadMessage",
     "EvalRun",
     "Event",
     "Document",
