@@ -57,7 +57,6 @@ from tekijin.auth.principal import Principal
 from tekijin.auth.tokens import create_access_token
 from tekijin.config import Settings, get_settings
 from tekijin.data.db import session_scope
-from tekijin.data.knowledge import get_knowledge_unit_by_source, set_review_status
 from tekijin.data.messages import create_message, thread_parties
 from tekijin.data.slack_channel_links import get_channel_link_by_channel_id
 from tekijin.data.slack_directory import apply_sync_plan, load_directory_state
@@ -68,7 +67,6 @@ from tekijin.data.slack_links import (
     upsert_slack_link,
 )
 from tekijin.data.slack_message_anchors import record_message_anchor
-from tekijin.knowledge.slack_thread import SLACK_THREAD_SOURCE_TYPE
 from tekijin.models.tables import Employee
 from tekijin.slack.capture import (
     KNOWLEDGE_ACTION_IDS,
@@ -76,12 +74,14 @@ from tekijin.slack.capture import (
     KNOWLEDGE_DISCARD_ACTION,
     KNOWLEDGE_KEEP_ACTION,
     SOLVE_REACTIONS,
+    approve_thread_draft,
     discard_thread_draft,
     is_solve_utterance,
     is_thanks_utterance,
     review_blocks,
     schedule_solve_capture,
     schedule_solve_prompt,
+    thread_draft,
 )
 from tekijin.slack.client import (
     SlackIdentity,
@@ -781,9 +781,9 @@ def _handle_knowledge_action(
     """Apply a knowledge-prompt click, running the whole review loop inside Slack (#527).
 
     Flow: 残す → show the extracted draft in-thread with 承認する / 破棄する → 承認する
-    flips it to ``approved`` (trusted by retrieval/self-answer) → 破棄する marks it
-    ``rejected`` (durable — a later re-capture never revives it). No web hop: the
-    reviewer reads and decides without leaving Slack.
+    marks it ``verified`` (it may answer questions) → 破棄する retires it (durable — a
+    later capture never makes a new one). No web hop: the reviewer reads and decides
+    without leaving Slack.
 
     Authorization: any PARTY of the thread (asker or responder) may act on the shared
     draft — unlike accept/decline, not the responder's sole call. The prompt only exists
@@ -801,7 +801,6 @@ def _handle_knowledge_action(
             )
         return JSONResponse({"text": _INTERACTIVITY_FAILURE_TEXT})
 
-    source_id = f"slack_thread_{thread_id}"
     with session_scope(service.session_factory) as session:
         parties = thread_parties(session, thread_id)
         clicker = (
@@ -827,30 +826,21 @@ def _handle_knowledge_action(
         if action_id == KNOWLEDGE_KEEP_ACTION:
             # 残す → show the draft's content in-thread so it can be approved/discarded
             # right here, replacing the keep/discard prompt (the "確認" surface, #527).
-            unit = get_knowledge_unit_by_source(session, SLACK_THREAD_SOURCE_TYPE, source_id)
-            if unit is not None:
+            article = thread_draft(session, thread_id)
+            if article is not None:
                 if response_url:
                     respond_to_response_url(
                         response_url,
                         {
                             "replace_original": True,
                             "text": "この下書きを確認してください。",
-                            "blocks": review_blocks(
-                                thread_id=thread_id,
-                                problem=unit.problem,
-                                action=unit.action,
-                                result=unit.result,
-                                topics=unit.topics,
-                                source_id=unit.source_id,
-                            ),
+                            "blocks": review_blocks(thread_id=thread_id, article=article),
                         },
                     )
                 return JSONResponse({"text": "この下書きを確認してください。"})
             text = "下書きが見つかりませんでした。もう一度お試しください。"
         elif action_id == KNOWLEDGE_APPROVE_ACTION:
-            unit = get_knowledge_unit_by_source(session, SLACK_THREAD_SOURCE_TYPE, source_id)
-            if unit is not None:
-                set_review_status(session, unit.id, "approved")
+            if approve_thread_draft(session, thread_id, verifier_id=clicker.employee_id):
                 approved = True
                 text = "承認しました。今後の回答でこの知識が活用されます。"
             else:

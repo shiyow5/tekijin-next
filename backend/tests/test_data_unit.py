@@ -202,65 +202,43 @@ def test_answer_and_document_dtos() -> None:
     assert doc.has_embedding is True
 
 
-def test_knowledge_unit_dto_from_row() -> None:
-    from tekijin.data.dto import KnowledgeUnitDTO
+def test_knowledge_article_dto_from_row() -> None:
+    import datetime as dt
 
-    row = t.KnowledgeUnit(
+    from tekijin.data.knowledge import ArticleDTO
+
+    now = dt.datetime(2026, 11, 5)
+    row = t.KnowledgeArticle(
         id=3,
-        kind="case",
-        problem="CRM 導入が進まない",
-        action="SFA/CRM を提案",
-        result="受注",
-        topics=["CRM・営業支援"],
-        industry="製造業",
-        source_type="slack_thread",
-        source_id="1234",
-        confidence=0.8,
-        review_status="approved",
-        embedding=None,
+        org_id=1,
+        kind="procedure",
+        issue="鍵はどこ",
+        resolution="箱",
+        state="verified",
+        reuse_count=None,
+        demand_count=2,
+        created_at=now,
+        updated_at=now,
     )
-    dto = KnowledgeUnitDTO.from_row(row)
-    assert dto.id == 3 and dto.kind == "case"
-    assert dto.topics == ("CRM・営業支援",)
-    assert dto.source_type == "slack_thread" and dto.source_id == "1234"
-    assert dto.review_status == "approved" and dto.has_embedding is False
-    # topics=None -> empty tuple (mirrors the other DTOs)
-    bare = KnowledgeUnitDTO.from_row(
-        t.KnowledgeUnit(
-            id=4,
-            kind="case",
-            source_type="answer",
-            source_id="a_1",
-            review_status="unreviewed",
-            topics=None,
-            embedding=[0.0] * 3,
-        )
-    )
-    assert bare.topics == () and bare.has_embedding is True
+    dto = ArticleDTO.from_row(row)
+    assert (dto.id, dto.kind, dto.state, dto.resolution) == (3, "procedure", "verified", "箱")
+    assert dto.reuse_count == 0 and dto.demand_count == 2
 
 
-def test_knowledge_write_validation_is_database_free() -> None:
-    """Boundary validation raises before any SQL, so it needs no DB (#357)."""
+def test_knowledge_validation_is_database_free() -> None:
+    """Boundary validation raises before any SQL, so it needs no DB (#112)."""
     from tekijin.data import knowledge as kb
 
-    # A bad kind / missing provenance is a clean ValueError, not a CheckViolation.
-    with pytest.raises(ValueError, match="unknown knowledge-unit kind"):
-        kb.upsert_knowledge_unit(
-            session=None, kind="bogus", problem="p", action="a", source_type="x", source_id="1"
-        )
-    with pytest.raises(ValueError, match="provenance"):
-        kb.upsert_knowledge_unit(
-            session=None, kind="case", problem="p", action="a", source_type="", source_id="1"
-        )
-    with pytest.raises(ValueError, match="unknown review status"):
-        kb.set_review_status(None, 1, "bogus")
-    # The read helpers validate review_status before touching the session too.
-    with pytest.raises(ValueError, match="unknown review status"):
-        kb.list_knowledge_units(None, review_status="bogus")
-    with pytest.raises(ValueError, match="unknown review status"):
-        kb.knowledge_units_by_topics(None, ["CRM・営業支援"], review_status="bogus")
-    assert set(kb.VALID_KINDS) == {"case", "procedure", "decision"}
-    assert set(kb.VALID_REVIEW_STATUSES) == {"unreviewed", "approved", "rejected"}
+    with pytest.raises(ValueError):
+        kb.create_draft(None, org_id=1, kind="bogus", issue="q", now=None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        kb.create_draft(None, org_id=1, kind="case", issue=" ", now=None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        kb.list_articles(None, org_id=1, states=("bogus",), scope=None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        kb.SourceRef(source_item_id=1, question_id="q")
+    assert set(kb.KINDS) == {"case", "procedure", "fact", "decision"}
+    assert set(kb.STATES) == {"wip", "draft", "verified", "retired"}
 
 
 # --------------------------------------------------------------------------- #

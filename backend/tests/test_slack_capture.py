@@ -15,14 +15,13 @@ import pytest
 from tekijin.api import slack_routes
 from tekijin.config import Settings
 from tekijin.data.db import get_sessionmaker, session_scope
-from tekijin.data.knowledge import get_knowledge_unit_by_source
 from tekijin.data.slack_channel_links import create_channel_link
 from tekijin.data.slack_links import upsert_slack_link
-from tekijin.knowledge.extract import CaseExtractor
+from tekijin.knowledge.extract import DraftExtractor
 from tekijin.knowledge.slack_thread import slack_thread_source
-from tekijin.llm.schemas import CaseExtractionSchema
-from tekijin.models.tables import Answer, Employee, Question, Recommendation
-from tekijin.slack.capture import capture_resolved_thread
+from tekijin.llm.schemas import KnowledgeDraftSchema
+from tekijin.models.tables import Answer, Employee, Organization, Question, Recommendation
+from tekijin.slack.capture import capture_resolved_thread, thread_draft
 
 NOW = dt.datetime(2026, 8, 27, 12, 0, 0)  # noqa: DTZ001 - naive, matches created_at
 
@@ -50,16 +49,14 @@ def _reaction_event(reaction: str = "white_check_mark", **over) -> dict:
     return event
 
 
-def test_slack_thread_uses_chat_hardened_extraction_prompt() -> None:
-    # A resolved thread is free-form conversational text, so extraction must use the
-    # chat-hardened system prompt (leans hard on extractable=false) (#476 security
-    # review).
-    from tekijin.knowledge.extract import _CHAT_SYSTEM_PROMPT
+def test_slack_thread_uses_the_knowledge_extraction_prompt() -> None:
+    # A resolved thread is free-form conversational text, read with the same prompt
+    # as every other record (#476 security review, #112).
+    from tekijin.knowledge.extract import _SYSTEM_PROMPT
     from tekijin.knowledge.extract import ExtractionSource as _Source
 
-    source = _Source(source_type="slack_thread", source_id="x", text="質問: a\n回答: b", topics=())
-    system = CaseExtractor.prompt(source)[0][1]
-    assert system == _CHAT_SYSTEM_PROMPT
+    source = _Source(org_id=1, text="質問: a\n回答: b", sources=())
+    assert DraftExtractor.prompt(source)[0][1] == _SYSTEM_PROMPT
 
 
 def test_reaction_schedules_capture_when_enabled(monkeypatch) -> None:
@@ -111,11 +108,14 @@ def _resolved_thread(engine, seed_counts):
 
     factory = get_sessionmaker(engine)
     with session_scope(factory) as session:
+        org = Organization(name="捕捉の会", discord_guild_id="slkcap")
+        session.add(org)
+        session.flush()
         session.add_all(
             [
-                Employee(id=ASKER, name="質問者", email="asker@slkcap"),
-                Employee(id=RESPONDER, name="回答者", email="responder@slkcap"),
-                Employee(id=BYSTANDER, name="第三者", email="bystander@slkcap"),
+                Employee(id=ASKER, name="質問者", email="asker@slkcap", org_id=org.id),
+                Employee(id=RESPONDER, name="回答者", email="responder@slkcap", org_id=org.id),
+                Employee(id=BYSTANDER, name="第三者", email="bystander@slkcap", org_id=org.id),
             ]
         )
         session.add(
@@ -151,16 +151,15 @@ def _resolved_thread(engine, seed_counts):
     # Clean up so the committed rows do not leak into other tests on the shared DB.
     with session_scope(factory) as session:
         from tekijin.models.tables import (
-            KnowledgeUnit,
+            KnowledgeArticle,
             Message,
             SlackChannelLink,
             SlackLink,
             SlackMessageAnchor,
         )
 
-        session.query(KnowledgeUnit).filter(
-            KnowledgeUnit.source_id == f"slack_thread_{thread_id}"
-        ).delete()
+        org_id = session.query(Organization.id).filter_by(discord_guild_id="slkcap").scalar()
+        session.query(KnowledgeArticle).filter(KnowledgeArticle.org_id == org_id).delete()
         session.query(SlackMessageAnchor).filter_by(slack_channel_id=CHANNEL).delete()
         session.query(Message).filter(Message.recommendation_id == thread_id).delete()
         session.query(Answer).filter(Answer.id == "slkcap_a").delete()
@@ -173,22 +172,22 @@ def _resolved_thread(engine, seed_counts):
             SlackLink.employee_id.in_([ASKER, RESPONDER, BYSTANDER])
         ).delete()
         session.query(Employee).filter(Employee.id.in_([ASKER, RESPONDER, BYSTANDER])).delete()
+        session.query(Organization).filter_by(discord_guild_id="slkcap").delete()
 
 
-def _extractor(*, extractable: bool = True) -> CaseExtractor:
-    schema = CaseExtractionSchema(
+def _extractor(*, extractable: bool = True) -> DraftExtractor:
+    schema = KnowledgeDraftSchema(
         extractable=extractable,
-        problem="VPNの拠点間接続が切れる" if extractable else "",
-        action="MTUを1400に下げる" if extractable else "",
-        result="安定した",
-        confidence=0.8,
+        kind="case",
+        issue="VPNの拠点間接続が切れる" if extractable else "",
+        resolution="MTUを1400に下げると安定する" if extractable else None,
     )
 
     class _FakeModel:
         def invoke(self, _prompt):
             return schema
 
-    return CaseExtractor(model=_FakeModel())
+    return DraftExtractor(model=_FakeModel())
 
 
 def _settings() -> Settings:
@@ -200,9 +199,9 @@ def test_slack_thread_source_assembles_question_and_answer(_resolved_thread) -> 
     with session_scope(factory) as session:
         source = slack_thread_source(session, thread_id)
     assert source is not None
-    assert source.source_type == "slack_thread"
-    assert source.source_id == f"slack_thread_{thread_id}"
-    assert source.topics == tuple(TOPICS)  # provenance from the question's tags
+    assert source.org_id is not None  # the asker's organization
+    assert [ref.question_id for ref in source.sources] == ["slkcap_q"]  # cites the question
+    assert source.author_id == RESPONDER
     assert "VPNの拠点間接続が切れる" in source.text  # 質問
     assert "MTUを1400に下げると安定します" in source.text  # 回答 (captured answer body)
 
@@ -225,11 +224,10 @@ def test_capture_stores_unreviewed_draft(_resolved_thread) -> None:
     )
     assert stored == f"slack_thread_{thread_id}"
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
+        unit = thread_draft(session, thread_id)
     assert unit is not None
-    assert unit.review_status == "unreviewed"  # lands in the draft box
+    assert unit.state == "draft"  # lands in the draft box
     assert unit.kind == "case"
-    assert unit.topics == tuple(TOPICS)
 
 
 def test_capture_noop_when_flag_off(_resolved_thread) -> None:
@@ -245,10 +243,7 @@ def test_capture_noop_when_flag_off(_resolved_thread) -> None:
     )
     assert stored is None
     with session_scope(factory) as session:
-        assert (
-            get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-            is None
-        )
+        assert thread_draft(session, thread_id) is None
 
 
 def test_capture_rejects_non_participant_reactor(_resolved_thread) -> None:
@@ -264,10 +259,7 @@ def test_capture_rejects_non_participant_reactor(_resolved_thread) -> None:
     )
     assert stored is None
     with session_scope(factory) as session:
-        assert (
-            get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-            is None
-        )
+        assert thread_draft(session, thread_id) is None
 
 
 def test_capture_noop_for_unknown_channel(_resolved_thread) -> None:
@@ -295,10 +287,7 @@ def test_capture_skips_when_model_declines(_resolved_thread) -> None:
     )
     assert stored is None  # model said "not a case" -> nothing stored
     with session_scope(factory) as session:
-        assert (
-            get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-            is None
-        )
+        assert thread_draft(session, thread_id) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -341,10 +330,13 @@ def _two_threads_one_channel(engine, seed_counts):
     factory = get_sessionmaker(engine)
     old_ts = "1000.0001"
     with session_scope(factory) as session:
+        org = Organization(name="再利用の会", discord_guild_id="slkreuse")
+        session.add(org)
+        session.flush()
         session.add_all(
             [
-                Employee(id=A2, name="質問者2", email="asker2@slkreuse"),
-                Employee(id=R2, name="回答者2", email="responder2@slkreuse"),
+                Employee(id=A2, name="質問者2", email="asker2@slkreuse", org_id=org.id),
+                Employee(id=R2, name="回答者2", email="responder2@slkreuse", org_id=org.id),
             ]
         )
         # Thread #1 + its answer (the genuinely-resolved conversation).
@@ -380,15 +372,14 @@ def _two_threads_one_channel(engine, seed_counts):
     yield factory, t1, t2, old_ts
     with session_scope(factory) as session:
         from tekijin.models.tables import (
-            KnowledgeUnit,
+            KnowledgeArticle,
             SlackChannelLink,
             SlackLink,
             SlackMessageAnchor,
         )
 
-        session.query(KnowledgeUnit).filter(
-            KnowledgeUnit.source_id.in_([f"slack_thread_{t1}", f"slack_thread_{t2}"])
-        ).delete()
+        org_id = session.query(Organization.id).filter_by(discord_guild_id="slkreuse").scalar()
+        session.query(KnowledgeArticle).filter(KnowledgeArticle.org_id == org_id).delete()
         session.query(SlackMessageAnchor).filter_by(slack_channel_id=CH2).delete()
         session.query(Answer).filter(Answer.id.in_(["reuse_a1", "reuse_a2"])).delete()
         session.query(Recommendation).filter(
@@ -398,6 +389,7 @@ def _two_threads_one_channel(engine, seed_counts):
         session.query(SlackChannelLink).filter(SlackChannelLink.slack_channel_id == CH2).delete()
         session.query(SlackLink).filter(SlackLink.employee_id == R2).delete()
         session.query(Employee).filter(Employee.id.in_([A2, R2])).delete()
+        session.query(Organization).filter_by(discord_guild_id="slkreuse").delete()
 
 
 def test_capture_uses_message_anchor_not_current_thread(_two_threads_one_channel) -> None:
@@ -414,10 +406,8 @@ def test_capture_uses_message_anchor_not_current_thread(_two_threads_one_channel
     )
     assert stored == f"slack_thread_{t1}"  # the reacted-on thread, NOT t2
     with session_scope(factory) as session:
-        assert (
-            get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{t1}") is not None
-        )
-        assert get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{t2}") is None
+        assert thread_draft(session, t1) is not None
+        assert thread_draft(session, t2) is None
 
 
 def test_capture_falls_back_to_current_thread_without_anchor(_two_threads_one_channel) -> None:
@@ -536,8 +526,8 @@ def test_capture_and_prompt_creates_draft_and_posts_prompt(_resolved_thread, mon
     )
     assert stored == f"slack_thread_{thread_id}"
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-    assert unit is not None and unit.review_status == "unreviewed"
+        unit = thread_draft(session, thread_id)
+    assert unit is not None and unit.state == "draft"
     # The immediate progress post precedes the prompt carrying the keep/discard actions.
     assert len(posts) == 2
     assert posts[0]["text"] == capture_mod.CAPTURE_STARTED_TEXT
@@ -599,7 +589,7 @@ def test_capture_and_prompt_notifies_when_no_case(_resolved_thread, monkeypatch)
     )
     assert stored is None
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
+        unit = thread_draft(session, thread_id)
     assert unit is None  # nothing stored
     # Progress is closed by the plain no-case notice, which has no action buttons.
     assert len(posts) == 2
@@ -652,7 +642,7 @@ def test_capture_and_prompt_notifies_on_extraction_error(_resolved_thread, monke
         factory,
         channel_id=CHANNEL,
         thread_id=thread_id,
-        extractor=CaseExtractor(model=_EmptyOutputModel()),
+        extractor=DraftExtractor(model=_EmptyOutputModel()),
         settings=_settings(),
     )
     assert stored is None
@@ -672,7 +662,7 @@ def test_knowledge_discard_marks_draft_rejected(_resolved_thread) -> None:
         from tekijin.knowledge.extract import extract_and_store
         from tekijin.knowledge.slack_thread import slack_thread_source
 
-        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor())
+        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor(), now=NOW)
 
     resp = slack_routes._handle_knowledge_action(
         SimpleNamespace(session_factory=factory),
@@ -684,8 +674,8 @@ def test_knowledge_discard_marks_draft_rejected(_resolved_thread) -> None:
     )
     assert resp.status_code == 200
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-    assert unit is not None and unit.review_status == "rejected"
+        unit = thread_draft(session, thread_id)
+    assert unit is not None and unit.state == "retired"
 
 
 def test_knowledge_keep_leaves_draft_unreviewed(_resolved_thread) -> None:
@@ -694,7 +684,7 @@ def test_knowledge_keep_leaves_draft_unreviewed(_resolved_thread) -> None:
         from tekijin.knowledge.extract import extract_and_store
         from tekijin.knowledge.slack_thread import slack_thread_source
 
-        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor())
+        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor(), now=NOW)
 
     slack_routes._handle_knowledge_action(
         SimpleNamespace(session_factory=factory),
@@ -705,8 +695,8 @@ def test_knowledge_keep_leaves_draft_unreviewed(_resolved_thread) -> None:
         [],
     )
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-    assert unit is not None and unit.review_status == "unreviewed"
+        unit = thread_draft(session, thread_id)
+    assert unit is not None and unit.state == "draft"
 
 
 def test_knowledge_keep_shows_review_blocks_in_slack(_resolved_thread, monkeypatch) -> None:
@@ -718,7 +708,7 @@ def test_knowledge_keep_shows_review_blocks_in_slack(_resolved_thread, monkeypat
         from tekijin.knowledge.extract import extract_and_store
         from tekijin.knowledge.slack_thread import slack_thread_source
 
-        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor())
+        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor(), now=NOW)
 
     sent: list[dict] = []
     monkeypatch.setattr(
@@ -745,8 +735,8 @@ def test_knowledge_keep_shows_review_blocks_in_slack(_resolved_thread, monkeypat
     )
     assert "VPNの拠点間接続が切れる" in fields_text  # the extracted problem is shown
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-    assert unit.review_status == "unreviewed"  # keep shows; approve is the next step
+        unit = thread_draft(session, thread_id)
+    assert unit.state == "draft"  # keep shows; approve is the next step
 
 
 def test_knowledge_approve_marks_draft_approved_and_schedules_embed(_resolved_thread) -> None:
@@ -758,7 +748,7 @@ def test_knowledge_approve_marks_draft_approved_and_schedules_embed(_resolved_th
         from tekijin.knowledge.extract import extract_and_store
         from tekijin.knowledge.slack_thread import slack_thread_source
 
-        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor())
+        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor(), now=NOW)
 
     embeds: list[int] = []
     service = SimpleNamespace(
@@ -769,8 +759,8 @@ def test_knowledge_approve_marks_draft_approved_and_schedules_embed(_resolved_th
     )
     assert resp.status_code == 200
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-    assert unit is not None and unit.review_status == "approved"
+        unit = thread_draft(session, thread_id)
+    assert unit is not None and unit.state == "verified"
     assert embeds == [1]  # embed scheduled exactly once on approve
 
 
@@ -782,7 +772,7 @@ def test_knowledge_keep_and_discard_do_not_schedule_embed(_resolved_thread) -> N
         from tekijin.knowledge.extract import extract_and_store
         from tekijin.knowledge.slack_thread import slack_thread_source
 
-        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor())
+        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor(), now=NOW)
 
     embeds: list[int] = []
     service = SimpleNamespace(
@@ -801,7 +791,7 @@ def test_knowledge_action_rejects_non_party(_resolved_thread) -> None:
         from tekijin.knowledge.extract import extract_and_store
         from tekijin.knowledge.slack_thread import slack_thread_source
 
-        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor())
+        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor(), now=NOW)
 
     # U_BYSTD is linked but not a party of this thread -> refused, draft untouched.
     resp = slack_routes._handle_knowledge_action(
@@ -814,8 +804,8 @@ def test_knowledge_action_rejects_non_party(_resolved_thread) -> None:
     )
     assert resp.status_code == 200
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-    assert unit is not None and unit.review_status == "unreviewed"  # NOT rejected
+        unit = thread_draft(session, thread_id)
+    assert unit is not None and unit.state == "draft"  # NOT rejected
 
 
 def test_message_event_solve_utterance_schedules_prompt(_resolved_thread, monkeypatch) -> None:
@@ -858,7 +848,7 @@ def test_interactivity_dispatch_routes_knowledge_button(_resolved_thread) -> Non
         from tekijin.knowledge.extract import extract_and_store
         from tekijin.knowledge.slack_thread import slack_thread_source
 
-        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor())
+        extract_and_store(session, [slack_thread_source(session, thread_id)], _extractor(), now=NOW)
 
     raw = _json.dumps(
         {
@@ -874,5 +864,5 @@ def test_interactivity_dispatch_routes_knowledge_button(_resolved_thread) -> Non
     resp = slack_routes._handle_interactivity_action(SimpleNamespace(session_factory=factory), raw)
     assert resp.status_code == 200
     with session_scope(factory) as session:
-        unit = get_knowledge_unit_by_source(session, "slack_thread", f"slack_thread_{thread_id}")
-    assert unit is not None and unit.review_status == "rejected"
+        unit = thread_draft(session, thread_id)
+    assert unit is not None and unit.state == "retired"

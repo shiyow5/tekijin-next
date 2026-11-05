@@ -19,7 +19,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         Document,
         Employee,
         EmployeeProfile,
-        KnowledgeUnit,
         OfflineConsult,
         Question,
     )
@@ -162,47 +161,4 @@ class DocumentDTO:
             source=row.source,
             updated_at=row.updated_at,
             has_embedding=row.embedding is not None,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class KnowledgeUnitDTO:
-    """A structured knowledge unit (#357), immutable snapshot for callers.
-
-    ``kind`` is ``'case'`` for the PoC (problem → action → result). ``source_type``/
-    ``source_id`` link back to the raw record it was extracted from (provenance).
-    ``review_status`` tells a caller whether the unit is trusted (``'approved'``).
-    ``has_embedding`` mirrors the other DTOs — the vector itself is never leaked.
-    """
-
-    id: int
-    kind: str
-    problem: str | None
-    action: str | None
-    result: str | None
-    topics: tuple[str, ...]
-    industry: str | None
-    source_type: str
-    source_id: str
-    confidence: float | None
-    review_status: str
-    has_embedding: bool
-    created_at: dt.datetime | None
-
-    @classmethod
-    def from_row(cls, row: KnowledgeUnit) -> KnowledgeUnitDTO:
-        return cls(
-            id=row.id,
-            kind=row.kind,
-            problem=row.problem,
-            action=row.action,
-            result=row.result,
-            topics=tuple(row.topics or ()),
-            industry=row.industry,
-            source_type=row.source_type,
-            source_id=row.source_id,
-            confidence=row.confidence,
-            review_status=row.review_status,
-            has_embedding=row.embedding is not None,
-            created_at=row.created_at,
         )

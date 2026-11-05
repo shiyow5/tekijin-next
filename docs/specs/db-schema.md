@@ -5,7 +5,7 @@ TEKIJIN のデータベース設計。**4層**で構成する。
 - **A. 入力データ層** … 合成データ（PR #19）が埋める、社員・プロフィール・チャット。日報・案件は #97 で表ごと消した（`company-v1` タグに残る）。PR #18 の ER をベースとし、本ドキュメントを正とする。
 - **B. アプリ実行時テーブル** … 質問・回答・推薦・計測など、アプリ稼働で溜まるデータ（技術仕様 §4 準拠）。
 - **C. 専門性グラフ** … 表としては持たない。`person_topic_edges` と `evidence` は読む側が無かったため #89 で削除した（`company-v1` タグに残る）。
-- **D. 形式知層** … 生データから抽出した構造化ケース知識 `knowledge_units`（#357/#448＝蓄積＝主軸）。
+- **D. 形式知層** … KCS形式の知識 `knowledge_articles` と、その出典 `knowledge_sources`（#112、R6）。
 
 他テーブルはすべて `EMPLOYEES` の「誰」を FK で指す。永続化は PostgreSQL 16 + pgvector 1本（LangGraph の checkpoints は PostgresSaver が自動管理し、本図には含めない）。
 
@@ -218,44 +218,64 @@ erDiagram
 
 ---
 
-## D. 形式知層（#357/#448＝蓄積＝主軸の実体）
+## D. 形式知層(#112、R6)
 
-生データ（社員間チャット・解決済スレッド）から LLM で蒸留した**構造化ケース知識**。graph からは呼ばない
-オフライン抽出バッチ（`knowledge/chat.py` チャット）と解決済スレッドの取り込み（`knowledge/slack_thread.py`）が upsert し、
-埋め込み索引を張れば C4／自己回答（System1）が再利用する。承認（`review_status`）まで検索経路に出さない（#354）。
+組織の知識を、KCS(Knowledge-Centered Service)の形で持つ。下書きは `data/knowledge.py` の `create_draft` で入り、組織の管理者がWebの「知識」画面で確認する。質問に答えるのは確認済み(verified)の知識だけで、質問者の組織のもの、かつ質問者が読める出典から作られたものに限る。会社向けの `knowledge_units` は使わなくなった。古いDBには表が残るが、どこからも読まない。
 
 ```mermaid
 erDiagram
-  KNOWLEDGE_UNITS {
-    uuid id PK
+  KNOWLEDGE_ARTICLES ||--o{ KNOWLEDGE_SOURCES : "出典"
+  SOURCE_ITEMS ||--o{ KNOWLEDGE_SOURCES : ""
+  CHANNEL_MESSAGES ||--o{ KNOWLEDGE_SOURCES : ""
+  QUESTIONS ||--o{ KNOWLEDGE_SOURCES : ""
+  KNOWLEDGE_ARTICLES {
+    int id PK
+    int org_id FK
     string kind
-    text problem
-    text action
-    text result
-    text_array topics
-    string industry
-    string source_type
-    string source_id
-    float confidence
-    string review_status
-    vector embedding
+    text issue
+    text environment
+    text resolution
+    text cause
+    string state
+    int reuse_count
+    int demand_count
+    timestamp last_used_at
+    int superseded_by FK
+    int author_id FK
+    int verifier_id FK
     timestamp created_at
+    timestamp updated_at
+    timestamp verified_at
+    vector embedding
+  }
+  KNOWLEDGE_SOURCES {
+    int id PK
+    int article_id FK
+    int source_item_id FK
+    int channel_message_id FK
+    string question_id FK
+    text quote
   }
 ```
 
 | カラム | 説明 |
 |---|---|
-| `kind` | `case`（問題→打ち手→結果）/ `procedure` / `decision`（CHECK 制約） |
-| `problem` / `action` / `result` | ケースの中身（`result` は未確定なら NULL） |
-| `topics` | 正規22語彙のトピック（解決済スレッドは質問のタグ継承、チャットは LLM 提案を `normalize_topics` でスナップ） |
-| `industry` | 業種（明示があるときのみ） |
-| `source_type` / `source_id` | 出典（`chat`/`slack_thread` 等）。**`UNIQUE(source_type, source_id)`** で冪等 upsert |
-| `confidence` | 抽出の確信度（0.0–1.0） |
-| `review_status` | `unreviewed` / `approved` / `rejected`（CHECK）。既定は検索で `approved` のみ露出 |
-| `embedding` | ケーステキスト（problem+action+result）の dense ベクトル。索引後に検索で再利用 |
+| `kind` | `case`(困りごとと解決)/ `procedure`(手順)/ `fact`(事実・決まりごと)/ `decision`(決めたことと理由) |
+| `issue` | 困りごと、または問い。質問者の言葉に近い形 |
+| `environment` / `cause` | 成り立つ場面と原因。任意 |
+| `resolution` | 答え。空なら `state` は必ず `wip`(CHECK制約) |
+| `state` | `wip`(答えが無い)/ `draft`(確認待ち)/ `verified`(確認済み)/ `retired`(引退) |
+| `reuse_count` / `last_used_at` | 回答に使った回数と最後に使った日時 |
+| `demand_count` | 下書きのうちに、答えられたはずの質問が来た回数。確認待ちの一覧はこの順に並ぶ |
+| `superseded_by` | 引退させたとき、置き換えた先の知識 |
+| `author_id` / `verifier_id` | 作成者と確認者(メンバー)。設定ファイルの管理者が確認したときは `verifier_id` が空 |
+| `embedding` | issue・environment・resolution・cause をつないだ文の埋め込み。編集すると空にして作り直す |
 
-> **索引**: `GIN(topics)`。**measure-first の結果（#448）**: 合成チャットは抽出0件（ケース不在＝データの限界・手法は正）、
-> 日報は 25/30 抽出（陽性対照）。実データ（解決済スレッド）で価値が出る。
+`knowledge_sources` は、`source_item_id`(取り込んだ資料や会話)、`channel_message_id`(Discordの1発言)、`question_id`(依頼して答えてもらった質問)のどれか1つだけを持つ(CHECK制約)。`quote` は根拠にした箇所。1つの出典から複数の知識を作れ、1つの知識が複数の出典を持てる。
+
+見える範囲: 知識は、出典のすべてを読める人にだけ見える。非公開チャンネルの発言や、Webで隠した会話から作った知識は、読めない人には一覧にも回答にも出ない。出典の無い知識は組織の全員に見える。
+
+既存のDBには `python -m tekijin.data.migrate` で2つの表を足す(データは消さない)。
 
 ---
 

@@ -15,6 +15,7 @@ from tekijin.api.discord_ingest_routes import router as discord_ingest_router
 from tekijin.api.discord_routes import login_router as discord_login_router
 from tekijin.api.discord_routes import router as discord_router
 from tekijin.api.health import router as health_router
+from tekijin.api.knowledge_routes import router as knowledge_router
 from tekijin.api.rate_limit import SlidingWindowLimiter
 from tekijin.api.routes import router as api_router
 from tekijin.api.service import AgentService
@@ -142,4 +143,5 @@ def create_app(agent_service: AgentService | None = None) -> FastAPI:
     app.include_router(discord_login_router)
     app.include_router(discord_ingest_router)
     app.include_router(source_router)
+    app.include_router(knowledge_router)
     return app

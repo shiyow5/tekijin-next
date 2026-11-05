@@ -16,10 +16,10 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from tekijin.api.org_access import org_id_for, scope_for
 from tekijin.api.service import AgentService
 from tekijin.auth.deps import require_principal
 from tekijin.auth.principal import Principal
-from tekijin.config import get_settings
 from tekijin.data.conversations import DISCORD, delete_conversation
 from tekijin.data.db import session_scope
 from tekijin.data.sources import (
@@ -33,8 +33,7 @@ from tekijin.data.sources import (
     manual_external_id,
     upsert_source_item,
 )
-from tekijin.data.visibility import EVERYTHING, PUBLIC, SourceScope
-from tekijin.models.tables import Employee, Organization, SourceItem
+from tekijin.models.tables import Employee, SourceItem
 
 router = APIRouter(prefix="/sources")
 
@@ -96,30 +95,6 @@ def _service(request: Request) -> AgentService:
     return service
 
 
-def _org_id(session: Session, principal: Principal) -> int:
-    if principal.employee_id is not None:
-        member = session.get(Employee, principal.employee_id)
-        if member is None or member.org_id is None:
-            raise HTTPException(
-                status_code=403, detail="組織に属していないため、資料を扱えません。"
-            )
-        return member.org_id
-    guild_id = get_settings().discord_guild_id
-    org = (
-        session.scalars(
-            select(Organization).where(Organization.discord_guild_id == str(guild_id))
-        ).first()
-        if guild_id
-        else None
-    )
-    if org is None:
-        raise HTTPException(
-            status_code=409,
-            detail="組織がまだありません。Discordのサーバーで一度TEKIJINを使うと作られます。",
-        )
-    return org.id
-
-
 @router.get("", response_model=SourceListResponse)
 def list_sources(
     request: Request,
@@ -128,8 +103,8 @@ def list_sources(
     principal: Principal = Depends(require_principal),
 ) -> SourceListResponse:
     with _service(request).session_factory() as session:
-        org_id = _org_id(session, principal)
-        scope = _scope(principal)
+        org_id = org_id_for(session, principal)
+        scope = scope_for(principal)
         total = count_source_items(session, org_id=org_id, scope=scope)
         items = list_source_items(session, org_id=org_id, scope=scope, offset=offset, limit=limit)
         names = _author_names(session, items)
@@ -142,20 +117,16 @@ def source_detail(
 ) -> SourceDetail:
     with _service(request).session_factory() as session:
         found = get_source_item(
-            session, item_id=item_id, org_id=_org_id(session, principal), scope=_scope(principal)
+            session,
+            item_id=item_id,
+            org_id=org_id_for(session, principal),
+            scope=scope_for(principal),
         )
         if found is None:
             raise HTTPException(status_code=404, detail="資料が見つかりません。")
         summary, body = found
         names = _author_names(session, [summary])
     return SourceDetail(**_list_item(summary, names, principal).model_dump(), body=body)
-
-
-def _scope(principal: Principal) -> SourceScope:
-    """The web does not know a member's Discord permissions, so a member sees what
-    everyone in the server can read (#85). The admin sees everything."""
-
-    return EVERYTHING if principal.is_admin else PUBLIC
 
 
 def _author_names(session: Session, items: list[SourceItemSummary]) -> dict[int, str]:
@@ -190,7 +161,7 @@ def add_source(
 ) -> SourceCreateResponse:
     service = _service(request)
     with session_scope(service.session_factory) as session:
-        org_id = _org_id(session, principal)
+        org_id = org_id_for(session, principal)
         try:
             result = upsert_source_item(
                 session,
@@ -218,7 +189,7 @@ def delete_source(
     item_id: int, request: Request, principal: Principal = Depends(require_principal)
 ) -> SourceDeleteResponse:
     with session_scope(_service(request).session_factory) as session:
-        org_id = _org_id(session, principal)
+        org_id = org_id_for(session, principal)
         item = session.get(SourceItem, item_id)
         if item is None or item.org_id != org_id:
             raise HTTPException(status_code=404, detail="資料が見つかりません。")

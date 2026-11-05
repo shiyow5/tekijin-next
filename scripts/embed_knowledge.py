@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Embed knowledge units into their pgvector column (#357 slice 3).
+"""Embed knowledge articles into their pgvector column (#112).
 
-Runs AFTER an extraction (e.g. ``scripts/extract_chat_knowledge.py``) has populated
-``knowledge_units`` (embedding starts NULL). Uses the REAL local embedding model, so it needs the ML
-deps and the DGX box — never CI. By default only fills NULL embeddings; ``--all``
-re-embeds every unit (e.g. after a re-extraction changed the text).
+Runs after drafts were added to ``knowledge_articles`` (their embedding starts
+NULL). The app embeds an article when it is edited or verified on the web, so this
+is for drafts written in bulk. Uses the REAL local embedding model, so it needs the
+ML deps — never CI. By default only fills NULL embeddings; ``--all`` re-embeds
+every article that is not retired.
 
     PYTHONPATH=backend/src CUDA_VISIBLE_DEVICES="" HF_HUB_OFFLINE=1 \
       TEKIJIN_EMBEDDING_MODEL=/home/team_a/models/Nemotron-3-Embed-1B-BF16 \
@@ -30,7 +31,7 @@ def main() -> int:
         "--all",
         dest="only_missing",
         action="store_false",
-        help="re-embed every unit, not just those with a NULL embedding",
+        help="re-embed every article, not just those with a NULL embedding",
     )
     ap.add_argument("--batch-size", type=int, default=64)
     args = ap.parse_args()
@@ -41,7 +42,7 @@ def main() -> int:
 
     from tekijin.config import get_settings
     from tekijin.data.db import get_engine, get_sessionmaker, session_scope
-    from tekijin.knowledge.index import embed_knowledge_units
+    from tekijin.knowledge.index import embed_articles
     from tekijin.retrieval.embedding import SentenceTransformerEmbedder
 
     settings = get_settings()
@@ -62,10 +63,10 @@ def main() -> int:
 
     factory = get_sessionmaker(get_engine(url))
     with session_scope(factory) as session:
-        embedded = embed_knowledge_units(
+        embedded = embed_articles(
             session, embedder, only_missing=args.only_missing, batch_size=args.batch_size
         )
-    print(f"embedded knowledge units: {embedded}")
+    print(f"embedded knowledge articles: {embedded}")
     return 0
 
 

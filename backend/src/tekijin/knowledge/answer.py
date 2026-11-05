@@ -1,112 +1,166 @@
-"""Answer a question directly from structured knowledge units (#357 slice 4).
+"""Answer a question from the organization's verified knowledge (#112, R6).
 
-The #327 measurement proved the self-answer path cannot be opened by smarter C5
-routing (prior_answer is inseparable from person under every available signal —
-ADR-0007). The route into self-answer is instead the **knowledge layer**: when an
-approved case unit matches the query, compose the answer FROM its structure
-(問題 → 打ち手 → 結果) and cite its provenance.
+The answer is assembled from the articles' own fields (issue, environment,
+resolution, cause), with no LLM, so it says only what an admin verified. It cites
+each article (``ka_{id}``) and, after it, what the article was made from: a
+document (``src_{id}``, the same id a document answer cites), a Discord message (a
+link to it) or a past answer (``qa``).
 
-Crucially this composition is **deterministic — no LLM**. Because a knowledge unit
-is already structured, the answer is BUILT from its fields, so it cannot
-hallucinate: grounding is by construction, not by a model promising to stay
-faithful. This sidesteps both the routing-separation problem (#327) and the
-ungrounded-answer risk of an LLM composer (#291), and it is fast (#64).
-
-Returns the same :class:`SelfAnswerResult` shape the #291 self-answer terminal
-already consumes, so wiring this into the graph (a later slice) is a drop-in. The
-service primitive returns ``None`` when no approved knowledge is relevant, so the
-caller falls back to normal routing — never a degraded answer.
+:func:`answer_from_knowledge` returns ``None`` when nothing verified is close enough,
+so the caller routes the question as usual. The ``knowledge_retrieval_enabled`` flag
+is read by the caller, not here.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tekijin.agent.protocols import SelfAnswerResult
-from tekijin.data.dto import KnowledgeUnitDTO
-from tekijin.data.knowledge import search_knowledge_units
+from tekijin.data.knowledge import ArticleDTO, ArticleSource, article_sources, search_verified
+from tekijin.data.visibility import SourceScope
+from tekijin.models.tables import Answer
+from tekijin.retrieval.sources import SOURCE_KIND, source_citation_id
 
-# Citation id scheme for a knowledge unit: ``ku_{id}``. The existing #291 self-answer
-# citations are the raw source id (a past-answer ``qa_id`` or a document id, no
-# prefix — see retrieval/fragments.CitedEvidence), so the ``ku_`` prefix keeps a
-# knowledge citation distinct from those raw ids and lets the UI / #354 management
-# view resolve it back to the unit (and, through the unit, its source provenance).
-KNOWLEDGE_CITATION_PREFIX = "ku_"
+#: Citation id of a knowledge article. Distinct from the older ``ku_`` ids of the
+#: company-era knowledge units, which point at a table nothing reads any more.
+KNOWLEDGE_CITATION_PREFIX = "ka_"
+KNOWLEDGE_KIND = "knowledge"
+MESSAGE_KIND = "message"
+
+_INTRO = "確認済みの知識から答えます。"
+_LABELS = (("issue", "問い"), ("environment", "場面"), ("resolution", "答え"), ("cause", "原因"))
 
 
-def knowledge_citation_id(unit: KnowledgeUnitDTO) -> str:
-    return f"{KNOWLEDGE_CITATION_PREFIX}{unit.id}"
+@dataclass(frozen=True, slots=True)
+class KnowledgeAnswer:
+    answer: str
+    citations: list[dict[str, Any]]
+    article_ids: tuple[int, ...]
 
 
-def _format_case(unit: KnowledgeUnitDTO) -> str:
-    """Render one case unit as a compact 問題→打ち手→結果 block (present fields only)."""
+def knowledge_citation_id(article_id: int) -> str:
+    return f"{KNOWLEDGE_CITATION_PREFIX}{article_id}"
 
-    # Guard every optional field: problem/action are ``str | None`` on the DTO/column.
-    # The extraction pipeline's validator guarantees them for a ``case`` unit, but a
-    # manual write (#354) or a future procedure/decision kind could pass None — and a
-    # bare f-string would leak the literal "None" into a user-facing answer. Consistent
-    # with knowledge/index.unit_text, which is likewise defensive.
+
+def _format(article: ArticleDTO) -> str:
     lines = []
-    if unit.industry:
-        lines.append(f"【{unit.industry}】")
-    if unit.problem:
-        lines.append(f"課題: {unit.problem}")
-    if unit.action:
-        lines.append(f"打ち手: {unit.action}")
-    if unit.result:
-        lines.append(f"結果: {unit.result}")
+    for field, label in _LABELS:
+        value = getattr(article, field)
+        if value:
+            lines.append(f"{label}: {value}")
     return "\n".join(lines)
 
 
-def compose_knowledge_answer(
-    units: Sequence[KnowledgeUnitDTO], *, top_n: int = 3
-) -> SelfAnswerResult:
-    """Deterministically compose a grounded answer from structured case units.
+def compose_knowledge_answer(articles: Sequence[ArticleDTO]) -> str | None:
+    """The answer text built from ``articles``, or ``None`` when none has an answer."""
 
-    No LLM: the answer is assembled from the top ``top_n`` units' fields, so it is
-    grounded by construction and cites each unit (``ku_{id}``). Returns
-    ``grounded=False`` with no citations when ``units`` is empty — the caller then
-    falls back to routing rather than emitting an empty answer (matching the #291
-    self-answer contract: a grounded result always carries at least one citation).
-    """
+    usable = [a for a in articles if a.resolution]
+    if not usable:
+        return None
+    return _INTRO + "\n\n" + "\n\n".join(_format(a) for a in usable)
 
-    chosen = list(units)[:top_n]
-    if not chosen:
-        return SelfAnswerResult(answer="", cited_source_ids=[], grounded=False)
 
-    intro = "社内の類似ケースからの回答です。"
-    blocks = [_format_case(u) for u in chosen]
-    answer = intro + "\n\n" + "\n\n".join(blocks)
-    cited = [knowledge_citation_id(u) for u in chosen]
-    return SelfAnswerResult(answer=answer, cited_source_ids=cited, grounded=True)
+def _source_citation(source: ArticleSource, answer_ids: dict[str, str]) -> dict[str, Any] | None:
+    if source.source_item_id is not None:
+        citation: dict[str, Any] = {
+            "source_id": source_citation_id(source.source_item_id),
+            "kind": SOURCE_KIND,
+        }
+        if source.title:
+            citation["title"] = source.title
+        if source.url:
+            citation["url"] = source.url
+        return citation
+    if source.channel_message_id is not None:
+        citation = {"source_id": f"msg_{source.channel_message_id}", "kind": MESSAGE_KIND}
+        if source.channel_name:
+            citation["title"] = f"#{source.channel_name}"
+        if source.url:
+            citation["url"] = source.url
+        return citation
+    if source.question_id is not None and source.question_id in answer_ids:
+        return {"source_id": answer_ids[source.question_id], "kind": "qa"}
+    return None
+
+
+def _answer_ids(session: Session, question_ids: set[str]) -> dict[str, str]:
+    """The latest recorded answer of each question (what a ``qa`` citation opens)."""
+
+    if not question_ids:
+        return {}
+    rows = session.execute(
+        select(Answer.question_id, Answer.id)
+        .where(Answer.question_id.in_(question_ids))
+        .order_by(Answer.created_at, Answer.id)
+    ).all()
+    return {question_id: answer_id for question_id, answer_id in rows}
+
+
+def knowledge_citations(
+    session: Session, articles: Sequence[ArticleDTO], *, org_id: int, scope: SourceScope
+) -> list[dict[str, Any]]:
+    """Each article's citation, followed by those of its sources (no duplicates)."""
+
+    sources = article_sources(session, [a.id for a in articles], org_id=org_id, scope=scope)
+    answer_ids = _answer_ids(
+        session,
+        {s.question_id for group in sources.values() for s in group if s.question_id},
+    )
+    citations: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for article in articles:
+        entries: list[dict[str, Any] | None] = [
+            {
+                "source_id": knowledge_citation_id(article.id),
+                "kind": KNOWLEDGE_KIND,
+                "title": article.issue,
+            }
+        ]
+        entries += [_source_citation(s, answer_ids) for s in sources.get(article.id, [])]
+        for entry in entries:
+            if entry is None:
+                continue
+            key = (entry["kind"], entry["source_id"])
+            if key not in seen:
+                seen.add(key)
+                citations.append(entry)
+    return citations
 
 
 def answer_from_knowledge(
     session: Session,
-    query_vec: Sequence[float],
     *,
+    org_id: int,
+    query_vec: Sequence[float],
+    scope: SourceScope,
+    min_similarity: float,
     top_k: int = 5,
     top_n: int = 3,
-    min_similarity: float = 0.0,
-) -> SelfAnswerResult | None:
-    """Search approved knowledge and compose an answer, or ``None`` if none is relevant.
+) -> KnowledgeAnswer | None:
+    """Answer from the best verified articles at or above ``min_similarity``.
 
-    Retrieves the top ``top_k`` approved units by cosine similarity, keeps those at
-    or above ``min_similarity`` (the relevance floor — calibrated on the eval, see
-    the #357 slice-4b A/B), and composes from the best ``top_n``. ``None`` means "no
-    approved knowledge answers this" so the caller routes normally; this never
-    returns an ungrounded answer. Pure (no config/flag read) — the ``knowledge_
-    retrieval_enabled`` gate lives at the call site.
-
-    NOTE for the slice-4c wiring: ``min_similarity`` defaults to ``0.0`` (no floor)
-    to keep this pure; the live caller MUST pass ``settings.knowledge_answer_min_
-    similarity`` explicitly, or every retrieved unit would qualify.
+    ``None`` means nothing verified answers this, and the question is routed as
+    usual. Only knowledge of ``org_id`` that ``scope`` may see is used.
     """
 
-    hits = search_knowledge_units(session, query_vec, top_k=top_k, review_status="approved")
-    relevant = [unit for unit, sim in hits if sim >= min_similarity]
-    if not relevant:
+    hits = search_verified(
+        session,
+        org_id=org_id,
+        query_vec=query_vec,
+        scope=scope,
+        top_k=top_k,
+        min_similarity=min_similarity,
+    )
+    chosen = [a for a, _ in hits if a.resolution][:top_n]
+    text = compose_knowledge_answer(chosen)
+    if text is None:
         return None
-    return compose_knowledge_answer(relevant, top_n=top_n)
+    return KnowledgeAnswer(
+        answer=text,
+        citations=knowledge_citations(session, chosen, org_id=org_id, scope=scope),
+        article_ids=tuple(a.id for a in chosen),
+    )

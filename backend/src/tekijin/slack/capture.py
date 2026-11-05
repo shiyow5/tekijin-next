@@ -3,9 +3,9 @@
 The "解決した" button is pressed by almost no one — the moment a thread is solved,
 the person has already moved on. So capture must ride the conversation instead: a
 participant reacting ✅ on the pair-channel thread is enough to distil the resolved
-Q&A into a knowledge unit. The unit lands in the review queue as ``unreviewed`` (the
-"下書き箱") — created eagerly, so "no one pressed anything" already leaves a draft to
-review later; a future prompt/button just makes reviewing it faster.
+Q&A into a knowledge draft (``knowledge_articles``, #112). The draft lands in the
+admin's review queue (the "下書き箱") — created eagerly, so "no one pressed anything"
+already leaves a draft to review later; a future prompt/button just makes reviewing it faster.
 
 Gating (all must hold, else no-op):
 - ``slack_solve_capture_enabled`` is on (OFF by default — dormant).
@@ -23,23 +23,28 @@ immediately (mirrors ``notify.schedule_pending_handoff``).
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import threading
-from collections.abc import Sequence
 
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from tekijin.config import Settings, get_settings
 from tekijin.data.db import session_scope
-from tekijin.data.knowledge import get_knowledge_unit_by_source, set_review_status
+from tekijin.data.knowledge import (
+    ArticleDTO,
+    articles_from_question,
+    retire_article,
+    verify_article,
+)
 from tekijin.data.messages import thread_parties
 from tekijin.data.slack_channel_links import get_channel_link_by_channel_id
 from tekijin.data.slack_links import get_slack_link_by_slack_user_id
 from tekijin.data.slack_message_anchors import thread_for_message
-from tekijin.knowledge.extract import CaseExtractor, extract_and_store
-from tekijin.knowledge.slack_thread import SLACK_THREAD_SOURCE_TYPE, slack_thread_source
+from tekijin.knowledge.extract import DraftExtractor, ExtractionReport, Extractor, extract_and_store
+from tekijin.knowledge.slack_thread import slack_thread_source
 from tekijin.slack.client import post_message
 
 logger = logging.getLogger(__name__)
@@ -49,7 +54,7 @@ SOLVE_REACTIONS = frozenset({"white_check_mark", "heavy_check_mark", "ok"})
 
 #: Interactivity action ids for the in-thread knowledge prompt. keep/discard is the
 #: first gate (#476); approve confirms the shown draft (#527 — the review loop runs in
-#: Slack, no web hop) and flips it to ``approved`` so retrieval/self-answer trust it.
+#: Slack, no web hop) and marks it ``verified`` so it can answer questions.
 KNOWLEDGE_KEEP_ACTION = "tekijin_knowledge_keep"
 KNOWLEDGE_DISCARD_ACTION = "tekijin_knowledge_discard"
 KNOWLEDGE_APPROVE_ACTION = "tekijin_knowledge_approve"
@@ -93,7 +98,7 @@ _no_case_notified_lock = threading.Lock()
 # One extraction-start narrative per thread/process. A skipped non-case retains
 # the claim so repeated closing phrases do not spam progress. A transient error
 # releases it so an explicit retry can narrate a fresh attempt. Successful captures
-# are durably deduped by their KnowledgeUnit before this set is consulted.
+# are durably deduped by their knowledge draft before this set is consulted.
 _capture_progress_notified: set[int] = set()
 _capture_progress_notified_lock = threading.Lock()
 
@@ -166,25 +171,45 @@ def is_thanks_utterance(text: str) -> bool:
     return any(value.endswith(marker) for marker in _THANKS_UTTERANCES)
 
 
+def thread_key(thread_id: int) -> str:
+    """The label a capture reports for a thread (logs and callers)."""
+
+    return f"slack_thread_{thread_id}"
+
+
+def thread_draft(session, thread_id: int) -> ArticleDTO | None:
+    """The knowledge made from a thread's question, in any state, or ``None``.
+
+    A retired one counts: a discarded thread stays discarded.
+    """
+
+    parties = thread_parties(session, thread_id)
+    if parties is None:
+        return None
+    found = articles_from_question(session, parties["question_id"])
+    return found[0] if found else None
+
+
 def _extract_thread_draft(
-    session, thread_id: int, extractor: CaseExtractor, *, parties=None
-) -> tuple[str | None, dict[str, int] | None]:
+    session, thread_id: int, extractor: Extractor, *, parties=None
+) -> tuple[str | None, ExtractionReport | None]:
     """Distil one resolved thread into a knowledge draft.
 
-    Returns ``(source_id, counts)``: ``source_id`` is the stored draft's id, or ``None``
-    when nothing was stored; ``counts`` is ``extract_and_store``'s tally (so a caller can
-    tell a genuine "not a case" decision — ``skipped`` — from a transient extraction
-    error — ``errored``), or ``None`` when the thread could not even be assembled.
-
-    Shared by the reaction and utterance paths. ``parties`` is threaded through to
-    avoid re-running ``thread_parties`` when the caller already has it.
+    Returns ``(key, report)``: ``key`` is :func:`thread_key` when a draft was stored,
+    else ``None``; ``report`` is ``extract_and_store``'s tally (so a caller can tell
+    a genuine "nothing to keep" decision — ``skipped`` — from a transient error —
+    ``errored``), or ``None`` when the thread could not even be assembled.
     """
 
     source = slack_thread_source(session, thread_id, parties=parties)
     if source is None:
         return None, None
-    counts = extract_and_store(session, [source], extractor)
-    return (source.source_id if counts["stored"] else None), counts
+    report = extract_and_store(session, [source], extractor, now=_now())
+    return (thread_key(thread_id) if report.stored else None), report
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC).replace(tzinfo=None)
 
 
 def capture_resolved_thread(
@@ -193,7 +218,7 @@ def capture_resolved_thread(
     channel_id: str,
     message_ts: str | None,
     reactor_slack_user_id: str,
-    extractor: CaseExtractor | None = None,
+    extractor: Extractor | None = None,
     settings: Settings | None = None,
 ) -> str | None:
     """Distil the reacted-on thread into a knowledge draft.
@@ -205,11 +230,11 @@ def capture_resolved_thread(
     the message has no anchor (never mirrored — a bot post, or a message from before
     capture was enabled) does it fall back to ``current_thread_id`` (best-effort).
 
-    Returns the stored source id when a unit was upserted, else ``None`` (any gate
-    failed, or the model declined the record as not-a-case). Read-safe and
-    idempotent: storage is keyed on the thread's source id, so re-reacting refreshes
-    the same draft in place. Errors from extraction/storage are isolated per source
-    by :func:`extract_and_store`; this function only opens the transaction.
+    Returns :func:`thread_key` when a draft was stored, else ``None`` (any gate
+    failed, the thread already has a draft, or the model found nothing to keep).
+    A thread is drafted at most once: re-reacting finds the existing draft and does
+    nothing. Errors from extraction/storage are isolated by
+    :func:`extract_and_store`; this function only opens the transaction.
     """
 
     settings = settings or get_settings()
@@ -237,7 +262,9 @@ def capture_resolved_thread(
             parties["responder_id"],
         ):
             return None  # a bystander in the channel cannot trigger capture
-        extractor = extractor or CaseExtractor(settings=settings)
+        if articles_from_question(session, parties["question_id"]):
+            return None  # already drafted (or discarded) for this thread
+        extractor = extractor or DraftExtractor(settings=settings)
         # Reaction path stores silently (a ✅ is itself the "keep" gesture — no prompt,
         # and no no-case notice); only the stored id matters here.
         stored, _counts = _extract_thread_draft(session, thread_id, extractor, parties=parties)
@@ -324,15 +351,7 @@ def _clip(value: str | None) -> str:
     return text_value
 
 
-def review_blocks(
-    *,
-    thread_id: int,
-    problem: str | None,
-    action: str | None,
-    result: str | None,
-    topics: Sequence[str] | None,
-    source_id: str,
-) -> list[dict]:
+def review_blocks(*, thread_id: int, article: ArticleDTO) -> list[dict]:
     """Block Kit that shows a draft's content in-thread with 承認する / 破棄する (#527).
 
     This is the "確認" surface: pressing 残す replaces the keep/discard prompt with this,
@@ -340,7 +359,6 @@ def review_blocks(
     Slack. Buttons carry ``thread_id`` (same provenance the keep/discard prompt used)."""
 
     value = json.dumps({"thread_id": thread_id})
-    topic_line = "、".join(topics or []) or "（なし）"
     return [
         {
             "type": "section",
@@ -349,13 +367,16 @@ def review_blocks(
         {
             "type": "section",
             "fields": [
-                {"type": "mrkdwn", "text": f"*課題*\n{_clip(problem)}"},
-                {"type": "mrkdwn", "text": f"*対処*\n{_clip(action)}"},
-                {"type": "mrkdwn", "text": f"*結果*\n{_clip(result)}"},
-                {"type": "mrkdwn", "text": f"*トピック*\n{topic_line}"},
+                {"type": "mrkdwn", "text": f"*問い*\n{_clip(article.issue)}"},
+                {"type": "mrkdwn", "text": f"*答え*\n{_clip(article.resolution)}"},
+                {"type": "mrkdwn", "text": f"*場面*\n{_clip(article.environment)}"},
+                {"type": "mrkdwn", "text": f"*原因*\n{_clip(article.cause)}"},
             ],
         },
-        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"出典: {source_id}"}]},
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"出典: {thread_key(thread_id)}"}],
+        },
         {
             "type": "actions",
             "elements": [
@@ -383,7 +404,7 @@ def capture_and_prompt(
     *,
     channel_id: str,
     thread_id: int,
-    extractor: CaseExtractor | None = None,
+    extractor: Extractor | None = None,
     settings: Settings | None = None,
 ) -> str | None:
     """Utterance path (#476): eagerly draft the resolved thread + post an in-thread
@@ -420,9 +441,7 @@ def capture_and_prompt(
         session.execute(
             text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 476, "obj": thread_id}
         )
-        existing = get_knowledge_unit_by_source(
-            session, SLACK_THREAD_SOURCE_TYPE, f"slack_thread_{thread_id}"
-        )
+        existing = thread_draft(session, thread_id)
         if existing is not None:
             return None  # already captured + prompted for this thread (stay silent)
         progress_claimed = _claim_capture_progress(thread_id)
@@ -432,7 +451,7 @@ def capture_and_prompt(
                 channel_id=channel_id,
                 text=CAPTURE_STARTED_TEXT,
             )
-        extractor = extractor or CaseExtractor(settings=settings)
+        extractor = extractor or DraftExtractor(settings=settings)
         try:
             stored, counts = _extract_thread_draft(session, thread_id, extractor)
         except Exception:
@@ -455,13 +474,13 @@ def capture_and_prompt(
         # genuine decision (skipped), at most once per thread; a transient error
         # (errored) or an unassemblable thread (counts is None) gets a separate
         # retry notice rather than the factually wrong "見つからなかった" reason.
-        if counts is not None and counts.get("skipped") and _claim_no_case_notice(thread_id):
+        if counts is not None and counts.skipped and _claim_no_case_notice(thread_id):
             post_message(
                 bot_token=settings.slack_bot_token,
                 channel_id=channel_id,
                 text=_NO_CASE_NOTICE,
             )
-        elif (counts is None or counts.get("errored")) and progress_claimed:
+        elif (counts is None or counts.errored) and progress_claimed:
             # Unlike a deliberate non-case, a transient failure may succeed on an
             # explicit retry. Close the visible "creating" state and release only
             # THIS attempt's claim so that retry can narrate itself again (#529).
@@ -505,14 +524,28 @@ def schedule_solve_prompt(
 
 
 def discard_thread_draft(session, thread_id: int) -> bool:
-    """Mark a thread's knowledge draft rejected ("残さない"). Returns whether one was
-    found. Rejecting (not deleting) is durable: a later re-capture upserts content
-    but never revives ``review_status``, so a discarded thread stays discarded."""
+    """Retire a thread's knowledge draft ("残さない"). Returns whether one was found.
 
-    unit = get_knowledge_unit_by_source(
-        session, SLACK_THREAD_SOURCE_TYPE, f"slack_thread_{thread_id}"
-    )
-    if unit is None:
+    Retiring (not deleting) is durable: a later capture finds the retired draft and
+    does not make a new one, so a discarded thread stays discarded."""
+
+    article = thread_draft(session, thread_id)
+    if article is None:
         return False
-    set_review_status(session, unit.id, "rejected")
+    retire_article(session, article.id, org_id=article.org_id, now=_now())
+    return True
+
+
+def approve_thread_draft(session, thread_id: int, *, verifier_id: int | None) -> bool:
+    """Verify a thread's draft from the in-thread "承認する" button (#527).
+
+    A party of the thread confirms what was said in it; the web review screen
+    (#112) is where an admin checks drafts from every other source. Returns whether
+    a draft with an answer was verified.
+    """
+
+    article = thread_draft(session, thread_id)
+    if article is None or not article.resolution:
+        return False
+    verify_article(session, article.id, org_id=article.org_id, verifier_id=verifier_id, now=_now())
     return True

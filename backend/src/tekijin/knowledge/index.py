@@ -1,69 +1,59 @@
-"""Embed knowledge units into their pgvector column (#357 slice 3, index side).
+"""Embed knowledge articles into their pgvector column (#112).
 
-The extraction pipeline (slice 2) leaves ``knowledge_units.embedding`` NULL — a
-unit is structured text until it is indexed. This module encodes each unit's case
-text (``problem`` + ``action`` + ``result``) with an :class:`Embedder` and writes
-the vector back, the counterpart to :func:`search_knowledge_units` which reads it
-at query time. Embedder-agnostic (dependency-injected) so tests use a deterministic
-fake and ``scripts/embed_knowledge.py`` wires the real Nemotron encoder.
+A draft is stored without a vector; this encodes each article's KCS text (issue,
+environment, resolution, cause) and writes it back, the counterpart of
+:func:`tekijin.data.knowledge.search_verified`. Embedder-agnostic, so tests use a
+deterministic fake and the app and ``scripts/embed_knowledge.py`` the real encoder.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tekijin.models.tables import KnowledgeUnit
+from tekijin.models.tables import KnowledgeArticle
 from tekijin.retrieval.embedding import PASSAGE, Embedder
 
 
-def unit_text(row: KnowledgeUnit) -> str:
-    """The text indexed for a unit: problem → action → result (present parts only).
+def article_text(row: KnowledgeArticle) -> str:
+    """The text an article is found by: issue, environment, resolution, cause."""
 
-    A case is retrieved by its situation and its response, so all three fields form
-    the passage. ``result`` is often NULL (未確定) and is simply omitted then.
-    """
-
-    parts = [row.problem or "", row.action or ""]
-    if row.result:
-        parts.append(row.result)
-    return "\n".join(p for p in parts if p).strip()
+    parts = [row.issue, row.environment, row.resolution, row.cause]
+    return "\n".join(p.strip() for p in parts if p and p.strip())
 
 
-def embed_knowledge_units(
+def embed_articles(
     session: Session,
     embedder: Embedder,
     *,
+    article_ids: Sequence[int] | None = None,
     only_missing: bool = True,
     batch_size: int = 64,
 ) -> int:
-    """Encode and persist embeddings for knowledge units; returns the count embedded.
+    """Encode and store vectors; returns how many were written.
 
-    ``only_missing`` (default) skips units that already carry a vector so re-runs
-    only fill gaps; pass ``False`` to re-embed all (e.g. after an extraction refresh
-    changed the text). Units whose case text is empty are skipped. ``rejected`` units
-    are NEVER embedded — a human discarded them, so spending encoder/DB writes on
-    them is waste; ``unreviewed`` and ``approved`` are both embedded so that an
-    approval after indexing needs no re-embed (:func:`search_knowledge_units` still
-    gates on ``approved`` at query time). The caller owns the transaction; this
-    flushes.
+    ``article_ids`` limits the run to those articles. ``only_missing`` (default)
+    skips articles that already have a vector. Retired articles are never embedded:
+    nothing searches them. Drafts are, so verifying one needs no second pass and the
+    review queue can count the questions a draft would have answered.
     """
 
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
-
-    stmt = select(KnowledgeUnit).where(KnowledgeUnit.review_status != "rejected")
+    stmt = select(KnowledgeArticle).where(KnowledgeArticle.state != "retired")
+    if article_ids is not None:
+        if not article_ids:
+            return 0
+        stmt = stmt.where(KnowledgeArticle.id.in_(list(article_ids)))
     if only_missing:
-        stmt = stmt.where(KnowledgeUnit.embedding.is_(None))
-    rows = list(session.scalars(stmt))
-
-    pending = [(row, text) for row in rows if (text := unit_text(row))]
-    embedded = 0
+        stmt = stmt.where(KnowledgeArticle.embedding.is_(None))
+    pending = [(row, t) for row in session.scalars(stmt) if (t := article_text(row))]
     for start in range(0, len(pending), batch_size):
         batch = pending[start : start + batch_size]
-        vectors = embedder.encode([text for _, text in batch], kind=PASSAGE)
+        vectors = embedder.encode([t for _, t in batch], kind=PASSAGE)
         for (row, _text), vector in zip(batch, vectors, strict=True):
             row.embedding = vector
-            embedded += 1
     session.flush()
-    return embedded
+    return len(pending)

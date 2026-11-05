@@ -70,6 +70,7 @@ from tekijin.channels.notifier import get_notifier
 from tekijin.data.db import session_scope
 from tekijin.data.feedback import record_feedback
 from tekijin.data.handoff import employee_brief, question_consult_method, responder_reuse_stats
+from tekijin.data.knowledge import record_demand, record_use
 from tekijin.data.messages import create_message, thread_parties
 from tekijin.data.visibility import PUBLIC, SourceScope, scope_to_state
 from tekijin.data.writes import (
@@ -95,7 +96,7 @@ from tekijin.data.writes import (
     update_question_route,
     update_question_topics,
 )
-from tekijin.knowledge.index import embed_knowledge_units
+from tekijin.knowledge.index import embed_articles
 from tekijin.retrieval.embedding import PASSAGE, Embedder
 from tekijin.retrieval.experts import DbExpertFinder
 from tekijin.retrieval.sources import ChunkSearch
@@ -852,16 +853,16 @@ class AgentService:
             logger.exception("failed to capture the answer; the hand-off proceeds without it")
 
     def schedule_knowledge_embed(self) -> None:
-        """Fire-and-forget: fill embeddings for any knowledge units missing one, so a
-        unit just approved in Slack becomes searchable by ``knowledge_answer`` without a
-        manual indexing pass (#531). Runs in a daemon thread — encoding can exceed
-        Slack's interactivity budget — and swallows/logs its own errors (a missing
-        embedding leaves the unit un-searchable, never crashes the approve click)."""
+        """Fire-and-forget: fill embeddings for any knowledge articles missing one, so
+        an article just verified in Slack becomes searchable by ``knowledge_answer``
+        without a manual indexing pass (#531, #112). Runs in a daemon thread — encoding
+        can exceed Slack's interactivity budget — and swallows/logs its own errors (a
+        missing embedding leaves the article un-searchable, never crashes the click)."""
 
         def _run() -> None:
             try:
                 with session_scope(self._session_factory) as session:
-                    embed_knowledge_units(session, self._embedder)
+                    embed_articles(session, self._embedder)
             except Exception:  # noqa: BLE001 - background thread boundary
                 logger.warning("scheduled knowledge embed failed", exc_info=True)
 
@@ -1649,6 +1650,7 @@ class AgentService:
                             if (data or {}).get("self_answer_grounded"):
                                 route = "knowledge"
                                 self._persist_route(question_id, {"route": "knowledge"})
+                            self._persist_knowledge_use(data)
                         elif node == "c5_route":
                             route = (data or {}).get("route") or route
                             self._persist_route(question_id, data)
@@ -1807,6 +1809,21 @@ class AgentService:
             # so the question is resolved the moment it is routed there (#97).
             if route == "document":
                 mark_question_resolved(session, question_id, self._now_factory())
+
+    def _persist_knowledge_use(self, data: dict[str, Any] | None) -> None:
+        """Count the answer each verified article gave, and the questions each draft
+        would have answered (#112). Best-effort: a failed count never breaks the run."""
+
+        used = list((data or {}).get("knowledge_article_ids") or [])
+        wanted = list((data or {}).get("knowledge_draft_ids") or [])
+        if not used and not wanted:
+            return
+        try:
+            with session_scope(self._session_factory) as session:
+                record_use(session, used, now=self._now_factory())
+                record_demand(session, wanted)
+        except Exception:  # noqa: BLE001 - a counter must not take the answer down
+            logger.warning("failed to record knowledge use", exc_info=True)
 
     def _persist_self_answered(self, question_id: str | None) -> None:
         """Record a grounded self-answer (#291) as a self-resolution (no hand-off).

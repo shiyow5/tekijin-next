@@ -37,6 +37,7 @@ from tekijin.agent.stubs import (
     collect_known_values,
     missing_required_slots,
 )
+from tekijin.data.knowledge import matching_drafts
 from tekijin.data.questions import count_similar_prior_askers
 from tekijin.data.visibility import scope_from_state
 from tekijin.knowledge.answer import answer_from_knowledge
@@ -285,6 +286,8 @@ class AgentNodes:
             "self_answer_grounded": False,
             "self_answer_text": None,
             "self_answer_citations": [],
+            "knowledge_article_ids": [],
+            "knowledge_draft_ids": [],
             # #413: clear the additive (person-route) cited answer too.
             "additive_answer_text": None,
             "additive_citations": [],
@@ -757,37 +760,46 @@ class AgentNodes:
             "組織の活動や、メンバーの知見に関することをお尋ねください。"
         }
 
-    # -- self-answer (#291): compose a cited answer from retrieved data ----
+    # -- knowledge answer (#112): answer from the organization's verified knowledge
     def knowledge_answer(self, state: AgentState) -> AgentState:
-        """Try to answer directly from structured knowledge units (#357 slice 4c).
+        """Answer a member's question from verified knowledge, before C4 (#112).
 
-        Runs (when wired) right after C3 embeds the query, BEFORE routing — so it
-        applies to every route, sidestepping the C5 person/document separation the
-        #327 measurement proved unfixable (ADR-0007). Searches approved knowledge
-        units by the query embedding and, if one clears the similarity floor,
-        composes a grounded answer deterministically (no LLM, no hallucination) and
-        terminates at ``self_answered``. No relevant knowledge -> ``grounded=False``
-        and the run proceeds to normal retrieval/routing (never a degraded answer).
-        Reuses the #291 ``self_answer_*`` state + terminal so this is a drop-in.
+        Runs (when wired) right after C3 embeds the question. Only the asker's
+        organization's verified knowledge that the asker may read is searched. A hit
+        at or above the floor is answered from the articles' own fields (no LLM) and
+        ends at ``self_answered``, citing each article and its sources. A question
+        that asks for a person (C1's ``seeks_person``) is never taken here, and a
+        question without an organization has no knowledge. Otherwise the run goes on
+        to C4, and the drafts that would have answered are recorded for review.
         """
 
         assert self._knowledge_session is not None and self._knowledge_floor is not None
+        not_answered: AgentState = {"self_answer_grounded": False}
         query_vec = state.get("query_vector") or []
-        # Knowledge units are not divided by organization yet (R6).
-        if not query_vec or state.get("org_id") is not None:
-            return {"self_answer_grounded": False}
+        org_id = state.get("org_id")
+        if not query_vec or org_id is None or state.get("seeks_person"):
+            return not_answered
+        session = self._knowledge_session
         result = answer_from_knowledge(
-            self._knowledge_session, query_vec, min_similarity=self._knowledge_floor
+            session,
+            org_id=org_id,
+            query_vec=query_vec,
+            scope=scope_from_state(state.get("source_scope")),
+            min_similarity=self._knowledge_floor,
         )
-        if result is None or not result.grounded:
-            return {"self_answer_grounded": False}
-        citations = [{"source_id": sid, "kind": "knowledge"} for sid in result.cited_source_ids]
+        if result is None:
+            drafts = matching_drafts(
+                session, org_id=org_id, query_vec=query_vec, min_similarity=self._knowledge_floor
+            )
+            return {**not_answered, "knowledge_draft_ids": drafts}
         return {
             "self_answer_grounded": True,
             "self_answer_text": result.answer,
-            "self_answer_citations": citations,
+            "self_answer_citations": result.citations,
+            "knowledge_article_ids": list(result.article_ids),
         }
 
+    # -- self-answer (#291): compose a cited answer from retrieved data ----
     def self_answer(self, state: AgentState) -> AgentState:
         """Try to answer directly from the retrieved sources (data-derived routes).
 
