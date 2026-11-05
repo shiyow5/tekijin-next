@@ -58,3 +58,8 @@ httpx==0.28.1
 # Discord bot process (#60, D1): `python -m tekijin.discord_bot`. The API itself never
 # imports it; only tekijin/discord_bot/__main__.py does.
 discord.py>=2.7,<3
+
+# Scheduled ingestion of Google Docs / Slides (#99, R4): signs the service account's
+# token request. Its transport runs over the httpx above (ingest/google.py), so
+# `requests` is not needed. Pulls in cryptography and pyasn1-modules.
+google-auth==2.62.1

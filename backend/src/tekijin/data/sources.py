@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -261,6 +261,43 @@ def get_source_item(
         chunks=_count_chunks(session, item.id),
     )
     return summary, item.body
+
+
+@dataclass(frozen=True, slots=True)
+class StoredVersion:
+    """What a poller needs to tell whether a stored item is still current."""
+
+    item_id: int
+    title: str | None
+    url: str | None
+    updated_at: dt.datetime
+
+
+def stored_versions(session: Session, *, org_id: int, provider: str) -> dict[str, StoredVersion]:
+    """Every item one provider has stored for the organization, by external id."""
+
+    rows = session.execute(
+        select(
+            SourceItem.external_id,
+            SourceItem.id,
+            SourceItem.title,
+            SourceItem.url,
+            SourceItem.updated_at,
+        ).where(SourceItem.org_id == org_id, SourceItem.provider == provider)
+    ).all()
+    return {
+        external_id: StoredVersion(item_id, title, url, updated_at)
+        for external_id, item_id, title, url, updated_at in rows
+    }
+
+
+def set_source_updated_at(session: Session, *, item_id: int, updated_at: dt.datetime) -> None:
+    """Record a new modification time for an item whose text did not change, so the
+    next poll does not fetch it again. The caller commits."""
+
+    session.execute(
+        update(SourceItem).where(SourceItem.id == item_id).values(updated_at=updated_at)
+    )
 
 
 def delete_source_item(session: Session, *, item_id: int, org_id: int) -> bool:

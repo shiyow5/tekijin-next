@@ -761,7 +761,7 @@ export interface ConsultRetrospectiveAck {
 /** GET /sources — one of the organization's ingested documents (#72). */
 export interface SourceItem {
   id: number;
-  /** Where it came from: "manual" (added by hand), later "discord", "google", "notion". */
+  /** Where it came from: "manual" (added by hand), "discord", "google" (#99), later "notion". */
   provider: string;
   title: string | null;
   url: string | null;

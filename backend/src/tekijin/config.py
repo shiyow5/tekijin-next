@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repository root, resolved relative to this file:
@@ -583,6 +584,15 @@ class Settings(BaseSettings):
     # Channels whose messages the bot never forwards (#76), as comma-separated ids.
     # A thread inside an excluded channel is excluded too. Read only by the bot.
     discord_excluded_channel_ids: str = ""
+
+    # ---- Scheduled ingestion (#99, R4) ----------------------------------------- #
+    # Read only by the poller (``python -m tekijin.ingest.poll``), never by the API.
+    # Seconds between two passes over every configured provider.
+    poll_interval_s: float = Field(default=900.0, gt=0)
+    # Path of a Google service account's JSON key. Docs and Slides shared with that
+    # account are ingested; empty (default) = the Google provider is off. The key
+    # itself is never logged.
+    google_service_account_file: str = ""
 
     def slack_configured(self) -> bool:
         """True once the OAuth app credentials needed to start linking exist.
