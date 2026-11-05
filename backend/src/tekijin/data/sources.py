@@ -18,6 +18,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from tekijin.data.knowledge import SOURCE_CHANGED_NOTE, reconcile_lost_sources, return_to_review
 from tekijin.data.self_intros import DISCORD_PROVIDER, sync_document_intros
 from tekijin.data.visibility import SourceScope, visible
 from tekijin.ingest.chunking import passage_text, split_text
@@ -130,6 +131,12 @@ def upsert_source_item(
         item.author_id = author_id
     else:
         _check_owner(item, author_id, override_owner)
+        if provider != DISCORD_PROVIDER:
+            # #113: what was verified from the old text may not hold any more. (A
+            # Discord conversation is cited by its messages, not as a whole.)
+            return_to_review(
+                session, org_id=org_id, source_item_ids=[item.id], note=SOURCE_CHANGED_NOTE, now=now
+            )
     item.title, item.body, item.url = title, body, url
     item.content_hash, item.updated_at = digest, now
     session.execute(delete(Chunk).where(Chunk.source_item_id == item.id))
@@ -318,13 +325,23 @@ def set_source_updated_at(session: Session, *, item_id: int, updated_at: dt.date
     )
 
 
-def delete_source_item(session: Session, *, item_id: int, org_id: int) -> bool:
-    """Delete one item and its chunks. False when it is not in this organization."""
+def delete_source_item(
+    session: Session, *, item_id: int, org_id: int, now: dt.datetime | None = None
+) -> bool:
+    """Delete one item and its chunks. False when it is not in this organization.
+
+    Knowledge made from it lost that source (#113): verified knowledge goes back
+    to review and a draft with no source left is deleted.
+    """
 
     result = session.execute(
         delete(SourceItem).where(SourceItem.id == item_id, SourceItem.org_id == org_id)
     )
-    return bool(result.rowcount)  # type: ignore[attr-defined]
+    if not result.rowcount:  # type: ignore[attr-defined]
+        return False
+    when = now or dt.datetime.now(dt.UTC).replace(tzinfo=None)
+    reconcile_lost_sources(session, org_id=org_id, now=when)
+    return True
 
 
 def search_chunks(

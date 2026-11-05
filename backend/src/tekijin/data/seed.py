@@ -224,6 +224,19 @@ def _apply_schema_upgrades(engine: Engine) -> None:
                 "END IF; END $$"
             )
         )
+        # #113: the knowledge review note and the organization's switch for case
+        # drafts from conversations. Guarded: both tables may be newer than the DB.
+        conn.execute(
+            text(
+                "DO $$ BEGIN IF to_regclass('knowledge_articles') IS NOT NULL THEN "
+                "ALTER TABLE knowledge_articles ADD COLUMN IF NOT EXISTS review_note TEXT; "
+                "END IF; "
+                "IF to_regclass('organizations') IS NOT NULL THEN "
+                "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS "
+                "knowledge_from_conversations BOOLEAN NOT NULL DEFAULT false; "
+                "END IF; END $$"
+            )
+        )
         conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP"))
         conn.execute(text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS opted_out_at TIMESTAMP"))
         conn.execute(text("ALTER TABLE questions ADD COLUMN IF NOT EXISTS route VARCHAR(32)"))

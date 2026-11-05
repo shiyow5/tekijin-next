@@ -181,6 +181,9 @@ def add_source(
                 status_code=403,
                 detail="このURLの資料はほかのメンバーが追加したもので、その人だけが更新できます。",
             ) from exc
+    if result.status != "unchanged":
+        # #113: read it for knowledge drafts, after the commit above.
+        request.app.state.knowledge_drafting.document_changed(org_id=org_id, item_id=result.item_id)
     return SourceCreateResponse(status=result.status, id=result.item_id, chunks=result.chunks)
 
 

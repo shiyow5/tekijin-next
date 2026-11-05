@@ -810,6 +810,8 @@ export interface KnowledgeArticle {
   created_at: string;
   updated_at: string;
   verified_at: string | null;
+  /** Why it came back to review: its source changed or was deleted (#113). */
+  review_note?: string | null;
 }
 
 /** What an article was made from (#112). */

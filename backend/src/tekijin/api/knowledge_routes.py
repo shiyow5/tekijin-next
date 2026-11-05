@@ -67,6 +67,8 @@ class ArticleItem(BaseModel):
     created_at: dt.datetime
     updated_at: dt.datetime
     verified_at: dt.datetime | None
+    # #113: why the article came back to review (its source changed or was lost).
+    review_note: str | None = None
 
 
 class ArticleSourceItem(BaseModel):
@@ -141,6 +143,7 @@ def _item(article: ArticleDTO, names: dict[int, str]) -> ArticleItem:
         created_at=article.created_at,
         updated_at=article.updated_at,
         verified_at=article.verified_at,
+        review_note=article.review_note,
     )
 
 

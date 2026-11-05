@@ -296,6 +296,14 @@ export function ArticleDetailScreen({ articleId }: { articleId: string }) {
             <h1 className="min-w-0 break-words font-bold text-on-surface text-xl">
               {state.article.issue}
             </h1>
+            {state.article.review_note ? (
+              <p
+                role="note"
+                className="rounded-lg bg-surface-container px-sm py-xs text-on-surface text-sm"
+              >
+                確認に戻った理由: {state.article.review_note}
+              </p>
+            ) : null}
             <dl className="flex flex-col gap-sm text-sm">
               {(
                 [
