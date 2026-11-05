@@ -320,9 +320,22 @@ def sync_message_intros(
     hidden post) has none. The caller commits."""
 
     # One message may come twice in a batch; it is one row.
-    messages = list({m.message_id: m for m in rows}.values())
-    if not messages:
+    ids = sorted({m.message_id for m in rows})
+    if not ids:
         return
+    # Locked and read again, and held until the caller commits: a delete from the
+    # web (which hides the message, then deletes its introduction) either waits
+    # for this write and deletes it, or has committed and the post is seen hidden
+    # here. Locked in id order so two batches cannot deadlock on each other.
+    messages = list(
+        session.scalars(
+            select(ChannelMessage)
+            .where(ChannelMessage.org_id == org_id, ChannelMessage.message_id.in_(ids))
+            .order_by(ChannelMessage.message_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+    )
     stored = {
         row.message_id: row
         for row in session.scalars(

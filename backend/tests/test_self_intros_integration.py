@@ -25,10 +25,17 @@ from tekijin.data.self_intros import (
     search_self_intros,
     set_join_intro,
     sync_document_intros,
+    sync_message_intros,
 )
 from tekijin.data.sources import delete_source_item, upsert_source_item
 from tekijin.data.visibility import EVERYTHING, PUBLIC, SourceScope, record_visibility
-from tekijin.models.tables import Employee, Organization, SelfIntro, SourceItem
+from tekijin.models.tables import (
+    ChannelMessage,
+    Employee,
+    Organization,
+    SelfIntro,
+    SourceItem,
+)
 from tekijin.retrieval.bm25_cache import clear_bm25_cache
 from tekijin.retrieval.indexing import embed_corpus
 
@@ -261,6 +268,23 @@ def test_posts_in_the_intro_channel_become_intros(session, fake_embedder, org) -
     assert set(rows) == {1, 2, 901}
     assert rows[1].origin == "discord" and rows[1].text == "会計を担当しています"
     assert (rows[901].discord_channel_id, rows[901].discord_thread_id) == (INTRO_CHANNEL, 901)
+
+
+def test_a_post_hidden_after_it_was_read_gets_no_intro(session, fake_embedder, org) -> None:
+    _ingest(session, fake_embedder, org, [_msg(1, "会計です")])
+    stale = session.scalars(select(ChannelMessage).where(ChannelMessage.message_id == 1)).one()
+    for row in _intros(session, org):
+        session.delete(row)
+    # As if the web deleted the conversation after this request read the message.
+    session.execute(
+        update(ChannelMessage).where(ChannelMessage.id == stale.id).values(hidden_at=NOW),
+        execution_options={"synchronize_session": False},
+    )
+    assert stale.hidden_at is None
+
+    sync_message_intros(session, fake_embedder, org_id=org.id, rows=[stale], now=NOW)
+
+    assert _intros(session, org) == []
 
 
 def test_a_message_sent_twice_in_one_batch_is_one_intro(session, fake_embedder, org) -> None:
