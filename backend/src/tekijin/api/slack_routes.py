@@ -67,6 +67,7 @@ from tekijin.data.slack_links import (
     upsert_slack_link,
 )
 from tekijin.data.slack_message_anchors import record_message_anchor
+from tekijin.knowledge.solve_signals import is_solve_utterance, is_thanks_utterance
 from tekijin.models.tables import Employee
 from tekijin.slack.capture import (
     KNOWLEDGE_ACTION_IDS,
@@ -76,8 +77,6 @@ from tekijin.slack.capture import (
     SOLVE_REACTIONS,
     approve_thread_draft,
     discard_thread_draft,
-    is_solve_utterance,
-    is_thanks_utterance,
     review_blocks,
     schedule_solve_capture,
     schedule_solve_prompt,

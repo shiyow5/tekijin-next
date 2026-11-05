@@ -514,7 +514,7 @@ def test_message_event_records_no_anchor_when_capture_disabled(
 # Slice B2: utterance detection + in-thread prompt + keep/discard (live DB)
 # --------------------------------------------------------------------------- #
 def test_is_solve_utterance_matches_resolution_not_generic_completion() -> None:
-    from tekijin.slack.capture import is_solve_utterance, is_thanks_utterance
+    from tekijin.knowledge.solve_signals import is_solve_utterance, is_thanks_utterance
 
     assert is_solve_utterance("おかげさまで解決しました")
     assert is_solve_utterance("MTUを下げたら動きました")

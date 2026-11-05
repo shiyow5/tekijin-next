@@ -45,12 +45,14 @@ from tekijin.data.slack_links import get_slack_link_by_slack_user_id
 from tekijin.data.slack_message_anchors import thread_for_message
 from tekijin.knowledge.extract import DraftExtractor, ExtractionReport, Extractor, extract_and_store
 from tekijin.knowledge.slack_thread import slack_thread_source
+from tekijin.knowledge.solve_signals import SLACK_SOLVE_REACTIONS
 from tekijin.slack.client import post_message
 
 logger = logging.getLogger(__name__)
 
-#: Slack reaction names (no colons) that mean "this thread is solved".
-SOLVE_REACTIONS = frozenset({"white_check_mark", "heavy_check_mark", "ok"})
+#: Slack reaction names (no colons) that mean "this thread is solved". The signals are
+#: shared with Discord (#113) and live in :mod:`tekijin.knowledge.solve_signals`.
+SOLVE_REACTIONS = SLACK_SOLVE_REACTIONS
 
 #: Interactivity action ids for the in-thread knowledge prompt. keep/discard is the
 #: first gate (#476); approve confirms the shown draft (#527 — the review loop runs in
@@ -126,49 +128,6 @@ def _claim_capture_progress(thread_id: int) -> bool:
 def _release_capture_progress(thread_id: int) -> None:
     with _capture_progress_notified_lock:
         _capture_progress_notified.discard(thread_id)
-
-
-# Conservative solve-utterance markers (substring match). Deliberately RESOLUTION-
-# rooted — NOT generic completion/thanks. Bare "できました" is excluded because it
-# also matches unrelated completion (資料ができました / 予約ができました). Thanks are
-# detected separately by :func:`is_thanks_utterance`: the event handler accepts them
-# only from the thread's asker, where thanking the responder is a useful conversation-
-# completion signal (#537), while a responder's ordinary closing remains a no-op.
-# Product-sensitive: keep tight, and only fires while the feature flag is on.
-_SOLVE_UTTERANCES: tuple[str, ...] = (
-    "解決しました",
-    "解決した",
-    "解決です",
-    "解決できました",
-    "できるようになりました",
-    "うまくいきました",
-    "直りました",
-    "動きました",
-)
-
-
-def is_solve_utterance(text: str) -> bool:
-    """True when ``text`` reads as "this is resolved" (a capture trigger, #476)."""
-    lowered = text or ""
-    return any(marker in lowered for marker in _SOLVE_UTTERANCES)
-
-
-_THANKS_UTTERANCES: tuple[str, ...] = ("ありがとうございました", "ありがとうございます")
-
-
-def is_thanks_utterance(text: str) -> bool:
-    """True for an explicit Japanese thanks that may close an asker's thread.
-
-    This helper intentionally knows nothing about sender identity. The Slack event
-    handler combines it with ``sender_id == parties["asker_id"]`` so a responder's
-    polite closing cannot consume the thread's one-shot knowledge prompt (#537).
-    """
-
-    # Only a thanks that CLOSES the message is a completion signal. A prefix match
-    # such as "ありがとうございます。追加で質問があります" is still an active
-    # conversation and must not consume the thread's one-shot prompt.
-    value = (text or "").strip().rstrip("。．.!！?？、, \t\r\n")
-    return any(value.endswith(marker) for marker in _THANKS_UTTERANCES)
 
 
 def thread_key(thread_id: int) -> str:
