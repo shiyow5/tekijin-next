@@ -135,6 +135,28 @@ def test_format_handoff_lists_a_members_evidence_one_per_line() -> None:
     assert "   - 『機材の使い方と管理マニュアル』を書いた" in text
 
 
+def test_sources_without_the_answer_point_to_the_person_and_the_web() -> None:
+    """#107: a member's question whose sources held no answer names a person."""
+
+    text = "資料の中に、この質問の答えは見つかりませんでした。岩田 颯太さんに相談できます。"
+    out = summarize_events(
+        [
+            (
+                "message",
+                {
+                    "status": "document",
+                    "message": text,
+                    "fallback_responder": {"name": "岩田 颯太"},
+                },
+            )
+        ]
+    )
+    reply = format_reply(out.model_dump(), web_url=WEB)
+
+    assert reply.startswith(text)
+    assert reply.endswith(f"依頼を送るには、Webで同じ質問をしてください: {WEB}")
+
+
 def test_format_followup_and_unlinked_point_to_web() -> None:
     followup = summarize_events([("followup", {"question": "どの拠点ですか?"})])
     assert WEB in format_reply(followup.model_dump(), web_url=WEB)

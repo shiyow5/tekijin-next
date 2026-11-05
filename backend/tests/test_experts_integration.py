@@ -22,6 +22,7 @@ from tekijin.models.tables import Answer, Employee, Organization, Question
 from tekijin.retrieval.bm25_cache import clear_bm25_cache
 from tekijin.retrieval.experts import (
     ANSWER,
+    ANSWER_TOP_K,
     CONVERSATION,
     DOCUMENT,
     FLOORS,
@@ -272,6 +273,30 @@ def test_a_tekijin_answer_credits_its_responder(session, fake_embedder, org) -> 
         "type": ANSWER,
         "detail": "「赤道儀が動かない」の質問に答えた",
     }
+
+
+def test_answers_by_people_left_out_do_not_crowd_out_an_eligible_one(
+    session, fake_embedder, org
+) -> None:
+    asker = _member(session, org, "1", "質問 する人")
+    gone = _member(session, org, "2", "去った 人")
+    iwata = _member(session, org, "3", "岩田 颯太")
+    qid = "q_window"
+    session.add(Question(id=qid, asker_id=asker.id, body="赤道儀が動かない", created_at=NOW))
+    session.flush()
+    vector = fake_embedder.encode([QUERY])[0]
+    # Same distance for all; ties break on the id, so the eligible one comes 21st.
+    session.add_all(
+        [
+            Answer(id=f"a_{i:02d}", question_id=qid, responder_id=gone.id, embedding=vector)
+            for i in range(ANSWER_TOP_K)
+        ]
+    )
+    session.add(Answer(id="a_99", question_id=qid, responder_id=iwata.id, embedding=vector))
+    gone.is_active = False
+    session.flush()
+
+    assert _ids(_find(session, fake_embedder, org)) == [iwata.id]
 
 
 def test_answers_to_another_organization_do_not_count(session, fake_embedder, org) -> None:

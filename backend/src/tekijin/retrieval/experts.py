@@ -255,10 +255,14 @@ class DbExpertFinder:
         members = self._members(org_id, {*exclude, *([asker_id] if asker_id is not None else [])})
         if not members:
             return ExpertResult(experts=[], confidence=0.0)
+        # People left out could fill the top of a kind's list: the
+        # self-introductions are read deeper by how many are left out, and answers
+        # are read only from people who may be recommended.
+        left_out = len(set(exclude)) + int(asker_id is not None)
         evidence = [
-            *self._intros(org_id, question, query_vector, scope),
+            *self._intros(org_id, question, query_vector, scope, INTRO_TOP_K + left_out),
             *self._sources(org_id, query_vector, scope, source_hits),
-            *self._answers(org_id, query_vector),
+            *self._answers(org_id, query_vector, members),
         ]
         return rank_experts(
             evidence, members, weights=self._weights, floors=self._floors, k=self._k
@@ -287,7 +291,12 @@ class DbExpertFinder:
 
     # -- self-introductions -------------------------------------------------- #
     def _intros(
-        self, org_id: int, question: str, query_vector: Sequence[float], scope: SourceScope
+        self,
+        org_id: int,
+        question: str,
+        query_vector: Sequence[float],
+        scope: SourceScope,
+        top_k: int,
     ) -> list[Evidence]:
         if not query_vector:
             return []
@@ -297,7 +306,7 @@ class DbExpertFinder:
             query=question,
             query_vector=query_vector,
             scope=scope,
-            top_k=INTRO_TOP_K,
+            top_k=top_k,
         )
         return [
             Evidence(
@@ -424,8 +433,10 @@ class DbExpertFinder:
         ]
 
     # -- answers given through TEKIJIN --------------------------------------- #
-    def _answers(self, org_id: int, query_vector: Sequence[float]) -> list[Evidence]:
-        if not query_vector:
+    def _answers(
+        self, org_id: int, query_vector: Sequence[float], members: Mapping[int, object]
+    ) -> list[Evidence]:
+        if not query_vector or not members:
             return []
         asker = aliased(Employee)
         distance = Answer.embedding.cosine_distance(query_vector).label("distance")
@@ -433,7 +444,11 @@ class DbExpertFinder:
             select(Answer.responder_id, Question.body, distance)
             .join(Question, Question.id == Answer.question_id)
             .join(asker, asker.id == Question.asker_id)
-            .where(asker.org_id == org_id, Answer.embedding.isnot(None))
+            .where(
+                asker.org_id == org_id,
+                Answer.embedding.isnot(None),
+                Answer.responder_id.in_(list(members)),
+            )
             .order_by(distance, Answer.id)
             .limit(ANSWER_TOP_K)
         ).all()

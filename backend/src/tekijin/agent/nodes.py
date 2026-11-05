@@ -528,7 +528,13 @@ class AgentNodes:
         # referral is pending, so the return shape is byte-identical there.
         top_k = 3
         remaining = top_k - len(existing)
-        if state.get("org_id") is not None and self._expert_finder is not None:
+        # The same switch as c4_retrieve's: a member's question that C4 searched in
+        # the organization's sources picks from the people found there.
+        if (
+            state.get("org_id") is not None
+            and self._source_search is not None
+            and self._expert_finder is not None
+        ):
             return self._c6_org(state, retrieval, existing, top_k=top_k)
         if not topics or remaining <= 0:
             # Nothing to add: keep whatever survived the decline (possibly fewer
@@ -628,14 +634,23 @@ class AgentNodes:
         asker = state.get("asker")
         asker_id = asker.get("id") if asker else None
         taken = {r["person_id"] for r in existing}
-        rows = [dict(row) for row in retrieval.get("experts") or []]
-        fresh: list[dict[str, Any]] = []
         pin_id, is_referral = _pin(state, declined, asker_id, taken)
+        blocked = taken | set(declined) | ({asker_id} if asker_id is not None else set())
+        cached = retrieval.get("experts") or []
+        wanted = [r["person_id"] for r in cached if r["person_id"] not in blocked]
         if pin_id is not None:
+            wanted.append(pin_id)
+        # C4's rows may predate this pass (a reroute runs later), so who may still be
+        # recommended is read again: someone who opted out or left since stays out.
+        eligible = {e.member_id: e for e in self._expert_finder.describe(org_id, wanted)}
+        rows = [
+            dict(r) for r in cached if r["person_id"] in eligible and r["person_id"] not in blocked
+        ]
+        fresh: list[dict[str, Any]] = []
+        if pin_id is not None and pin_id in eligible:
             row = next((r for r in rows if r["person_id"] == pin_id), None)
             if row is None:
-                described = self._expert_finder.describe(org_id, [pin_id])
-                row = described[0].as_recommendation() if described else None
+                row = eligible[pin_id].as_recommendation()
             if row is not None:
                 if is_referral:
                     row["reasons"] = [
@@ -643,10 +658,8 @@ class AgentNodes:
                         *row.get("reasons", []),
                     ]
                 fresh.append(row)
-        blocked = taken | set(declined) | {r["person_id"] for r in fresh}
-        if asker_id is not None:
-            blocked.add(asker_id)
-        fresh += [r for r in rows if r["person_id"] not in blocked][: remaining - len(fresh)]
+        shown = {r["person_id"] for r in fresh}
+        fresh += [r for r in rows if r["person_id"] not in shown][: remaining - len(fresh)]
         return self._scored(existing + fresh, state)
 
     @staticmethod
@@ -853,7 +866,12 @@ class AgentNodes:
         retrieval = state.get("retrieval") or empty_retrieval()
         top = _top_by_score(retrieval["documents"])
         if top is None and retrieval.get("sources"):
-            return {"answer": _NOT_IN_SOURCES, "document_id": None, "fallback_responder": None}
+            # #107: a member's question ranks people from the same sources, so the
+            # best of them is offered when the sources hold no answer.
+            recs = state.get("recommendations") or []
+            first = recs[0] if recs else None
+            answer = _NOT_IN_SOURCES + (f"{first['name']}さんに相談できます。" if first else "")
+            return {"answer": answer, "document_id": None, "fallback_responder": first}
         doc_id = top["doc_id"] if top else None
         where = f"（文書ID: {doc_id}）" if doc_id else ""
         answer = f"組織の文書に該当がありそうです{where}。該当箇所をご確認ください。"

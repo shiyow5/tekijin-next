@@ -101,7 +101,11 @@ def format_reply(outcome: dict[str, Any], *, web_url: str) -> str:
     if kind == "answered" and outcome.get("doc_id"):
         return _document(outcome, web_url)
     if kind == "answered":
-        return _join(text, _sources(outcome.get("citations") or []))
+        tail = _sources(outcome.get("citations") or [])
+        if outcome.get("fallback_name"):
+            # The text names the person (#107); the chat cannot send them the request.
+            tail = _join(tail, f"依頼を送るには、Webで同じ質問をしてください: {web_url}")
+        return _join(text, tail)
     if kind == "handoff":
         return _handoff(
             text, outcome.get("citations") or [], outcome.get("recommendations") or [], web_url

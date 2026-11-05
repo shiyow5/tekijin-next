@@ -13,7 +13,14 @@ from tekijin.agent.graph import build_agent
 from tekijin.agent.nodes import AgentNodes
 from tekijin.agent.protocols import IntentResult
 from tekijin.agent.state import AgentState, empty_retrieval
-from tekijin.retrieval.experts import DOCUMENT, SELF_INTRO, Evidence, ExpertResult, rank_experts
+from tekijin.retrieval.experts import (
+    DOCUMENT,
+    SELF_INTRO,
+    Evidence,
+    Expert,
+    ExpertResult,
+    rank_experts,
+)
 from tekijin.retrieval.sources import SourceSearchResult
 
 NOW = dt.datetime(2026, 11, 5, 12, 0, 0)
@@ -34,9 +41,14 @@ class _Intent:
 
 
 class _Sources:
+    def __init__(self, confidence: float = 0.1) -> None:
+        # Below DOCUMENT_SIM the question takes the person route.
+        self.confidence = confidence
+
     def search(self, query, org_id, query_vector, scope) -> SourceSearchResult:
         return SourceSearchResult(
-            hits=[{"chunk_id": 10, "source_item_id": 20, "score": 0.03}], confidence=0.1
+            hits=[{"chunk_id": 10, "source_item_id": 20, "score": 0.03}],
+            confidence=self.confidence,
         )
 
     def evidence(self, hits, org_id, scope):
@@ -49,6 +61,7 @@ class _Finder:
     def __init__(self, order: Sequence[int] = (2, 3, 4, 5)) -> None:
         self.order = list(order)
         self.calls: list[dict[str, Any]] = []
+        self.gone: set[int] = set()
 
     def _result(self, members: Iterable[int]) -> ExpertResult:
         allowed = set(members)
@@ -70,14 +83,14 @@ class _Finder:
         excluded = {*kwargs.get("exclude", ()), kwargs.get("asker_id")}
         return self._result(m for m in NAMES if m not in excluded)
 
-    def describe(self, org_id: int, member_ids: Iterable[int]):
+    def describe(self, org_id: int, member_ids: Iterable[int]) -> list[Expert]:
+        # ``gone``: opted out or left after C4 ran.
         return [
-            e.__class__(
+            Expert(
                 member_id=m, name=NAMES[m], dept=None, raw_score=0.0, reasons=(), kinds=frozenset()
             )
-            for e in self._result(NAMES).experts[:1]
-            for m in member_ids
-            if m in NAMES
+            for m in dict.fromkeys(member_ids)
+            if m in NAMES and m not in self.gone
         ]
 
 
@@ -91,14 +104,14 @@ class _LegacyMustNotRun:
         raise AssertionError("a member's question reached the undivided tables")
 
 
-def _agent(finder):
+def _agent(finder, sources=None):
     return build_agent(
         _Embedder(),
         None,
         intent_model=_Intent(),
         retriever=_LegacyMustNotRun(),
         scorer=_ScorerMustNotRun(),
-        source_search=_Sources(),
+        source_search=sources or _Sources(),
         expert_finder=finder,
     )
 
@@ -287,3 +300,39 @@ def test_c6_does_not_change_the_rows_c4_kept() -> None:
     _nodes(finder).c6_score(state)
 
     assert state["retrieval"]["experts"] == before
+
+
+def test_someone_who_opted_out_after_c4_is_not_brought_back() -> None:
+    finder = _Finder()
+    state = _state(finder, declined_ids=[2])
+    finder.gone = {3}
+
+    out = _nodes(finder).c6_score(state)
+
+    assert [r["person_id"] for r in out["recommendations"]] == [4, 5]
+
+
+def test_a_referral_to_someone_who_left_after_c4_is_dropped() -> None:
+    finder = _Finder()
+    state = _state(finder, referred_responder_id=4)
+    finder.gone = {4}
+
+    out = _nodes(finder).c6_score(state)
+
+    assert [r["person_id"] for r in out["recommendations"]] == [2, 3, 5]
+    assert all(r["reasons"][0]["type"] != "referral" for r in out["recommendations"])
+
+
+def test_sources_without_the_answer_offer_the_best_person() -> None:
+    """The document route: the sources were close but held no answer (no composer
+    wired here), so the person the evidence points to is offered as the fallback."""
+
+    agent = _agent(_Finder(), sources=_Sources(confidence=0.5))
+    state, config = _ask(agent, "org-document")
+
+    assert state["route"] == "document"
+    assert not agent.get_state(config).next
+    assert state["fallback_responder"]["person_id"] == 2
+    assert state["answer"] == (
+        "資料の中に、この質問の答えは見つかりませんでした。岩田 颯太さんに相談できます。"
+    )
