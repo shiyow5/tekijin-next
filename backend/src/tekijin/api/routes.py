@@ -1284,6 +1284,7 @@ def send_message(
                 employee_b=parties["responder_id"],
                 sender_name=sender_name,
                 body=req.body,
+                thread_id=req.thread_id,
             )
         return schemas.MessageItem(
             id=row["id"],

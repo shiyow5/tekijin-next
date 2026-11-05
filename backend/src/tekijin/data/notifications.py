@@ -23,6 +23,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from tekijin.data.discord_requests import sent_to_responder
 from tekijin.models.tables import Employee, Question, Recommendation
 
 
@@ -186,6 +187,7 @@ def pending_request_notifications_for_responder(
             Recommendation.employee_id == responder_id,
             Recommendation.rank == 1,
             Recommendation.outcome.is_(None),
+            sent_to_responder(),
             Recommendation.request_seen_at.is_(None),
             Question.session_id.is_not(None),
         )

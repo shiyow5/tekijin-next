@@ -565,6 +565,74 @@ class Message(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
+class DiscordRequest(Base):
+    """A hand-off sent from Discord, received in a thread of the output channel (#114).
+
+    One row per recommendation the asker pressed 「依頼する」 for (or that a decline
+    passed the request on to). ``thread_id`` is NULL until the bot has created the
+    thread; the thread's messages are matched back to the hand-off through it.
+    """
+
+    __tablename__ = "discord_requests"
+
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("recommendations.id", ondelete="CASCADE"), primary_key=True
+    )
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    channel_id: Mapped[str | None] = mapped_column(String(32))
+    thread_id: Mapped[str | None] = mapped_column(String(32), unique=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+    # When the request was accepted (UTC). A thread message written before it is
+    # never an answer, even when the bot only sends it afterwards.
+    accepted_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+
+
+class DiscordThreadMessage(Base):
+    """A message of a request thread the backend has already handled (#114).
+
+    The bot sends a thread's messages again after a failure or a restart; this
+    keeps each one from becoming a second chat message or answer.
+    """
+
+    __tablename__ = "discord_thread_messages"
+
+    message_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("discord_requests.recommendation_id", ondelete="CASCADE"), index=True
+    )
+    # What it became, so an edit or a deletion in Discord can correct them (NULL:
+    # ignored, or deleted since; the row stays so the id is never handled again).
+    message_row_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL")
+    )
+    answer_id: Mapped[str | None] = mapped_column(ForeignKey("answers.id", ondelete="SET NULL"))
+    # Its text was edited away (an attachment may remain). Unlike a deletion, an
+    # edit that writes text again is captured anew.
+    cleared: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DiscordOutbox(Base):
+    """What the bot still has to post (#114).
+
+    The API never talks to Discord (the bot token stays with the bot), so whatever
+    must appear in a request thread is queued here and the bot delivers it:
+    ``request`` creates the thread, ``post`` writes one message into it.
+    """
+
+    __tablename__ = "discord_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("discord_requests.recommendation_id", ondelete="CASCADE"), index=True
+    )
+    payload: Mapped[dict] = mapped_column(JSONB)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+    delivered_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+
+
 class EvalRun(Base):
     """A stored offline-evaluation snapshot (dashboard 推薦精度 source).
 
@@ -749,6 +817,9 @@ __all__ = [
     "Answer",
     "Recommendation",
     "Message",
+    "DiscordRequest",
+    "DiscordOutbox",
+    "DiscordThreadMessage",
     "EvalRun",
     "Event",
     "Document",

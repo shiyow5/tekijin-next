@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tekijin.channels.discord_notifier import DiscordNotifier
 from tekijin.channels.notifier import FanoutNotifier, SlackNotifier, get_notifier
 
 _FACTORY = object()
@@ -52,6 +53,16 @@ def test_slack_notifier_forwards_to_slack_notify(monkeypatch: pytest.MonkeyPatch
     accepted.assert_called_once_with(_FACTORY, thread_id=7, parties=_PARTIES, draft="draft")
 
 
+def test_fanout_passes_the_thread_to_every_channel() -> None:
+    healthy = MagicMock()
+    FanoutNotifier((healthy,)).relay_message(
+        _FACTORY, employee_a=1, employee_b=2, sender_name="A", body="hi", thread_id=7
+    )
+    healthy.relay_message.assert_called_once_with(
+        _FACTORY, employee_a=1, employee_b=2, sender_name="A", body="hi", thread_id=7
+    )
+
+
 def test_fanout_reaches_every_channel_even_if_one_raises() -> None:
     broken, healthy = MagicMock(), MagicMock()
     broken.relay_message.side_effect = RuntimeError("down")
@@ -65,10 +76,10 @@ def test_fanout_reaches_every_channel_even_if_one_raises() -> None:
     healthy.announce_handoff_accepted.assert_called_once()
 
 
-def test_default_notifier_is_slack_only() -> None:
+def test_default_notifier_is_slack_and_discord() -> None:
     notifier = get_notifier()
     assert isinstance(notifier, FanoutNotifier)
-    assert [type(n) for n in notifier.notifiers] == [SlackNotifier]
+    assert [type(n) for n in notifier.notifiers] == [SlackNotifier, DiscordNotifier]
     assert get_notifier() is notifier  # one shared instance
 
 

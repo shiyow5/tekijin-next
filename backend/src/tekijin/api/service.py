@@ -66,6 +66,7 @@ from tekijin.api.events import (
     reconnect_events,
     replay_terminal,
 )
+from tekijin.channels.discord_notifier import pass_on_request
 from tekijin.channels.notifier import get_notifier
 from tekijin.data.db import session_scope
 from tekijin.data.feedback import record_feedback
@@ -1752,11 +1753,30 @@ class AgentService:
                                 terminal = event
                             yield event
                 self._persist_run_state(graph, config, rec_ids, terminal)
+                if rec_ids:
+                    self._pass_on_discord_request(graph, config, rec_ids[0])
         finally:
             # Flush collected stage timings even on a client disconnect / error
             # (GeneratorExit) — otherwise the whole segment's latency is lost and
             # the KPI under-counts exactly the reconnect-heavy sessions (#177 review).
             self._persist_events(question_id, event_rows)
+
+    def _pass_on_discord_request(self, graph: Any, config: dict[str, Any], rec_id: int) -> None:
+        """#114: a hand-off sent from Discord that was rerouted (declined or referred,
+        from Discord or the web) gets a request thread for the new person. Best
+        effort: a failure leaves the new person to the web inbox."""
+
+        session_id = config["configurable"]["thread_id"]
+        try:
+            draft = graph.get_state(config).values.get("draft") or ""
+            pass_on_request(
+                self._session_factory,
+                session_id=session_id,
+                recommendation_id=rec_id,
+                draft=draft,
+            )
+        except Exception:  # noqa: BLE001 - the run itself must not fail on it
+            logger.warning("could not pass discord session %s on", session_id, exc_info=True)
 
     def _persist_run_state(
         self,

@@ -584,6 +584,19 @@ class Settings(BaseSettings):
     # Channels whose messages the bot never forwards (#76), as comma-separated ids.
     # A thread inside an excluded channel is excluded too. Read only by the bot.
     discord_excluded_channel_ids: str = ""
+    # #114: the ONE channel the bot may post to: request threads, the messages in
+    # them and their buttons. Unset (default) = the bot posts nothing new; ``/ask``
+    # keeps its ephemeral reply and a hand-off cannot be sent from Discord. Read by
+    # the API (whether to keep the session and queue posts) and by the bot (the
+    # only place it posts, ``discord_bot/output.py``). The bot never reads this
+    # channel's messages into TEKIJIN's sources.
+    discord_output_channel_id: int | None = None
+    # #114: whether a request thread @-mentions the requested member. Off (default):
+    # the name is written as plain text and no one is notified.
+    discord_mention_responders: bool = False
+    # #114: Discord user ids (comma-separated) who may review knowledge drafts with
+    # ``/tekijin review``. Empty (default) = no one may.
+    discord_admin_user_ids: str = ""
 
     # ---- Scheduled ingestion (#99, R4) ----------------------------------------- #
     # Read only by the poller (``python -m tekijin.ingest.poll``), never by the API.
@@ -597,6 +610,20 @@ class Settings(BaseSettings):
     # integration are ingested; empty (default) = the Notion provider is off. A
     # secret: SecretStr keeps it out of reprs, and it is never logged.
     notion_token: SecretStr = SecretStr("")
+
+    def discord_output_enabled(self) -> bool:
+        """True when Discord is on and the bot has a channel to post to (#114)."""
+
+        return bool(
+            self.discord_bot_secret and self.discord_guild_id and self.discord_output_channel_id
+        )
+
+    def discord_admin_ids(self) -> frozenset[str]:
+        """The Discord user ids of ``discord_admin_user_ids``, blanks dropped."""
+
+        return frozenset(
+            part.strip() for part in self.discord_admin_user_ids.split(",") if part.strip()
+        )
 
     def slack_configured(self) -> bool:
         """True once the OAuth app credentials needed to start linking exist.

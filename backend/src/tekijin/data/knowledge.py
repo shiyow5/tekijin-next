@@ -263,7 +263,9 @@ def create_draft(
 
 
 def _load(session: Session, article_id: int, org_id: int) -> KnowledgeArticle:
-    row = session.get(KnowledgeArticle, article_id)
+    # Locked: a review and an answer written in a request thread (#114) must not
+    # interleave between reading the state and writing it.
+    row = session.get(KnowledgeArticle, article_id, with_for_update=True, populate_existing=True)
     if row is None or row.org_id != org_id:
         raise ArticleNotFound(article_id)
     return row

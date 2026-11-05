@@ -204,6 +204,42 @@ async def get_cursors(
     return {str(k): int(v) for k, v in body.get("cursors", {}).items()}
 
 
+async def internal_post(
+    http: httpx.AsyncClient, *, base_url: str, secret: str, path: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """POST to ``/internal/discord/<path>`` (#114: requests, threads, review, outbox).
+
+    Same never-raise contract as :func:`ask_backend`: a failure comes back as
+    ``{"kind": "error"}``, which carries no ``status``."""
+
+    return await _post(http, base_url, secret, path, body)
+
+
+async def get_outbox(
+    http: httpx.AsyncClient, *, base_url: str, secret: str, limit: int = 20
+) -> list[dict[str, Any]]:
+    """What the backend wants posted now (#114). Empty when it cannot be read."""
+
+    try:
+        resp = await http.get(
+            f"{base_url.rstrip('/')}/internal/discord/outbox",
+            params={"limit": limit},
+            headers={SECRET_HEADER: secret},
+        )
+    except httpx.HTTPError:
+        logger.warning("backend unreachable", exc_info=True)
+        return []
+    if resp.status_code != 200:
+        logger.warning("backend answered %s: %s", resp.status_code, resp.text[:200])
+        return []
+    try:
+        body = resp.json()
+    except ValueError:
+        return []
+    items = body.get("items") if isinstance(body, dict) else None
+    return [i for i in items or [] if isinstance(i, dict)]
+
+
 async def _post(
     http: httpx.AsyncClient, base_url: str, secret: str, path: str, body: dict[str, Any]
 ) -> dict[str, Any]:

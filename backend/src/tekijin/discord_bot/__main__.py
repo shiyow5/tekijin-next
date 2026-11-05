@@ -1,7 +1,9 @@
 """Run the TEKIJIN Discord bot: ``python -m tekijin.discord_bot`` (Discord D1, #60).
 
 Registers ``/ask`` and the ``/tekijin`` group (``join``, ``intro``, ``optout``,
-``optin``, ``add``), and forwards the server's conversation to the backend (#76):
+``optin``, ``add``, ``review``), sends hand-offs into request threads of the one
+output channel (#114, ``requests.py``; nothing is posted while it is unset), and
+forwards the server's conversation to the backend (#76):
 history after where
 ingestion left off when it starts, then new, edited and deleted messages as they
 happen. Reading message text needs the MESSAGE CONTENT privileged intent, which must
@@ -51,7 +53,9 @@ from tekijin.discord_bot.ingest import (
     message_payload,
     parse_ids,
 )
+from tekijin.discord_bot.output import OutputGate
 from tekijin.discord_bot.reactions import ReactionRelay
+from tekijin.discord_bot.requests import RequestUI, install, send_view
 from tekijin.discord_bot.visibility import (
     VisibilityReporter,
     channel_report,
@@ -104,6 +108,16 @@ def main() -> None:
     http = httpx.AsyncClient(timeout=_BACKEND_TIMEOUT_S)
     excluded = parse_ids(settings.discord_excluded_channel_ids)
     backend = {"base_url": settings.discord_backend_url, "secret": settings.discord_bot_secret}
+    # #114: the only channel the bot posts to. Its request threads are not read
+    # into TEKIJIN's sources: what is answered there is kept as answers instead.
+    gate = OutputGate(
+        settings.discord_output_channel_id,
+        guild_id=guild_id,
+        mention=settings.discord_mention_responders,
+    )
+    if gate.channel_id is not None:
+        excluded.add(gate.channel_id)
+    requests_ui = RequestUI(http=http, gate=gate, **backend)
 
     async def send_messages(messages: list[dict]) -> bool:
         return await post_messages(http, guild_id=guild_id, messages=messages, **backend)
@@ -156,8 +170,17 @@ def main() -> None:
             if interaction.guild is not None
             else None,
         )
-        reply = format_reply(outcome, web_url=outcome.get("web_url") or settings.discord_web_url)
-        await interaction.followup.send(reply, ephemeral=True)
+        # #114: a hand-off that can be sent from Discord gets the 「依頼する」 button.
+        session_id = outcome.get("session_id") if gate.enabled else None
+        reply = format_reply(
+            outcome,
+            web_url=outcome.get("web_url") or settings.discord_web_url,
+            send_channel_id=gate.channel_id if session_id else None,
+        )
+        if session_id:
+            await interaction.followup.send(reply, ephemeral=True, view=send_view(session_id))
+        else:
+            await interaction.followup.send(reply, ephemeral=True)
 
     group = app_commands.Group(name="tekijin", description="TEKIJINへの参加と設定")
 
@@ -248,6 +271,7 @@ def main() -> None:
         )
         await interaction.followup.send(format_add_reply(result), ephemeral=True)
 
+    install(client, group, requests_ui)
     tree.add_command(group)
 
     def forward(message: discord.Message) -> None:
@@ -260,10 +284,17 @@ def main() -> None:
     @client.event
     async def on_message(message: discord.Message) -> None:
         forward(message)
+        if message.guild is not None and message.guild.id == guild_id:
+            await requests_ui.on_thread_message(message)
 
     @client.event
     async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent) -> None:
         if payload.guild_id != guild_id:
+            return
+        # #114: an edit in a request thread corrects the answer it became; these
+        # threads are not ingested, so nothing below applies to them.
+        if gate.is_request_thread(client.get_channel(payload.channel_id)):
+            await requests_ui.on_thread_edit(client, payload.channel_id, payload.message_id)
             return
         # Taken before fetching: a deletion or a newer edit arriving while the
         # fetch is in flight makes its result stale, and the batcher drops it.
@@ -285,6 +316,10 @@ def main() -> None:
             logger.warning("could not read edited message %s", payload.message_id, exc_info=True)
             batcher.reread(payload.channel_id, payload.message_id)
             return
+        # #114: a request thread that was not cached is known only now.
+        if gate.is_request_thread(channel):
+            await requests_ui.on_thread_message(message, edited=True)
+            return
         action = edit_action(message, excluded)
         if action is None:
             return
@@ -294,15 +329,25 @@ def main() -> None:
         else:
             batcher.delete([value], token=token)
 
+    async def forget_answers(channel_id: int, message_ids: list[int]) -> None:
+        """#114: a deletion in a request thread removes the answers it became. An
+        uncached channel may be one; the backend ignores ids it never kept."""
+
+        channel = client.get_channel(channel_id)
+        if gate.enabled and (channel is None or gate.is_request_thread(channel)):
+            await requests_ui.on_thread_delete(message_ids, thread_id=channel_id)
+
     @client.event
     async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
         if payload.guild_id == guild_id:
             batcher.delete([payload.message_id])
+            await forget_answers(payload.channel_id, [payload.message_id])
 
     @client.event
     async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent) -> None:
         if payload.guild_id == guild_id:
             batcher.delete(payload.message_ids)
+            await forget_answers(payload.channel_id, list(payload.message_ids))
 
     # #113: a check mark may mark a conversation solved. Sent only after the
     # queued messages were stored, and kept to try again (discord_bot/reactions.py).
@@ -487,6 +532,15 @@ def main() -> None:
             tasks["visibility"] = asyncio.create_task(retry_visibility())
         if "reactions" not in tasks:
             tasks["reactions"] = asyncio.create_task(reactions.run(_REACTION_RETRY_S))
+        if "outbox" not in tasks and gate.enabled:
+            tasks["outbox"] = asyncio.create_task(requests_ui.run_outbox(client))
+        guild_now = client.get_guild(guild_id)
+        if (
+            gate.enabled
+            and guild_now is not None
+            and ("replay" not in tasks or tasks["replay"].done())
+        ):
+            tasks["replay"] = asyncio.create_task(requests_ui.replay_all(client, guild_now))
         if "flush" not in tasks:
             tasks["flush"] = asyncio.create_task(
                 batcher.run(_FLUSH_INTERVAL_S, start_history, ready=ready)
