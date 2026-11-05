@@ -13,6 +13,7 @@ from tekijin.agent.graph import build_agent
 from tekijin.agent.nodes import AgentNodes
 from tekijin.agent.protocols import IntentResult
 from tekijin.agent.state import AgentState, empty_retrieval
+from tekijin.api.service import responder_view
 from tekijin.retrieval.experts import (
     DOCUMENT,
     SELF_INTRO,
@@ -300,6 +301,23 @@ def test_c6_does_not_change_the_rows_c4_kept() -> None:
     _nodes(finder).c6_score(state)
 
     assert state["retrieval"]["experts"] == before
+
+
+def test_the_person_asked_does_not_see_the_evidence_about_them() -> None:
+    """ADR-0012: reasons are shown to the asker only; the hand-off view drops them
+    for a member's question and keeps them for the company path."""
+
+    finder = _Finder()
+    primary = finder.find(asker_id=ASKER).experts[0].as_recommendation()
+
+    member_view = responder_view(primary, org_id=ORG)
+    company_view = responder_view(primary, org_id=None)
+
+    assert member_view.reasons == []
+    assert member_view.person_id == "E002"
+    assert member_view.name == NAMES[2]
+    assert [r.type for r in company_view.reasons] == [SELF_INTRO]
+    assert primary["reasons"]  # the asker's copy is left as it was
 
 
 def test_someone_who_opted_out_after_c4_is_not_brought_back() -> None:

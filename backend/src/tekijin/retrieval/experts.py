@@ -256,12 +256,10 @@ class DbExpertFinder:
         members = self._members(org_id, {*exclude, *([asker_id] if asker_id is not None else [])})
         if not members:
             return ExpertResult(experts=[], confidence=0.0)
-        # People left out could fill the top of a kind's list: the
-        # self-introductions are read deeper by how many are left out, and answers
-        # are read only from people who may be recommended.
-        left_out = len(set(exclude)) + int(asker_id is not None)
+        # People left out could fill the top of a kind's list, so introductions and
+        # answers are read only from people who may be recommended.
         evidence = [
-            *self._intros(org_id, question, query_vector, scope, INTRO_TOP_K + left_out),
+            *self._intros(org_id, question, query_vector, scope, members),
             *self._sources(org_id, query_vector, scope, source_hits),
             *self._answers(org_id, query_vector, members),
         ]
@@ -297,7 +295,7 @@ class DbExpertFinder:
         question: str,
         query_vector: Sequence[float],
         scope: SourceScope,
-        top_k: int,
+        members: Mapping[int, object],
     ) -> list[Evidence]:
         if not query_vector:
             return []
@@ -307,7 +305,8 @@ class DbExpertFinder:
             query=question,
             query_vector=query_vector,
             scope=scope,
-            top_k=top_k,
+            top_k=INTRO_TOP_K,
+            member_ids=list(members),
         )
         return [
             Evidence(

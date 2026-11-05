@@ -166,6 +166,20 @@ def _error_event() -> ServerSentEvent:
     )
 
 
+def responder_view(primary: dict[str, Any], *, org_id: int | None) -> schemas.Recommendation:
+    """The hand-off's recommendation as the person being asked sees it.
+
+    ``person_id`` crosses the boundary in the external "E###" form, mirroring the
+    recommend event. For a member's question the reasons are dropped: they come
+    from evidence about the person (introductions, conversations…), which is shown
+    only to the asker (ADR-0012, #107)."""
+
+    shown = {**primary, "person_id": schemas.format_employee_id(primary["person_id"])}
+    if org_id is not None:
+        shown["reasons"] = []
+    return schemas.Recommendation(**shown)
+
+
 @dataclass
 class _SessionCtx:
     """Per-session in-memory bookkeeping: just the input queue + a TTL stamp.
@@ -913,9 +927,7 @@ class AgentService:
             if primary is not None:
                 # person_id crosses the boundary in the external "E###" form,
                 # mirroring the recommend event (events.py / model-definition).
-                responder = schemas.Recommendation(
-                    **{**primary, "person_id": schemas.format_employee_id(primary["person_id"])}
-                )
+                responder = responder_view(primary, org_id=values.get("org_id"))
                 reuse = responder_reuse_stats(session, primary["person_id"])
             # SQL, not the checkpoint: the asker's method choice must also be
             # visible to the inbox / chat gating, which never read the graph

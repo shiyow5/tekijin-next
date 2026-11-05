@@ -23,10 +23,10 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import ColumnElement, and_, delete, or_, select
+from sqlalchemy import ColumnElement, and_, delete, or_, select, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -412,6 +412,7 @@ def search_self_intros(
     query_vector: Sequence[float],
     scope: SourceScope,
     top_k: int = 20,
+    member_ids: Collection[int] | None = None,
 ) -> list[IntroHit]:
     """The introductions ``scope`` may see that best match the query, best first.
 
@@ -419,6 +420,8 @@ def search_self_intros(
     does (``retrieval/sources.py``). Members who opted out or left are never
     returned. A Discord post is visible to readers of its channel only, as a
     Discord conversation is (#85); slides and ``join`` rows are visible to all.
+    ``member_ids``, when given, keeps only those members' introductions, before the
+    ``top_k`` cut, so people left out cannot fill it.
     """
 
     distance = SelfIntro.embedding.cosine_distance(query_vector).label("distance")
@@ -432,6 +435,7 @@ def search_self_intros(
                 Employee.opted_out_at.is_(None),
                 Employee.is_active.is_(True),
                 _visible_intro(org_id, scope),
+                true() if member_ids is None else SelfIntro.member_id.in_(list(member_ids)),
             )
         )
         .order_by(distance, SelfIntro.id)

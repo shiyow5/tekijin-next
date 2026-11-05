@@ -31,6 +31,7 @@ from tekijin.retrieval.experts import (
     CONVERSATION,
     DOCUMENT,
     FLOORS,
+    INTRO_TOP_K,
     SELF_INTRO,
     DbExpertFinder,
 )
@@ -360,6 +361,43 @@ def test_the_asker_opted_out_inactive_and_excluded_are_left_out(
     result = _find(session, fake_embedder, org, asker=asker.id, exclude=[declined.id])
 
     assert _ids(result) == [kept.id]
+
+
+def test_the_askers_own_introductions_do_not_crowd_out_others(session, fake_embedder, org) -> None:
+    """One member may have many introductions (one per Discord post): the asker's
+    must not fill the window the others are read from."""
+
+    asker = _member(session, org, "1", "質問 する人")
+    iwata = _member(session, org, "2", "岩田 颯太")
+    ingest_messages(
+        session,
+        fake_embedder,
+        org=org,
+        guild_id=GUILD,
+        messages=[
+            IncomingMessage(
+                message_id=1000 + i,
+                channel_id=OPEN_CHANNEL,
+                channel_name="自己紹介",
+                thread_id=None,
+                thread_name=None,
+                author_discord_id="1",
+                author_name="質問 する人",
+                content=f"{QUERY} {i}",
+                created_at=dt.datetime(2026, 11, 1, 3, 0) + dt.timedelta(minutes=i),
+                edited_at=None,
+            )
+            for i in range(INTRO_TOP_K + 1)
+        ],
+        now=NOW,
+    )
+    record_visibility(session, org.id, channels={OPEN_CHANNEL: True}, threads={}, now=NOW)
+    set_join_intro(
+        session, fake_embedder, member=iwata, text=f"{QUERY} が 得意 です 本当に", now=NOW
+    )
+    session.flush()
+
+    assert _ids(_find(session, fake_embedder, org, asker=asker.id)) == [iwata.id]
 
 
 def test_describe_only_returns_members_who_may_be_recommended(session, fake_embedder, org) -> None:
