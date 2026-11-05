@@ -15,6 +15,7 @@ from tekijin.discord_bot.backend import (
     get_cursors,
     post_deletes,
     post_messages,
+    post_reaction,
     post_stream_deletes,
 )
 from tekijin.discord_bot.ingest import (
@@ -522,6 +523,25 @@ def test_post_stream_deletes() -> None:
     assert _call(handler, post_stream_deletes, stream_ids=[77]) is True
     assert seen == [
         ("http://api/internal/discord/streams/delete", {"guild_id": "42", "stream_ids": [77]})
+    ]
+
+
+def test_post_reaction() -> None:
+    """A check mark is reported for the case drafter (#113)."""
+
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(200, json={"status": "ignored"})
+
+    taken = _call(handler, post_reaction, channel_id=5, message_id=6, user_id=7, emoji="✅")
+    assert taken is False
+    assert seen == [
+        (
+            "http://api/internal/discord/reactions",
+            {"guild_id": "42", "channel_id": 5, "message_id": 6, "user_id": "7", "emoji": "✅"},
+        )
     ]
 
 

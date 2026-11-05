@@ -36,6 +36,7 @@ from tekijin.discord_bot.backend import (
     member_backend,
     post_deletes,
     post_messages,
+    post_reaction,
     post_stream_deletes,
     post_visibility,
 )
@@ -57,6 +58,7 @@ from tekijin.discord_bot.visibility import (
     reader_scope,
     thread_report,
 )
+from tekijin.knowledge.solve_signals import is_solve_emoji
 
 logger = logging.getLogger("tekijin.discord_bot")
 
@@ -298,6 +300,23 @@ def main() -> None:
     async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent) -> None:
         if payload.guild_id == guild_id:
             batcher.delete(payload.message_ids)
+
+    # #113: a check mark may mark a conversation solved. Sent after the queued
+    # messages, so the reacted message is stored by the time the backend looks.
+    @client.event
+    async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
+        if payload.guild_id != guild_id or not is_solve_emoji(str(payload.emoji)):
+            return
+        await flush_if_ready()
+        await post_reaction(
+            http,
+            guild_id=guild_id,
+            channel_id=payload.channel_id,
+            message_id=payload.message_id,
+            user_id=payload.user_id,
+            emoji=str(payload.emoji),
+            **backend,
+        )
 
     # Deleting a channel or a thread reports no per-message deletions.
     @client.event

@@ -146,6 +146,35 @@ async def post_visibility(
     return result.get("status") == "ok"
 
 
+async def post_reaction(
+    http: httpx.AsyncClient,
+    *,
+    base_url: str,
+    secret: str,
+    guild_id: int,
+    channel_id: int,
+    message_id: int,
+    user_id: int,
+    emoji: str,
+) -> bool:
+    """Report a check mark on a message (#113). False when it was not taken."""
+
+    result = await _post(
+        http,
+        base_url,
+        secret,
+        "reactions",
+        {
+            "guild_id": str(guild_id),
+            "channel_id": channel_id,
+            "message_id": message_id,
+            "user_id": str(user_id),
+            "emoji": emoji,
+        },
+    )
+    return result.get("status") == "ok"
+
+
 async def get_cursors(
     http: httpx.AsyncClient, *, base_url: str, secret: str, guild_id: int
 ) -> dict[str, int] | None:

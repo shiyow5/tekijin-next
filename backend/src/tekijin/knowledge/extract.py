@@ -1,10 +1,12 @@
 """Read a record and write a knowledge draft with an LLM (#112, R6).
 
-A record is something that may hold knowledge: a resolved hand-off thread now, and
-documents and Discord conversations in #113. The model is asked for one draft in the
-KCS shape (issue, environment, resolution, cause) and the draft is stored with
-:func:`tekijin.data.knowledge.create_draft`, so it waits for an admin before it can
-answer anything. The prompt carries no topic vocabulary and no company wording.
+A record is something that may hold knowledge: a resolved hand-off thread, or a
+solved Discord conversation (#113, ``knowledge/conversations.py``). Documents give
+several drafts per passage and use ``knowledge/documents.py``. The model is asked
+for one draft in the KCS shape (issue, environment, resolution, cause) and the
+draft is stored with :func:`tekijin.data.knowledge.create_draft`, so it waits for
+an admin before it can answer anything. The prompt carries no topic vocabulary
+and no company wording.
 
 The extractor takes an injected ``model`` (a ``with_structured_output``-bound
 runnable) so tests drive it with a fake and never touch a network.
@@ -42,12 +44,17 @@ _SYSTEM_PROMPT = (
 
 @dataclass(frozen=True, slots=True)
 class ExtractionSource:
-    """One record to read: its organization, its text, and what to cite."""
+    """One record to read: its organization, its text, and what to cite.
+
+    ``kind`` fixes the draft's kind whatever the model says (a solved conversation
+    is always a ``case``, #113); ``None`` keeps the model's.
+    """
 
     org_id: int
     text: str
     sources: tuple[SourceRef, ...]
     author_id: int | None = None
+    kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +130,7 @@ def extract_and_store(
                 article = create_draft(
                     session,
                     org_id=source.org_id,
-                    kind=draft.kind,
+                    kind=source.kind or draft.kind,
                     issue=draft.issue,
                     environment=draft.environment,
                     resolution=draft.resolution,

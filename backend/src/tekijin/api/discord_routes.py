@@ -354,6 +354,10 @@ def discord_add(
             )
         except SourceOwnedElsewhere:
             return DiscordAddResponse(status="not_owner")
+        org_id = org.id
+    if result.status != "unchanged":
+        # #113: read it for knowledge drafts, after the commit above.
+        request.app.state.knowledge_drafting.document_changed(org_id=org_id, item_id=result.item_id)
     return DiscordAddResponse(status=result.status, chunks=result.chunks)
 
 

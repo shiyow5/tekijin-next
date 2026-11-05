@@ -263,6 +263,13 @@ class Settings(BaseSettings):
     # starting point; #113 re-measures it on the circle's questions. Inert while
     # knowledge_retrieval_enabled=False.
     knowledge_answer_min_similarity: float = 0.20
+    # #113: read every added or changed document (``/tekijin add``, the web, Google,
+    # Notion) with the LLM and store its procedures and facts as knowledge drafts.
+    # OFF by default: each passage is one LLM call. Drafts never answer until an
+    # admin verifies them. Needs a real LLM backend; with ``stub`` nothing runs.
+    # Case drafts from Discord conversations are switched per organization instead
+    # (``organizations.knowledge_from_conversations``).
+    knowledge_from_documents_enabled: bool = False
 
     # #371: fold the C1-extracted topics into the C4 retrieval query. The idea was
     # that a multi-facet question collapses onto the thicker-corpus facet under a
