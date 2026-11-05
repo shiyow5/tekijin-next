@@ -452,3 +452,26 @@ def test_replay_reads_only_request_threads(calls) -> None:
     other.messages = [_thread_message(other)]
     asyncio.run(_ui().replay([request_thread, other]))
     assert [b["thread_id"] for _, b in calls] == ["700"]
+
+
+def test_a_lost_report_is_sent_again_without_posting_again(monkeypatch, calls) -> None:
+    output = _Channel(OUTPUT)
+    _outbox(monkeypatch, [REQUEST_ITEM])
+    replies = iter([{"kind": "error"}, {"kind": "error"}, {"status": "ok"}])
+
+    async def flaky(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        return next(replies)
+
+    monkeypatch.setattr(bot_requests, "internal_post", flaky)
+    ui = _ui()
+    asyncio.run(ui.deliver(_Client(output)))
+    # The backend still lists the item; the bot reports again and posts nothing new.
+    asyncio.run(ui.deliver(_Client(output)))
+    assert len(output.threads) == 1
+    assert [p for p, _ in calls] == ["outbox/1", "outbox/1"]
+    assert calls[1][1] == {"ok": True, "channel_id": str(OUTPUT), "thread_id": "700"}
+    # Once the report is taken, it is not kept any longer.
+    _outbox(monkeypatch, [])
+    asyncio.run(ui.deliver(_Client(output)))
+    assert len(calls) == 3 and ui._acks == {}

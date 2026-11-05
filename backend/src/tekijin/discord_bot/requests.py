@@ -168,6 +168,8 @@ class RequestUI:
         self._lock = asyncio.Lock()
         # Thread messages the backend did not take; sent again with the outbox.
         self._retry: dict[str, dict[str, Any]] = {}
+        # Posted outbox items whose result the backend has not taken yet.
+        self._acks: dict[int, dict[str, Any]] = {}
 
     async def _call(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         return await internal_post(
@@ -334,13 +336,32 @@ class RequestUI:
             return 0
         async with self._lock:
             await self.retry_messages()
+            await self._retry_acks()
             items = await get_outbox(self.http, base_url=self.base_url, secret=self.secret)
             posted = 0
             for item in items:
+                outbox_id = int(item["id"])
+                if outbox_id in self._acks:
+                    continue  # posted already; only the backend has not heard
                 ok, extra = await self._deliver_one(client, item)
                 posted += ok
-                await self._call(f"outbox/{int(item['id'])}", {"ok": ok, **extra})
+                await self._ack(outbox_id, {"ok": ok, **extra})
             return posted
+
+    async def _ack(self, outbox_id: int, result: dict[str, Any]) -> None:
+        """Report one item's result. A successful post whose report does not reach
+        the backend is kept and reported again, never posted again (a second
+        request thread would leave the first one cut off from the hand-off)."""
+
+        reply = await self._call(f"outbox/{outbox_id}", result)
+        if "status" in reply:
+            self._acks.pop(outbox_id, None)
+        elif result.get("ok"):
+            self._acks[outbox_id] = result
+
+    async def _retry_acks(self) -> None:
+        for outbox_id, result in list(self._acks.items()):
+            await self._ack(outbox_id, result)
 
     async def _deliver_one(self, client: Any, item: dict[str, Any]) -> tuple[bool, dict]:
         payload = item.get("payload") or {}
