@@ -106,3 +106,6 @@ backend/src/tekijin/data/**/__pycache__/
 /llm_*.json
 /rr_*.json
 /payload_*.json
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/
