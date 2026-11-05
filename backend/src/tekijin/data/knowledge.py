@@ -384,6 +384,14 @@ def retire_article(
 # --------------------------------------------------------------------------- #
 # sources that change or go (#113)
 # --------------------------------------------------------------------------- #
+def _reviewed(row: KnowledgeArticle | ArticleDTO) -> bool:
+    """Whether an admin has vouched for the article: it is verified, or it was and
+    came back to review with a note (#113). Such an article is never deleted or
+    replaced automatically."""
+
+    return row.state == VERIFIED or row.review_note is not None
+
+
 def _back_to_review(row: KnowledgeArticle, note: str, now: dt.datetime) -> None:
     """Un-verify ``row`` (its text and embedding are kept) and say why."""
 
@@ -463,11 +471,14 @@ def reconcile_lost_sources(session: Session, *, org_id: int, now: dt.datetime) -
     """Deal with the organization's articles that lost a source.
 
     A source is lost when what it named was deleted (its id became NULL). For
-    each article with one: the lost rows are removed; an article that is not
-    verified and has no source left is deleted; any other article goes back to
-    review with :data:`SOURCE_LOST_NOTE` (a retired one stays retired). Removing
-    the lost rows means an admin who verifies the article again decides, from
-    the note and the live sources, who may read it. Idempotent.
+    each article with one, the lost rows are removed. Then an article an admin
+    has reviewed (verified now, or sent back to review with a note before) goes
+    back to review with :data:`SOURCE_LOST_NOTE`, even with no source left, so
+    the admin's work is never deleted behind their back; a retired one stays
+    retired. An article nobody reviewed is deleted when no source is left, and
+    otherwise stays as it is. Removing the lost rows means an admin who verifies
+    the article again decides, from the note and the live sources, who may read
+    it. Idempotent.
     """
 
     lost = session.execute(
@@ -497,9 +508,10 @@ def reconcile_lost_sources(session: Session, *, org_id: int, now: dt.datetime) -
         .execution_options(populate_existing=True)
     ).all()
     for row in rows:
-        if not live.get(row.id) and row.state != VERIFIED:
-            session.delete(row)
-            deleted.append(row.id)
+        if not _reviewed(row):
+            if not live.get(row.id):
+                session.delete(row)
+                deleted.append(row.id)
         elif row.state != "retired":
             _back_to_review(row, SOURCE_LOST_NOTE, now)
             returned.append(row.id)
@@ -535,6 +547,21 @@ def articles_citing(
         )
     )
     return [(ArticleDTO.from_row(r), r.id not in other) for r in rows]
+
+
+def drop_unreviewed_drafts(session: Session, *, org_id: int, source_item_id: int) -> int:
+    """Delete the drafts nobody reviewed that were made only from this item.
+
+    Called when the item's text changed (they say what the old text said) and
+    before its drafts are made again. Returns how many were deleted.
+    """
+
+    stale = [
+        a.id
+        for a, only in articles_citing(session, org_id=org_id, source_item_id=source_item_id)
+        if only and a.state in REVIEW_STATES and not _reviewed(a)
+    ]
+    return delete_articles(session, stale, org_id=org_id)
 
 
 def delete_articles(session: Session, article_ids: Sequence[int], *, org_id: int) -> int:

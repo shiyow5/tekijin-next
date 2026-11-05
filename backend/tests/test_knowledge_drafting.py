@@ -156,6 +156,12 @@ def test_a_check_mark_drafts_a_case(client, engine) -> None:
     )
     assert other.json() == {"status": "unlinked"}
     assert _articles(engine) == []
+    unknown = client.post(
+        "/internal/discord/reactions",
+        json={**body, "message_id": 99, "emoji": "✅"},
+        headers=HEADERS,
+    )
+    assert unknown.json() == {"status": "pending"}
     resp = client.post("/internal/discord/reactions", json={**body, "emoji": "✅"}, headers=HEADERS)
     assert resp.json() == {"status": "ok"}
     assert _articles(engine) == [("case", "draft", True)]

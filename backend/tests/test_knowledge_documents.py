@@ -198,7 +198,8 @@ def test_an_updated_document_is_drafted_again(db, org, fake_embedder) -> None:
         )
     )
     report = draft_document(db, org_id=org, item_id=item, extractor=second, now=LATER)
-    assert (report.stored, report.replaced) == (2, 1)
+    # The unreviewed "返却は" draft went with the old text, when it was stored.
+    assert (report.stored, report.replaced) == (2, 0)
     rows = _articles(db, org)
     assert [(r.issue, r.resolution, r.state, r.review_note) for r in rows] == [
         ("鍵はどこ", "守衛室", "draft", SOURCE_CHANGED_NOTE),
@@ -245,3 +246,25 @@ def test_conversations_and_unknown_items_give_nothing(db, org, fake_embedder) ->
     document = _store(db, org, fake_embedder)
     assert document_item_ids(db, org_id=org) == [document]
     assert document_item_ids(db, org_id=org, item_ids=[conversation.id]) == []
+
+
+def test_a_document_changed_while_it_was_read_is_not_written(db, org, fake_embedder) -> None:
+    """The text read is checked again before the drafts are stored (Codex)."""
+
+    item = _store(db, org, fake_embedder)
+
+    class _ChangesTheDocument:
+        def invoke(self, prompt):
+            db.get(SourceItem, item).content_hash = "newer"
+            db.flush()
+            return DocumentKnowledgeSchema(items=[_item("鍵はどこ")])
+
+    report = draft_document(
+        db,
+        org_id=org,
+        item_id=item,
+        extractor=DocumentDraftExtractor(model=_ChangesTheDocument()),
+        now=NOW,
+    )
+    assert report.outdated and report.stored == 0
+    assert _articles(db, org) == []

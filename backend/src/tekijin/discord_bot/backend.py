@@ -156,8 +156,10 @@ async def post_reaction(
     message_id: int,
     user_id: int,
     emoji: str,
-) -> bool:
-    """Report a check mark on a message (#113). False when it was not taken."""
+) -> str:
+    """Report a check mark on a message (#113). Returns the backend's status:
+    ``ok`` / ``ignored`` / ``unlinked``, ``pending`` when the message is not stored
+    yet, or ``error``."""
 
     result = await _post(
         http,
@@ -172,7 +174,7 @@ async def post_reaction(
             "emoji": emoji,
         },
     )
-    return result.get("status") == "ok"
+    return str(result.get("status") or "error")
 
 
 async def get_cursors(

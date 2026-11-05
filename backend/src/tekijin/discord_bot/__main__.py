@@ -51,6 +51,7 @@ from tekijin.discord_bot.ingest import (
     message_payload,
     parse_ids,
 )
+from tekijin.discord_bot.reactions import ReactionRelay
 from tekijin.discord_bot.visibility import (
     VisibilityReporter,
     channel_report,
@@ -74,6 +75,8 @@ _CURSOR_RETRY_S = 30.0
 _HISTORY_RETRY_S = 60.0
 # How often to send again what the backend did not take of a visibility report.
 _VISIBILITY_RETRY_S = 30.0
+# How often to send again the check marks the backend could not take yet (#113).
+_REACTION_RETRY_S = 30.0
 
 
 def _user(interaction: discord.Interaction) -> dict:
@@ -301,22 +304,34 @@ def main() -> None:
         if payload.guild_id == guild_id:
             batcher.delete(payload.message_ids)
 
-    # #113: a check mark may mark a conversation solved. Sent after the queued
-    # messages, so the reacted message is stored by the time the backend looks.
+    # #113: a check mark may mark a conversation solved. Sent only after the
+    # queued messages were stored, and kept to try again (discord_bot/reactions.py).
+    async def send_reaction(reaction: dict) -> str:
+        return await post_reaction(
+            http,
+            guild_id=guild_id,
+            channel_id=int(reaction["channel_id"]),
+            message_id=int(reaction["message_id"]),
+            user_id=int(reaction["user_id"]),
+            emoji=str(reaction["emoji"]),
+            **backend,
+        )
+
+    reactions = ReactionRelay(send_reaction, batcher.flush, ready=ready)
+
     @client.event
     async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
         if payload.guild_id != guild_id or not is_solve_emoji(str(payload.emoji)):
             return
-        await flush_if_ready()
-        await post_reaction(
-            http,
-            guild_id=guild_id,
-            channel_id=payload.channel_id,
-            message_id=payload.message_id,
-            user_id=payload.user_id,
-            emoji=str(payload.emoji),
-            **backend,
+        reactions.add(
+            {
+                "channel_id": payload.channel_id,
+                "message_id": payload.message_id,
+                "user_id": payload.user_id,
+                "emoji": str(payload.emoji),
+            }
         )
+        await reactions.deliver()
 
     # Deleting a channel or a thread reports no per-message deletions.
     @client.event
@@ -470,6 +485,8 @@ def main() -> None:
         # is read again, which costs only what was missed meanwhile.
         if "visibility" not in tasks:
             tasks["visibility"] = asyncio.create_task(retry_visibility())
+        if "reactions" not in tasks:
+            tasks["reactions"] = asyncio.create_task(reactions.run(_REACTION_RETRY_S))
         if "flush" not in tasks:
             tasks["flush"] = asyncio.create_task(
                 batcher.run(_FLUSH_INTERVAL_S, start_history, ready=ready)

@@ -535,8 +535,8 @@ def test_post_reaction() -> None:
         seen.append((str(request.url), json.loads(request.content)))
         return httpx.Response(200, json={"status": "ignored"})
 
-    taken = _call(handler, post_reaction, channel_id=5, message_id=6, user_id=7, emoji="✅")
-    assert taken is False
+    status = _call(handler, post_reaction, channel_id=5, message_id=6, user_id=7, emoji="✅")
+    assert status == "ignored"
     assert seen == [
         (
             "http://api/internal/discord/reactions",

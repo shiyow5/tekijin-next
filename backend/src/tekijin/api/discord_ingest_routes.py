@@ -13,6 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from tekijin.api.discord_routes import require_bot_secret
 from tekijin.api.service import AgentService
@@ -28,6 +29,7 @@ from tekijin.data.db import session_scope
 from tekijin.data.members import get_or_create_org_for_guild
 from tekijin.data.visibility import record_visibility
 from tekijin.knowledge.solve_signals import is_solve_emoji
+from tekijin.models.tables import ChannelMessage
 
 router = APIRouter(prefix="/internal/discord", include_in_schema=False)
 
@@ -106,8 +108,9 @@ class DiscordReactionRequest(BaseModel):
 
 
 class DiscordReactionResponse(BaseModel):
-    # ``ignored``: not a check mark.
-    status: Literal["ok", "unlinked", "ignored"]
+    # ``ignored``: not a check mark. ``pending``: the message is not stored yet;
+    # the bot sends the reaction again later.
+    status: Literal["ok", "unlinked", "ignored", "pending"]
 
 
 class DiscordVisibilityResponse(BaseModel):
@@ -251,6 +254,13 @@ def discord_reaction(
     with session_scope(service.session_factory) as session:
         org = get_or_create_org_for_guild(session, req.guild_id, name=f"Discord {req.guild_id}")
         org_id = org.id
+        stored = session.scalar(
+            select(ChannelMessage.id).where(
+                ChannelMessage.org_id == org_id, ChannelMessage.message_id == req.message_id
+            )
+        )
+    if stored is None:
+        return DiscordReactionResponse(status="pending")
     request.app.state.knowledge_drafting.reaction(
         org_id=org_id, message_id=req.message_id, reactor_discord_id=req.user_id
     )

@@ -28,11 +28,10 @@ from sqlalchemy.orm import Session
 
 from tekijin.config import Settings, get_settings
 from tekijin.data.knowledge import (
-    REVIEW_STATES,
     SourceRef,
     articles_citing,
     create_draft,
-    delete_articles,
+    drop_unreviewed_drafts,
 )
 from tekijin.data.self_intros import DISCORD_PROVIDER
 from tekijin.ingest.chunking import split_text
@@ -104,6 +103,9 @@ class DocumentDraftReport:
     replaced: int = 0
     # True when the model failed on a passage; nothing was changed then.
     errored: bool = False
+    # True when the document changed while it was read; nothing was written (the
+    # change queued its own drafting).
+    outdated: bool = False
     article_ids: tuple[int, ...] = field(default_factory=tuple)
 
 
@@ -135,6 +137,7 @@ def draft_document(
     item = session.get(SourceItem, item_id)
     if item is None or item.org_id != org_id or item.provider == DISCORD_PROVIDER:
         return DocumentDraftReport(item_id=item_id)
+    digest = item.content_hash
     passages = split_text(item.body or "")
     found: list[tuple[str, DocumentKnowledgeItem]] = []
     for passage in passages:
@@ -146,20 +149,23 @@ def draft_document(
         found += [(passage, e) for e in entries[:MAX_DRAFTS_PER_PASSAGE] if _usable(e)]
 
     with session.begin_nested():
-        existing = articles_citing(session, org_id=org_id, source_item_id=item_id)
+        # The document may have changed while the model read it. Locked, so an
+        # update waits for this write and then sends these drafts back itself.
+        current = session.scalars(
+            select(SourceItem)
+            .where(SourceItem.id == item_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).first()
+        if current is None or current.content_hash != digest:
+            return DocumentDraftReport(item_id=item_id, passages=len(passages), outdated=True)
         # Drafts nobody reviewed, made only from this document: the new ones replace
         # them. One with a note was verified once, and stays for the admin.
-        stale = [
-            a.id
-            for a, only in existing
-            if only and a.state in REVIEW_STATES and a.review_note is None
-        ]
+        replaced = drop_unreviewed_drafts(session, org_id=org_id, source_item_id=item_id)
+        existing = articles_citing(session, org_id=org_id, source_item_id=item_id)
         # An issue already answered from this document is not drafted again, unless
         # the existing article is back in review: the new text may answer it anew.
-        kept = {
-            _issue_key(a.issue) for a, _ in existing if a.id not in stale and a.review_note is None
-        }
-        replaced = delete_articles(session, stale, org_id=org_id)
+        kept = {_issue_key(a.issue) for a, _ in existing if a.review_note is None}
         created: list[int] = []
         for passage, entry in found:
             key = _issue_key(entry.issue)

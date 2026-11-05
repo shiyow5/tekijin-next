@@ -206,7 +206,8 @@ def test_reconcile_returns_verified_and_deletes_sourceless_drafts(db, org, fake_
     assert _state(db, draft_alone) is None
     assert _state(db, wip_alone) is None
     assert _state(db, retired) is None
-    assert _state(db, draft_shared) == ("draft", SOURCE_LOST_NOTE)
+    # Nobody reviewed it and a source is left: it stays as it was.
+    assert _state(db, draft_shared) == ("draft", None)
     # The lost rows are gone, so a re-verified article is shown by its live sources.
     lost = db.scalars(
         select(KnowledgeSource).where(
@@ -219,6 +220,45 @@ def test_reconcile_returns_verified_and_deletes_sourceless_drafts(db, org, fake_
     # Run again: nothing left to do.
     again = reconcile_lost_sources(db, org_id=org, now=LATER)
     assert (again.returned, again.deleted) == ((), ())
+
+
+def test_reviewed_knowledge_survives_losing_its_sources_one_by_one(db, org, fake_embedder):
+    """A verified article back in review is not deleted with its last source (Codex)."""
+
+    first = _document(db, org, fake_embedder)
+    second = upsert_source_item(
+        db,
+        fake_embedder,
+        org_id=org,
+        provider=MANUAL,
+        external_id="circle:second",
+        title="引継ぎ",
+        body="会計は月末に締める",
+        url=None,
+        author_id=None,
+        now=NOW,
+    ).item_id
+    article = _article(db, org, SourceRef(source_item_id=first), SourceRef(source_item_id=second))
+    delete_source_item(db, item_id=first, org_id=org, now=LATER)
+    assert _state(db, article) == ("draft", SOURCE_LOST_NOTE)
+    delete_source_item(db, item_id=second, org_id=org, now=LATER)
+    assert _state(db, article) == ("draft", SOURCE_LOST_NOTE)
+
+
+def test_a_changed_then_deleted_document_keeps_its_reviewed_knowledge(db, org, fake_embedder):
+    item = _document(db, org, fake_embedder)
+    article = _article(db, org, SourceRef(source_item_id=item))
+    _document(db, org, fake_embedder, body="鍵は事務室で借ります")
+    assert _state(db, article) == ("draft", SOURCE_CHANGED_NOTE)
+    delete_source_item(db, item_id=item, org_id=org, now=LATER)
+    assert _state(db, article) == ("draft", SOURCE_LOST_NOTE)
+
+
+def test_a_changed_document_drops_its_unreviewed_drafts(db, org, fake_embedder) -> None:
+    item = _document(db, org, fake_embedder)
+    draft = _article(db, org, SourceRef(source_item_id=item), verified=False)
+    _document(db, org, fake_embedder, body="鍵は事務室で借ります")
+    assert _state(db, draft) is None
 
 
 def test_reconcile_stays_inside_the_organization(db, org, fake_embedder) -> None:

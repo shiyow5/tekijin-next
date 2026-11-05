@@ -18,7 +18,12 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from tekijin.data.knowledge import SOURCE_CHANGED_NOTE, reconcile_lost_sources, return_to_review
+from tekijin.data.knowledge import (
+    SOURCE_CHANGED_NOTE,
+    drop_unreviewed_drafts,
+    reconcile_lost_sources,
+    return_to_review,
+)
 from tekijin.data.self_intros import DISCORD_PROVIDER, sync_document_intros
 from tekijin.data.visibility import SourceScope, visible
 from tekijin.ingest.chunking import passage_text, split_text
@@ -137,6 +142,9 @@ def upsert_source_item(
             return_to_review(
                 session, org_id=org_id, source_item_ids=[item.id], note=SOURCE_CHANGED_NOTE, now=now
             )
+            # Drafts of the old text are dropped now, so nobody verifies one while
+            # the new text is being read (the drafter makes them again).
+            drop_unreviewed_drafts(session, org_id=org_id, source_item_id=item.id)
     item.title, item.body, item.url = title, body, url
     item.content_hash, item.updated_at = digest, now
     session.execute(delete(Chunk).where(Chunk.source_item_id == item.id))
