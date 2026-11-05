@@ -263,6 +263,27 @@ def test_a_changed_document_drops_its_unreviewed_drafts(db, org, fake_embedder) 
     assert _state(db, draft) is None
 
 
+def test_a_draft_verified_meanwhile_is_not_dropped(db, org, fake_embedder, monkeypatch):
+    """The review state is checked in the DELETE itself (Codex)."""
+
+    from dataclasses import replace
+
+    from tekijin.data import knowledge as store
+
+    item = _document(db, org, fake_embedder)
+    article = _article(db, org, SourceRef(source_item_id=item))
+    real = store.articles_citing
+
+    def as_read_before_the_verification(session, **kw):
+        return [
+            (replace(a, state="draft", verified_at=None), only) for a, only in real(session, **kw)
+        ]
+
+    monkeypatch.setattr(store, "articles_citing", as_read_before_the_verification)
+    assert store.drop_unreviewed_drafts(db, org_id=org, source_item_id=item) == 0
+    assert _state(db, article) == ("verified", None)
+
+
 def test_reconcile_stays_inside_the_organization(db, org, fake_embedder) -> None:
     other_org = Organization(name="よそ", discord_guild_id="999113")
     db.add(other_org)

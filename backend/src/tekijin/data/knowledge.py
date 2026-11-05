@@ -563,17 +563,17 @@ def drop_unreviewed_drafts(session: Session, *, org_id: int, source_item_id: int
         for a, only in articles_citing(session, org_id=org_id, source_item_id=source_item_id)
         if only and a.state in REVIEW_STATES and not _reviewed(a)
     ]
-    return delete_articles(session, stale, org_id=org_id)
-
-
-def delete_articles(session: Session, article_ids: Sequence[int], *, org_id: int) -> int:
-    """Delete these articles of ``org_id`` and their sources; returns how many."""
-
-    if not article_ids:
+    if not stale:
         return 0
+    # The review conditions are in the DELETE itself: an admin may verify one of
+    # these between the read above and here, and PostgreSQL checks the WHERE
+    # again on a row another transaction changed, so that article is kept.
     result = session.execute(
         delete(KnowledgeArticle).where(
-            KnowledgeArticle.id.in_(list(article_ids)), KnowledgeArticle.org_id == org_id
+            KnowledgeArticle.id.in_(stale),
+            KnowledgeArticle.org_id == org_id,
+            KnowledgeArticle.state.in_(REVIEW_STATES),
+            KnowledgeArticle.verified_at.is_(None),
         )
     )
     return int(result.rowcount or 0)  # type: ignore[attr-defined]
