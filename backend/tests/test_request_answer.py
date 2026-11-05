@@ -120,3 +120,5 @@ def test_an_edited_answer_replaces_its_text_in_the_draft(db) -> None:
     )
     assert db.get(Answer, answer_id).body == "正しい手順"
     assert articles_from_question(db, "rq_test_1")[0].resolution == "正しい手順"
+    sources = article_sources(db, [article_id], org_id=parties["org_id"], scope=EVERYTHING)
+    assert [s.quote for s in sources[article_id]] == ["正しい手順"]

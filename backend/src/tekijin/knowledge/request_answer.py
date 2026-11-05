@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from tekijin.data.knowledge import (
@@ -29,7 +30,7 @@ from tekijin.data.knowledge import (
 )
 from tekijin.data.writes import create_answer
 from tekijin.knowledge.slack_thread import thread_org_id
-from tekijin.models.tables import Answer, KnowledgeArticle, Question
+from tekijin.models.tables import Answer, KnowledgeArticle, KnowledgeSource, Question
 
 #: How much of the answers is kept as the draft's resolution and the source quote.
 _RESOLUTION_MAX = 4000
@@ -115,6 +116,16 @@ def refresh_case_draft(
             return None
         update_article(
             session, article.id, org_id=article.org_id, changes={"resolution": resolution}, now=now
+        )
+        # The quote shown as the source follows the answers too, so a corrected or
+        # deleted answer is not still shown there.
+        session.execute(
+            sql_update(KnowledgeSource)
+            .where(
+                KnowledgeSource.article_id == article.id,
+                KnowledgeSource.question_id == question_id,
+            )
+            .values(quote=resolution[:_QUOTE_MAX] or None)
         )
         return article.id
     draft = create_draft(

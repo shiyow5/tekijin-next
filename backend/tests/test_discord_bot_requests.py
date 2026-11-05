@@ -495,3 +495,32 @@ def test_deletions_are_forwarded_and_retried(monkeypatch, calls) -> None:
     ]
     asyncio.run(ui.retry_deletes())
     assert len(calls) == 2
+
+
+def test_a_thread_known_late_is_read_again(monkeypatch, calls) -> None:
+    """Messages written before the backend learned the thread are sent again."""
+
+    output = _History(OUTPUT, parent_id=None, messages=[])
+    _outbox(monkeypatch, [REQUEST_ITEM])
+    replies = iter([{"kind": "error"}, {"status": "ok"}, {"status": "answered"}])
+
+    async def flaky(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        return next(replies)
+
+    monkeypatch.setattr(bot_requests, "internal_post", flaky)
+    ui = _ui()
+
+    async def create_thread(**kwargs):
+        thread = _History(700, parent_id=OUTPUT, messages=[])
+        thread.messages = [_thread_message(thread)]
+        output.threads.append(thread)
+        return thread
+
+    output.create_thread = create_thread
+    client = _Client(output)
+    asyncio.run(ui.deliver(client))
+    client.channels[700] = output.threads[0]
+    _outbox(monkeypatch, [])
+    asyncio.run(ui.deliver(client))
+    assert [p for p, _ in calls] == ["outbox/1", "outbox/1", "thread-message"]

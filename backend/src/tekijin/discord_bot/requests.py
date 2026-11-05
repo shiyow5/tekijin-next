@@ -370,7 +370,7 @@ class RequestUI:
         async with self._lock:
             await self.retry_messages()
             await self.retry_deletes()
-            await self._retry_acks()
+            await self._retry_acks(client)
             items = await get_outbox(self.http, base_url=self.base_url, secret=self.secret)
             posted = 0
             for item in items:
@@ -379,23 +379,35 @@ class RequestUI:
                     continue  # posted already; only the backend has not heard
                 ok, extra = await self._deliver_one(client, item)
                 posted += ok
-                await self._ack(outbox_id, {"ok": ok, **extra})
+                await self._ack(client, outbox_id, {"ok": ok, **extra})
             return posted
 
-    async def _ack(self, outbox_id: int, result: dict[str, Any]) -> None:
+    async def _ack(self, client: Any, outbox_id: int, result: dict[str, Any]) -> None:
         """Report one item's result. A successful post whose report does not reach
         the backend is kept and reported again, never posted again (a second
         request thread would leave the first one cut off from the hand-off)."""
 
         reply = await self._call(f"outbox/{outbox_id}", result)
         if "status" in reply:
-            self._acks.pop(outbox_id, None)
+            late = self._acks.pop(outbox_id, None) is not None
+            if late and result.get("thread_id"):
+                # Until now the backend did not know the thread, so what was
+                # written there meanwhile was ignored: read it again.
+                await self._replay_thread(client, int(result["thread_id"]))
         elif result.get("ok"):
             self._acks[outbox_id] = result
 
-    async def _retry_acks(self) -> None:
+    async def _retry_acks(self, client: Any) -> None:
         for outbox_id, result in list(self._acks.items()):
-            await self._ack(outbox_id, result)
+            await self._ack(client, outbox_id, result)
+
+    async def _replay_thread(self, client: Any, thread_id: int) -> None:
+        try:
+            thread = client.get_channel(thread_id) or await client.fetch_channel(thread_id)
+        except discord.DiscordException:
+            logger.warning("could not read request thread %s again", thread_id, exc_info=True)
+            return
+        await self.replay([thread])
 
     async def _deliver_one(self, client: Any, item: dict[str, Any]) -> tuple[bool, dict]:
         payload = item.get("payload") or {}
