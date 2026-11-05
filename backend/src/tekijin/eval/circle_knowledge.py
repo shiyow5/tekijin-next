@@ -1,17 +1,17 @@
-"""Build the circle's knowledge for measuring the knowledge answer (#113).
+"""Build the circle's knowledge for measuring answers that use it (#113, #118).
 
 ``scripts/circle_eval.py --build-knowledge`` runs this with the real LLM: every
 document of the circle is drafted into procedures and facts, and every message
 that reads as the asker closing their question is tried as a solved conversation
 (the same rule the live bot uses; the fixtures carry no reactions). The drafts are
 then marked verified, which only an admin does in real use, so the measurement
-shows what the knowledge answer does once someone has checked them. The ``wip``
+shows what the knowledge does once someone has checked them. The ``wip``
 drafts (no answer) stay unverified.
 
 Everything here writes, and only to the circle's organization: :func:`circle_org`
 refuses any other, and :func:`reset_circle_knowledge` deletes only that
 organization's knowledge. :func:`floor_sweep` reads only, and shows how many
-questions of each kind verified knowledge would take at each floor without
+questions of each kind would be offered verified knowledge at each floor without
 running the graph.
 """
 
@@ -166,13 +166,13 @@ def floor_sweep(
     floors: Iterable[float] = DEFAULT_FLOORS,
     top_n: int = 3,
 ) -> list[SweepRow]:
-    """For each floor, the questions verified knowledge would answer (read only).
+    """For each floor, the questions verified knowledge would reach (read only).
 
-    A question is taken when its nearest verified article clears the floor, as in
-    the graph's knowledge step (which also skips questions C1 reads as asking for
-    a person, so ``person`` here is the risk before that guard). ``cite_ok``
-    counts ``answer`` questions whose taken articles (up to ``top_n``) cite one of
-    the expected sources.
+    A question is taken when its nearest verified article clears the floor, which
+    is when C4 offers knowledge to the composer (#118); whether the answer uses it
+    is the composer's call, so this is an upper bound. ``cite_ok`` counts
+    ``answer`` questions whose taken articles (up to ``top_n``) were made from one
+    of the expected sources.
     """
 
     org_id = circle_org(session)

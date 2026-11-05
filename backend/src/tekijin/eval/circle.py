@@ -17,9 +17,9 @@ What each row records, per the design doc §4.7:
 * ``contains`` — the answer shown contains every expected phrase.
 * ``hit_at_3`` — for a ``person`` question, a correct member is among the first
   three recommendations.
-* ``knowledge`` — the answer came from verified knowledge (#113). Its citations
-  name the documents (``src_``) and Discord messages (``msg_``) the knowledge was
-  made from; a message counts as the conversation it belongs to.
+* ``knowledge`` — the answer shown cites verified knowledge (#118). Its citations
+  also name the documents (``src_``) and Discord messages (``msg_``) the knowledge
+  was made from; a message counts as the conversation it belongs to.
 """
 
 from __future__ import annotations
@@ -121,8 +121,9 @@ def build_circle_agent(
     Mirrors ``api/factory.py`` and ``AgentService._graph`` for the switches that
     reach a member's question; ``nodes`` defaults to the configured LLM backend and
     ``expert_finder`` to ``DbExpertFinder`` with its calibrated floors.
-    ``knowledge_floor`` wires the knowledge answer with that floor (#113), as
-    ``knowledge_retrieval_enabled`` does in the API; ``None`` leaves it out.
+    ``knowledge_floor`` offers verified knowledge at or above that floor to the
+    self-answer composer (#118), as ``knowledge_retrieval_enabled`` does in the API;
+    ``None`` leaves it out.
     """
 
     intent, sufficiency, draft, answerability, self_answer = nodes or make_llm_nodes(settings)

@@ -274,12 +274,15 @@ def test_the_circles_knowledge_is_built_verified_and_answers(seeded, bigrams) ->
         rows = run_circle(agent, circle, org_id, ids, now=NOW, thread_prefix="k")
         session.rollback()
     summary = summarize(rows)
-    # Questions that do not ask for a person are answered from knowledge; the
-    # ones that do are still handed to a person.
-    assert summary["answer"]["knowledge"] >= 20
+    # #118: knowledge is offered to the composer next to the sources. The stub
+    # composer cites everything it is offered, so every answer it gives here cites
+    # knowledge; the questions asking for a person are still handed to a person.
+    answers = [r for r in rows if r.kind == "answer"]
+    assert any(r.grounded for r in answers)
+    assert all(r.knowledge for r in answers if r.grounded)
     assert summary["answer"]["cite_ok"] > 0
     person = [r for r in rows if r.kind == "person"]
-    assert not any(r.knowledge for r in person)
+    assert all(r.handoff for r in person)
     assert "K" in format_rows(rows)
 
     with seeded() as session:

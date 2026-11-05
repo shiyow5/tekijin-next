@@ -24,6 +24,7 @@ from tekijin.agent.protocols import (
     DraftModel,
     ExpertFinder,
     IntentModel,
+    KnowledgeSearch,
     Retriever,
     SelfAnswerModel,
     SourceSearch,
@@ -33,10 +34,24 @@ from tekijin.agent.route import DOCUMENT, PERSON, PRIOR_ANSWER
 from tekijin.agent.state import AgentState
 from tekijin.agent.stubs import KeywordIntentModel, RuleSufficiencyModel, TemplateDraftModel
 from tekijin.data.repository import Repository
+from tekijin.knowledge.answer import KnowledgeCandidates
 from tekijin.retrieval.embedding import Embedder
 from tekijin.retrieval.retriever import HybridRetriever
 from tekijin.scorer.scorer import ExpertiseScorer
 from tekijin.scorer.weights import DEFAULT_WEIGHTS, Weights
+
+
+def _knowledge_search(
+    session: Any,
+    floor: float | None,
+    given: KnowledgeSearch | None,
+    self_answer_model: SelfAnswerModel | None,
+) -> KnowledgeSearch | None:
+    """What C4 offers verified knowledge from (#118), or ``None`` to offer none."""
+
+    if floor is None or self_answer_model is None:
+        return None
+    return given or KnowledgeCandidates(session, min_similarity=floor)
 
 
 # -- conditional-edge routers (pure) -------------------------------------
@@ -65,13 +80,6 @@ def _after_c6(state: AgentState) -> str:
     if state.get("route") == DOCUMENT:
         return "document"
     return "c7_draft" if state.get("recommendations") else "no_candidate"
-
-
-def _after_knowledge_answer(state: AgentState) -> str:
-    # #357 slice 4c: grounded knowledge answer -> ``self_answered`` terminal.
-    # Otherwise proceed to normal retrieval (C4) and routing (C5) — the knowledge
-    # step is a fast pre-check that never blocks the tacit-knowledge hand-off path.
-    return "self_answered" if state.get("self_answer_grounded") else "c4_retrieve"
 
 
 def _after_self_answer(state: AgentState) -> str:
@@ -137,6 +145,7 @@ def build_agent(
     similar_askers_enabled: bool = False,
     source_search: SourceSearch | None = None,
     expert_finder: ExpertFinder | None = None,
+    knowledge_search: KnowledgeSearch | None = None,
 ):
     """Compile and return the C1-C8 agent graph.
 
@@ -167,6 +176,12 @@ def build_agent(
             of ``retriever``.
         expert_finder: #107, who a member's question is handed to, found from the
             evidence C4 searched. ``None`` leaves a member's question with nobody.
+        knowledge_answer_min_similarity: #118, the similarity a verified knowledge
+            article must reach to be offered to the self-answer composer next to the
+            sources. ``None`` (default) offers no knowledge. Knowledge is searched
+            only when ``self_answer_model`` is wired, since nothing else reads it.
+        knowledge_search: what finds that knowledge; defaults to
+            ``KnowledgeCandidates`` over ``session`` with the floor above.
         checkpointer: LangGraph checkpointer; default ``MemorySaver``.
     """
 
@@ -192,10 +207,9 @@ def build_agent(
         fragment_source=Repository(session) if self_answer_model is not None else None,
         prior_answer_reuse_min=prior_answer_reuse_min,
         prior_answer_relevance_floor=prior_answer_relevance_floor,
-        # #357 slice 4c: the knowledge-answer step shares the run's session and only
-        # gets a floor when wired (None -> no node added, inert).
-        knowledge_session=session if knowledge_answer_min_similarity is not None else None,
-        knowledge_answer_min_similarity=knowledge_answer_min_similarity,
+        knowledge_search=_knowledge_search(
+            session, knowledge_answer_min_similarity, knowledge_search, self_answer_model
+        ),
         # #475 Screen 01: c1_intent counts other prior askers in the same topic area
         # only when this session is wired (None = OFF -> understood byte-identical).
         similar_asker_session=session if similar_askers_enabled else None,
@@ -218,12 +232,6 @@ def build_agent(
     # data-derived routes keep their pre-#291 behaviour (document terminal / pinned
     # hand-off) untouched.
     self_answer_wired = self_answer_model is not None
-    # #357 slice 4c: knowledge-answer is wired only when a similarity floor is given.
-    # Off (default) the graph is byte-for-byte the pre-#357 flow — c3_embed -> c4.
-    knowledge_wired = knowledge_answer_min_similarity is not None
-    # The ``self_answered`` terminal is shared by #291 self-answer and #357 knowledge
-    # answer; add it when EITHER is wired.
-    self_answered_wired = self_answer_wired or knowledge_wired
 
     graph = StateGraph(AgentState)
     graph.add_node("reset", nodes.reset)
@@ -248,9 +256,7 @@ def build_agent(
         graph.add_node("no_expert", nodes.no_expert)
     if self_answer_wired:
         graph.add_node("self_answer", nodes.self_answer)
-    if knowledge_wired:
-        graph.add_node("knowledge_answer", nodes.knowledge_answer)
-    if self_answered_wired:
+    if self_answer_wired:
         graph.add_node("self_answered", nodes.self_answered)
 
     # START -> reset -> C1. ``reset`` clears per-question control fields on a fresh
@@ -268,18 +274,9 @@ def build_agent(
         {"c3_embed": "c3_embed", "ask": "ask", "unresolved_intent": "unresolved_intent"},
     )
     graph.add_edge("ask", "c1_intent")  # re-understand the enriched question
-    # #357 slice 4c: when knowledge-answer is wired, C3's embedding first goes to the
-    # knowledge step; a grounded hit ends at ``self_answered``, otherwise it falls
-    # through to C4 retrieval. Off, the pre-#357 direct edge is kept.
-    if knowledge_wired:
-        graph.add_edge("c3_embed", "knowledge_answer")
-        graph.add_conditional_edges(
-            "knowledge_answer",
-            _after_knowledge_answer,
-            {"self_answered": "self_answered", "c4_retrieve": "c4_retrieve"},
-        )
-    else:
-        graph.add_edge("c3_embed", "c4_retrieve")
+    # #118: verified knowledge no longer answers before C4; C4 offers it to the
+    # self-answer composer next to the sources.
+    graph.add_edge("c3_embed", "c4_retrieve")
     graph.add_edge("c4_retrieve", "c5_route")
     # #291: when self-answer is wired, the DATA-DERIVED routes (document /
     # prior_answer) try a cited self-answer first; the PERSON route (weak data)
@@ -317,7 +314,7 @@ def build_agent(
                 "prior_answer": "prior_answer",
             },
         )
-    if self_answered_wired:
+    if self_answer_wired:
         graph.add_edge("self_answered", END)
     graph.add_edge("prior_answer", "c6_score")
     # #70: when the critic is wired, the hand-off branch first passes through the

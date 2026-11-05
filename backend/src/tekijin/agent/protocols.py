@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 from tekijin.agent.state import RetrievalResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only (keeps the heavy retrieval import out)
-    from tekijin.agent.state import SourceHit
+    from tekijin.agent.state import KnowledgeHit, SourceHit
     from tekijin.data.visibility import SourceScope
+    from tekijin.knowledge.answer import KnowledgeSearchResult
     from tekijin.retrieval.experts import Expert, ExpertResult
     from tekijin.retrieval.fragments import CitedEvidence
     from tekijin.retrieval.sources import SourceSearchResult
@@ -217,6 +218,24 @@ class SourceSearch(Protocol):
     def evidence(
         self, hits: Sequence[SourceHit], org_id: int, scope: SourceScope
     ) -> list[CitedEvidence]: ...
+
+
+class KnowledgeSearch(Protocol):
+    """The verified knowledge a member's question may draw on (#118, R6).
+
+    :class:`~tekijin.knowledge.answer.KnowledgeCandidates` reads the database."""
+
+    def search(
+        self, org_id: int, query_vector: Sequence[float], scope: SourceScope
+    ) -> KnowledgeSearchResult: ...
+
+    def evidence(
+        self, hits: Sequence[KnowledgeHit], org_id: int, scope: SourceScope
+    ) -> list[CitedEvidence]: ...
+
+    def citations(
+        self, article_ids: Sequence[int], org_id: int, scope: SourceScope
+    ) -> dict[str, list[dict[str, Any]]]: ...
 
 
 class ExpertFinder(Protocol):
