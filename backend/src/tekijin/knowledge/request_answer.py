@@ -102,6 +102,8 @@ def refresh_case_draft(
         return None
     resolution = _resolution(session, question_id, responder_id)
     existing = articles_from_question(session, question_id)
+    if not existing and not resolution:
+        return None  # every answer was deleted before a draft was made
     if existing:
         article = existing[0]
         # Lock the row before reading its state: a review that verifies it at the

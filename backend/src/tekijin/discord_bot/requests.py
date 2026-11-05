@@ -43,7 +43,9 @@ SEND_TEMPLATE = r"tk:send:(?P<session_id>discord_[0-9a-f]{32})"
 ACTION_TEMPLATE = r"tk:req:(?P<action>accept|decline|refer):(?P<rec>[0-9]{1,12})"
 REFER_TEMPLATE = r"tk:ref:(?P<rec>[0-9]{1,12})"
 REVIEW_TEMPLATE = r"tk:rev:(?P<action>verify|back):(?P<article>[0-9]{1,12})"
-REVIEW_PAGE_TEMPLATE = r"tk:revn:(?P<offset>[0-9]{1,6})"
+REVIEW_PAGE_TEMPLATE = (
+    r"tk:revn:(?P<offset>[0-9]{1,6}):(?P<shown>[0-9]{1,12}(?:\.[0-9]{1,12}){0,3})"
+)
 #: Drafts per ``/tekijin review`` page (the backend's page size): one row of
 #: buttons each, and the fifth row for 「次へ」.
 REVIEW_PAGE = 4
@@ -74,8 +76,11 @@ def review_id(action: str, article_id: int) -> str:
     return f"tk:rev:{action}:{article_id}"
 
 
-def review_page_id(offset: int) -> str:
-    return f"tk:revn:{offset}"
+def review_page_id(offset: int, shown: list[int]) -> str:
+    """「次へ」: where the next page starts, and the drafts the current page showed
+    (any of them checked meanwhile has left the queue, so the start moves back)."""
+
+    return f"tk:revn:{offset}:{'.'.join(str(i) for i in shown)}"
 
 
 def _button(label: str, custom_id: str, style: discord.ButtonStyle) -> discord.ui.Button:
@@ -142,7 +147,9 @@ def review_view(
         view.add_item(
             discord.ui.Button(
                 label="次へ",
-                custom_id=review_page_id(next_offset),
+                custom_id=review_page_id(
+                    next_offset, [int(a["id"]) for a in articles[:REVIEW_PAGE]]
+                ),
                 style=discord.ButtonStyle.primary,
                 row=4,
             )
@@ -168,6 +175,8 @@ class RequestUI:
         self._lock = asyncio.Lock()
         # Thread messages the backend did not take; sent again with the outbox.
         self._retry: dict[str, dict[str, Any]] = {}
+        # Deleted request-thread messages the backend has not heard about yet.
+        self._deletes: set[str] = set()
         # Posted outbox items whose result the backend has not taken yet.
         self._acks: dict[int, dict[str, Any]] = {}
 
@@ -232,13 +241,17 @@ class RequestUI:
         await self._reply(interaction, format_action_reply(result))
         self.kick.set()
 
-    async def on_review(self, interaction: Any, offset: int = 0) -> None:
+    async def on_review(
+        self, interaction: Any, offset: int = 0, shown: list[int] | None = None
+    ) -> None:
         """``/tekijin review``, or 「次へ」 from its page at ``offset``."""
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-        result = await self._call("review", {**_who(interaction), "offset": offset})
+        result = await self._call(
+            "review", {**_who(interaction), "offset": offset, "shown": shown or []}
+        )
         articles = (result.get("articles") or []) if result.get("status") == "ok" else []
-        following = offset + len(articles)
+        following = int(result.get("offset") or 0) + len(articles)
         more = following < int(result.get("total") or 0)
         kwargs = (
             {"view": review_view(articles, next_offset=following if more else None)}
@@ -279,6 +292,26 @@ class RequestUI:
         if edited:
             body["edited"] = True
         await self._forward(body)
+
+    async def on_thread_delete(self, message_ids: list[int]) -> None:
+        """Messages deleted from a request thread: the backend removes the answers
+        they became. Kept and sent again while the backend is away."""
+
+        self._deletes.update(str(i) for i in message_ids)
+        await self.retry_deletes()
+
+    async def retry_deletes(self) -> None:
+        pending = sorted(self._deletes)
+        for start in range(0, len(pending), 100):
+            chunk = pending[start : start + 100]
+            result = await self._call(
+                "thread-message/delete",
+                {"guild_id": str(self.gate.guild_id), "message_ids": chunk},
+            )
+            if "status" not in result:
+                logger.warning("could not forward %d deletion(s); will retry", len(chunk))
+                return
+            self._deletes.difference_update(chunk)
 
     async def on_thread_edit(self, client: Any, channel_id: int, message_id: int) -> None:
         """An edit in a request thread: the backend corrects the kept answer."""
@@ -336,6 +369,7 @@ class RequestUI:
             return 0
         async with self._lock:
             await self.retry_messages()
+            await self.retry_deletes()
             await self._retry_acks()
             items = await get_outbox(self.http, base_url=self.base_url, secret=self.secret)
             posted = 0
@@ -477,19 +511,22 @@ class ReviewButton(discord.ui.DynamicItem[discord.ui.Button], template=REVIEW_TE
 
 
 class ReviewPageButton(discord.ui.DynamicItem[discord.ui.Button], template=REVIEW_PAGE_TEMPLATE):
-    def __init__(self, offset: int) -> None:
-        super().__init__(_button("次へ", review_page_id(offset), discord.ButtonStyle.primary))
+    def __init__(self, offset: int, shown: list[int]) -> None:
+        super().__init__(
+            _button("次へ", review_page_id(offset, shown), discord.ButtonStyle.primary)
+        )
         self.offset = offset
+        self.shown = shown
 
     @classmethod
     async def from_custom_id(cls, interaction, item, match: re.Match[str]):  # type: ignore[override]
-        return cls(int(match["offset"]))
+        return cls(int(match["offset"]), [int(i) for i in match["shown"].split(".")])
 
     async def callback(self, interaction: discord.Interaction) -> None:
         if _ui is None:
             await _no_ui(interaction)
             return
-        await _ui.on_review(interaction, self.offset)
+        await _ui.on_review(interaction, self.offset, self.shown)
 
 
 def install(client: discord.Client, group: app_commands.Group, ui: RequestUI) -> None:

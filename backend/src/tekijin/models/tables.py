@@ -600,11 +600,12 @@ class DiscordThreadMessage(Base):
     recommendation_id: Mapped[int] = mapped_column(
         ForeignKey("discord_requests.recommendation_id", ondelete="CASCADE"), index=True
     )
-    # What it became, so an edit in Discord can correct them (NULL: ignored).
+    # What it became, so an edit or a deletion in Discord can correct them (NULL:
+    # ignored, or deleted since; the row stays so the id is never handled again).
     message_row_id: Mapped[int | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="CASCADE")
+        ForeignKey("messages.id", ondelete="SET NULL")
     )
-    answer_id: Mapped[str | None] = mapped_column(ForeignKey("answers.id", ondelete="CASCADE"))
+    answer_id: Mapped[str | None] = mapped_column(ForeignKey("answers.id", ondelete="SET NULL"))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 

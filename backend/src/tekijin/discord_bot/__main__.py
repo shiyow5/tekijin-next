@@ -325,15 +325,25 @@ def main() -> None:
         else:
             batcher.delete([value], token=token)
 
+    async def forget_answers(channel_id: int, message_ids: list[int]) -> None:
+        """#114: a deletion in a request thread removes the answers it became. An
+        uncached channel may be one; the backend ignores ids it never kept."""
+
+        channel = client.get_channel(channel_id)
+        if gate.enabled and (channel is None or gate.is_request_thread(channel)):
+            await requests_ui.on_thread_delete(message_ids)
+
     @client.event
     async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
         if payload.guild_id == guild_id:
             batcher.delete([payload.message_id])
+            await forget_answers(payload.channel_id, [payload.message_id])
 
     @client.event
     async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent) -> None:
         if payload.guild_id == guild_id:
             batcher.delete(payload.message_ids)
+            await forget_answers(payload.channel_id, list(payload.message_ids))
 
     # #113: a check mark may mark a conversation solved. Sent only after the
     # queued messages were stored, and kept to try again (discord_bot/reactions.py).

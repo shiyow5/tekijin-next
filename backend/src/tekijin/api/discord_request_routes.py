@@ -50,8 +50,12 @@ from tekijin.data.discord_requests import (
 )
 from tekijin.data.members import find_discord_member
 from tekijin.data.messages import create_message, thread_parties
-from tekijin.knowledge.request_answer import record_thread_answer, update_thread_answer
-from tekijin.models.tables import DiscordOutbox, Message
+from tekijin.knowledge.request_answer import (
+    record_thread_answer,
+    refresh_case_draft,
+    update_thread_answer,
+)
+from tekijin.models.tables import Answer, DiscordOutbox, Message
 from tekijin.retrieval.embedding import PASSAGE
 
 logger = logging.getLogger(__name__)
@@ -396,6 +400,71 @@ def discord_thread_message(
     # one it cannot be matched to new questions or rise in the review queue.
     service.schedule_knowledge_embed()
     return DiscordThreadResponse(status="answered")
+
+
+class DiscordThreadDelete(BaseModel):
+    guild_id: str = Field(pattern=_DISCORD_ID)
+    message_ids: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("message_ids")
+    @classmethod
+    def _ids(cls, value: list[str]) -> list[str]:
+        if not all(v.isdigit() and len(v) <= 20 for v in value):
+            raise ValueError("message ids are Discord ids")
+        return value
+
+
+class DiscordThreadDeleteResponse(BaseModel):
+    status: Literal["ok", "disabled", "unlinked"]
+    removed: int = 0
+
+
+@router.post("/thread-message/delete", response_model=DiscordThreadDeleteResponse)
+def discord_thread_message_delete(
+    req: DiscordThreadDelete,
+    request: Request,
+    settings: Settings = Depends(require_bot_secret),
+) -> DiscordThreadDeleteResponse:
+    """Messages deleted from a request thread: remove the chat messages and answers
+    they became, and rewrite the still-reviewable draft without them."""
+
+    if not settings.discord_output_enabled():
+        return DiscordThreadDeleteResponse(status="disabled")
+    if str(settings.discord_guild_id) != req.guild_id:
+        return DiscordThreadDeleteResponse(status="unlinked")
+    service = _service(request)
+    removed = 0
+    touched: set[int] = set()
+    now = _now()
+    with session_scope(service.session_factory) as session:
+        for message_id in req.message_ids:
+            seen = seen_message(session, message_id)
+            if seen is None or (seen.message_row_id is None and seen.answer_id is None):
+                continue
+            if seen.answer_id is not None:
+                answer = session.get(Answer, seen.answer_id)
+                if answer is not None:
+                    session.delete(answer)
+                touched.add(seen.recommendation_id)
+            if seen.message_row_id is not None:
+                message = session.get(Message, seen.message_row_id)
+                if message is not None:
+                    session.delete(message)
+            seen.answer_id = None
+            seen.message_row_id = None
+            removed += 1
+        session.flush()
+        for rec_id in touched:
+            parties = thread_parties(session, rec_id)
+            if parties is None:
+                continue
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 114, "obj": rec_id}
+            )
+            refresh_case_draft(session, parties=parties, now=now)
+    if touched:
+        service.schedule_knowledge_embed()
+    return DiscordThreadDeleteResponse(status="ok", removed=removed)
 
 
 def _apply_edit(

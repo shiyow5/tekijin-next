@@ -473,6 +473,27 @@ def test_a_thread_message_is_handled_once(output_on, flow, monkeypatch) -> None:
     # An edit of an ignored message is still ignored.
     assert write(before, "受ける前(編集)", edited=True) == "duplicate"
 
+    # Deleting the answer in Discord removes it, and the draft loses it.
+    other = _snowflake(13)
+    assert write(other, "補足") == "answered"
+    out = flow.post("/thread-message/delete", {"guild_id": GUILD, "message_ids": [after]})
+    assert out == {"status": "ok", "removed": 1}
+    assert flow.scalars(select(Answer.body).where(Answer.question_id == question_id)) == ["補足"]
+    assert "正しい答え" not in flow.scalars(
+        select(Message.body).where(Message.recommendation_id == rec)
+    )
+    session = get_sessionmaker(flow.engine)()
+    try:
+        assert articles_from_question(session, question_id)[0].resolution == "補足"
+    finally:
+        session.close()
+    # Never handled again, even if sent once more.
+    assert write(after, "正しい答え") == "duplicate"
+    assert (
+        flow.post("/thread-message/delete", {"guild_id": "1", "message_ids": [other]})["status"]
+        == "unlinked"
+    )
+
 
 def test_review_pages_past_drafts_sent_back(output_on, flow) -> None:
     from tekijin.data.knowledge import create_draft
@@ -499,6 +520,14 @@ def test_review_pages_past_drafts_sent_back(output_on, flow) -> None:
         session.close()
     first = flow.post("/review", _user(ADMIN))
     assert first["total"] == 6 and len(first["articles"]) == 4 and first["offset"] == 0
-    second = flow.post("/review", {**_user(ADMIN), "offset": 4})
+    shown = [a["id"] for a in first["articles"]]
+    second = flow.post("/review", {**_user(ADMIN), "offset": 4, "shown": shown})
     assert len(second["articles"]) == 2 and second["offset"] == 4
-    assert not {a["id"] for a in first["articles"]} & {a["id"] for a in second["articles"]}
+    assert not set(shown) & {a["id"] for a in second["articles"]}
+
+    # Two of the first page are checked; 「次へ」 from it still shows the rest.
+    for article_id in shown[:2]:
+        flow.post("/review/action", {**_user(ADMIN), "article_id": article_id, "action": "verify"})
+    after_checks = flow.post("/review", {**_user(ADMIN), "offset": 4, "shown": shown})
+    assert after_checks["offset"] == 2
+    assert {a["id"] for a in after_checks["articles"]} == {a["id"] for a in second["articles"]}

@@ -368,6 +368,7 @@ def test_persistent_items_rebuild_from_their_ids() -> None:
         (bot_requests.RequestButton, ACTION_TEMPLATE, "tk:req:decline:42"),
         (bot_requests.ReferSelect, REFER_TEMPLATE, "tk:ref:42"),
         (bot_requests.ReviewButton, REVIEW_TEMPLATE, "tk:rev:back:7"),
+        (bot_requests.ReviewPageButton, bot_requests.REVIEW_PAGE_TEMPLATE, "tk:revn:8:5.6.7.8"),
     ]
     for cls, template, custom_id in cases:
         item = asyncio.run(cls.from_custom_id(None, None, re.fullmatch(template, custom_id)))
@@ -394,9 +395,9 @@ def test_review_offers_the_next_page(calls) -> None:
     }
     interaction = _interaction(9001)
     asyncio.run(_ui().on_review(interaction, 4))
-    assert calls[0][1]["offset"] == 4
+    assert calls[0][1]["offset"] == 4 and calls[0][1]["shown"] == []
     ids = _ids(interaction.followup.sent[0][1]["view"])
-    assert ids[-1] == "tk:revn:8" and len(ids) == 9
+    assert ids[-1] == "tk:revn:8:0.1.2.3" and len(ids) == 9
     assert re.fullmatch(bot_requests.REVIEW_PAGE_TEMPLATE, ids[-1])
 
 
@@ -475,3 +476,22 @@ def test_a_lost_report_is_sent_again_without_posting_again(monkeypatch, calls) -
     _outbox(monkeypatch, [])
     asyncio.run(ui.deliver(_Client(output)))
     assert len(calls) == 3 and ui._acks == {}
+
+
+def test_deletions_are_forwarded_and_retried(monkeypatch, calls) -> None:
+    replies = iter([{"kind": "error"}, {"status": "ok"}])
+
+    async def flaky(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        return next(replies)
+
+    monkeypatch.setattr(bot_requests, "internal_post", flaky)
+    ui = _ui()
+    asyncio.run(ui.on_thread_delete([55, 56]))
+    asyncio.run(ui.retry_deletes())
+    assert calls == [
+        ("thread-message/delete", {"guild_id": str(GUILD), "message_ids": ["55", "56"]}),
+        ("thread-message/delete", {"guild_id": str(GUILD), "message_ids": ["55", "56"]}),
+    ]
+    asyncio.run(ui.retry_deletes())
+    assert len(calls) == 2

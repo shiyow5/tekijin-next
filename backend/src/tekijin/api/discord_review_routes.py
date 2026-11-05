@@ -15,6 +15,8 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from tekijin.api.discord_routes import DiscordUser, _guild_for, require_bot_secret
 from tekijin.api.service import AgentService
@@ -31,6 +33,7 @@ from tekijin.data.knowledge import (
 from tekijin.data.members import find_discord_member, get_or_create_org_for_guild
 from tekijin.data.visibility import EVERYTHING
 from tekijin.knowledge.index import embed_articles
+from tekijin.models.tables import KnowledgeArticle
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,9 @@ class ReviewArticle(BaseModel):
 class DiscordReviewRequest(DiscordUser):
     # Where the page starts, so drafts sent back (still waiting) can be passed over.
     offset: int = Field(default=0, ge=0, le=100000)
+    # The drafts the previous page showed. Those checked since have left the queue,
+    # so the page starts that many earlier and nothing is skipped.
+    shown: list[int] = Field(default_factory=list, max_length=REVIEW_PAGE)
 
 
 class DiscordReviewResponse(BaseModel):
@@ -103,18 +109,19 @@ def discord_review(
     service: AgentService = request.app.state.agent_service
     with session_scope(service.session_factory) as session:
         org = get_or_create_org_for_guild(session, guild_id, name=f"Discord {guild_id}")
+        offset = max(0, req.offset - _left_queue(session, org.id, req.shown))
         articles, total = list_articles(
             session,
             org_id=org.id,
             states=REVIEW_STATES,
             scope=EVERYTHING,
-            offset=req.offset,
+            offset=offset,
             limit=REVIEW_PAGE,
         )
     return DiscordReviewResponse(
         status="ok",
         total=total,
-        offset=req.offset,
+        offset=offset,
         articles=[
             ReviewArticle(
                 id=a.id,
@@ -127,6 +134,23 @@ def discord_review(
             for a in articles
         ],
     )
+
+
+def _left_queue(session: Session, org_id: int, shown: list[int]) -> int:
+    """How many of ``shown`` are no longer waiting for review."""
+
+    if not shown:
+        return 0
+    waiting = session.scalar(
+        select(func.count())
+        .select_from(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.id.in_(shown),
+            KnowledgeArticle.org_id == org_id,
+            KnowledgeArticle.state.in_(REVIEW_STATES),
+        )
+    )
+    return len(set(shown)) - int(waiting or 0)
 
 
 @router.post("/review/action", response_model=DiscordReviewActionResponse)
