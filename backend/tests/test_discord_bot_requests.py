@@ -694,12 +694,24 @@ def test_replay_includes_archived_request_threads(calls) -> None:
     assert sorted(bodies) == sorted(["開いている", "閉じた"])
 
 
-def test_replay_removes_answers_deleted_while_the_bot_was_stopped(calls) -> None:
-    calls.replies["thread-message/captured"] = {"status": "ok", "message_ids": ["55", "77"]}
+def test_replay_removes_answers_deleted_while_the_bot_was_stopped(monkeypatch, calls) -> None:
+    import discord
+
+    now = bot_requests._snowflake_now()
+    late = now + (60_000 << 22)  # written after the history was read
+    calls.replies["thread-message/captured"] = {
+        "status": "ok",
+        "message_ids": ["55", "77", "88", str(late)],
+    }
     thread = _History(700, parent_id=OUTPUT, messages=[])
-    thread.messages = [_thread_message(thread)]  # id 55 still there; 77 is gone
+    thread.messages = [_thread_message(thread)]  # 55 is still there
+
+    async def fetch_message(mid):
+        if mid == 77:
+            raise discord.NotFound(SimpleNamespace(status=404, reason="nf"), "gone")
+        return SimpleNamespace(id=mid)  # 88 exists after all (not in the page read)
+
+    thread.fetch_message = fetch_message
     asyncio.run(_ui().replay([thread]))
-    assert calls[-1] == (
-        "thread-message/delete",
-        {"guild_id": str(GUILD), "message_ids": ["77"], "thread_id": "700"},
-    )
+    deletes = [b for p, b in calls if p == "thread-message/delete"]
+    assert deletes == [{"guild_id": str(GUILD), "message_ids": ["77"], "thread_id": "700"}]

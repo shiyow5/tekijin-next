@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import time
 from typing import Any
 
 import discord
@@ -164,6 +165,12 @@ def review_view(
             )
         )
     return view
+
+
+def _snowflake_now() -> int:
+    """The smallest Discord id a message written from now on can have."""
+
+    return int(time.time() * 1000 - _DISCORD_EPOCH_MS) << 22
 
 
 def _written(message: Any) -> float:
@@ -462,10 +469,14 @@ class RequestUI:
             logger.warning("could not list archived request threads", exc_info=True)
         await self.replay(threads)
 
-    async def _reconcile_deletions(self, thread: Any, recent: list[Any]) -> None:
+    async def _reconcile_deletions(self, thread: Any, recent: list[Any], *, before: int) -> None:
         """Kept messages no longer in the thread were deleted while the bot was
-        stopped: remove what they became. Only ids inside the range just read are
-        judged; an older one may simply not have been read."""
+        stopped: remove what they became.
+
+        Only ids inside the range just read are judged: not older than its oldest
+        message (an older one may simply not have been read) and written before the
+        read began (a newer one may have arrived since). Each is then confirmed
+        gone with Discord before it is reported deleted."""
 
         result = await self._call(
             "thread-message/captured",
@@ -475,11 +486,19 @@ class RequestUI:
             return
         present = {int(m.id) for m in recent}
         oldest = min(present) if len(recent) >= _REPLAY_LIMIT and present else 0
-        missing = [
+        candidates = [
             int(i)
             for i in result.get("message_ids") or []
-            if str(i).isdigit() and int(i) >= oldest and int(i) not in present
+            if str(i).isdigit() and oldest <= int(i) < before and int(i) not in present
         ]
+        missing = []
+        for message_id in candidates:
+            try:
+                await thread.fetch_message(message_id)
+            except discord.NotFound:
+                missing.append(message_id)
+            except discord.DiscordException:
+                continue  # not sure; leave it
         if missing:
             await self.on_thread_delete(missing, thread_id=thread.id)
 
@@ -493,10 +512,13 @@ class RequestUI:
             try:
                 # The newest messages, sent oldest first: what was missed while
                 # the bot was away is the latest part of the thread.
+                # Messages written from now on are not in the snapshot below and
+                # must never be judged deleted for that.
+                snapshot_id = _snowflake_now()
                 recent = [m async for m in thread.history(limit=_REPLAY_LIMIT)]
                 for message in reversed(recent):
                     await self.on_thread_message(message)
-                await self._reconcile_deletions(thread, recent)
+                await self._reconcile_deletions(thread, recent, before=snapshot_id)
             except discord.DiscordException:
                 logger.warning("could not read request thread %s again", thread.id, exc_info=True)
 
