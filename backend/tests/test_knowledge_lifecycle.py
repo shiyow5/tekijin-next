@@ -138,7 +138,7 @@ def _state(db, article_id: int) -> tuple[str, str | None] | None:
 # --------------------------------------------------------------------------- #
 # the store
 # --------------------------------------------------------------------------- #
-def test_return_to_review_sends_back_only_verified_knowledge(db, org, fake_embedder) -> None:
+def test_return_to_review_marks_every_article_made_from_the_source(db, org, fake_embedder):
     item = _document(db, org, fake_embedder)
     verified = _article(db, org, SourceRef(source_item_id=item))
     drafted = _article(db, org, SourceRef(source_item_id=item), verified=False)
@@ -146,11 +146,13 @@ def test_return_to_review_sends_back_only_verified_knowledge(db, org, fake_embed
     returned = return_to_review(
         db, org_id=org, source_item_ids=[item], note=SOURCE_CHANGED_NOTE, now=LATER
     )
-    assert returned == [verified]
+    assert returned == [verified, drafted]
     assert _state(db, verified) == ("draft", SOURCE_CHANGED_NOTE)
     row = db.get(KnowledgeArticle, verified)
-    assert (row.verified_at, row.verifier_id, row.updated_at) == (None, None, LATER)
-    assert _state(db, drafted) == ("draft", None)
+    # Who last vouched for it, and when, is kept next to the note.
+    assert (row.verified_at, row.updated_at) == (NOW, LATER)
+    # A draft gets the note too, so it is not verified without the admin seeing it.
+    assert _state(db, drafted) == ("draft", SOURCE_CHANGED_NOTE)
     assert _state(db, unrelated) == ("verified", None)
     assert return_to_review(db, org_id=org, note=SOURCE_CHANGED_NOTE, now=LATER) == []
 
@@ -206,8 +208,8 @@ def test_reconcile_returns_verified_and_deletes_sourceless_drafts(db, org, fake_
     assert _state(db, draft_alone) is None
     assert _state(db, wip_alone) is None
     assert _state(db, retired) is None
-    # Nobody reviewed it and a source is left: it stays as it was.
-    assert _state(db, draft_shared) == ("draft", None)
+    # Nobody verified it but a source is left: it stays, with the note.
+    assert _state(db, draft_shared) == ("draft", SOURCE_LOST_NOTE)
     # The lost rows are gone, so a re-verified article is shown by its live sources.
     lost = db.scalars(
         select(KnowledgeSource).where(

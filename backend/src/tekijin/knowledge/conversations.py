@@ -200,7 +200,23 @@ def draft_conversation_case(
     window = case_window(session, org_id=org_id, signal=signal)
     if not is_solved(window, signal, reactor_member_id=reactor):
         return None
-    return extract_and_store(session, [case_source(org_id, window)], extractor, now=now)
+    read = {row.id: row.content for row, _ in window}
+
+    def unchanged(_source: ExtractionSource) -> bool:
+        # A message may have been edited, hidden or deleted while the model read
+        # the stretch. Locked, so such a change waits for this write and then
+        # sends the stored case back to review itself.
+        rows = session.execute(
+            select(ChannelMessage.id, ChannelMessage.content, ChannelMessage.hidden_at)
+            .where(ChannelMessage.id.in_(list(read)))
+            .with_for_update()
+        ).all()
+        now_read = {mid: content for mid, content, hidden in rows if hidden is None}
+        return now_read == read
+
+    return extract_and_store(
+        session, [case_source(org_id, window)], extractor, now=now, still_current=unchanged
+    )
 
 
 def conversations_enabled(session: Session, org_id: int) -> bool:

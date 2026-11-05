@@ -386,19 +386,22 @@ def retire_article(
 # --------------------------------------------------------------------------- #
 def _reviewed(row: KnowledgeArticle | ArticleDTO) -> bool:
     """Whether an admin has vouched for the article: it is verified, or it was and
-    came back to review with a note (#113). Such an article is never deleted or
-    replaced automatically."""
+    came back to review because its source changed or went (#113), which keeps
+    ``verified_at``. Such an article is never deleted or replaced automatically."""
 
-    return row.state == VERIFIED or row.review_note is not None
+    return row.state == VERIFIED or row.verified_at is not None
 
 
 def _back_to_review(row: KnowledgeArticle, note: str, now: dt.datetime) -> None:
-    """Un-verify ``row`` (its text and embedding are kept) and say why."""
+    """Put ``row`` back in review (its text and embedding are kept) and say why.
+
+    A verified article becomes a draft but keeps ``verified_at`` and
+    ``verifier_id``: who last vouched for it and when, which the admin sees next
+    to the note and which keeps it from being deleted automatically.
+    """
 
     if row.state == VERIFIED:
         row.state = "draft"
-        row.verifier_id = None
-        row.verified_at = None
     row.review_note = note
     row.updated_at = now
 
@@ -412,11 +415,12 @@ def return_to_review(
     note: str,
     now: dt.datetime,
 ) -> list[int]:
-    """Send the verified articles made from these items or messages back to review.
+    """Send the articles made from these items or messages back to review.
 
     Used when what they say may no longer hold: a document's text changed, or a
-    message was edited. Drafts are left alone (nobody has vouched for them yet).
-    Returns the ids sent back, in id order.
+    message was edited. A verified article becomes a draft; a draft or ``wip``
+    one gets the note too, so it is not verified without the admin seeing it.
+    Retired articles are left alone. Returns the ids changed, in id order.
     """
 
     item_ids = list(source_item_ids)
@@ -431,7 +435,7 @@ def return_to_review(
         select(KnowledgeArticle)
         .where(
             KnowledgeArticle.org_id == org_id,
-            KnowledgeArticle.state == VERIFIED,
+            KnowledgeArticle.state != "retired",
             exists().where(KnowledgeSource.article_id == KnowledgeArticle.id, cites),
         )
         .order_by(KnowledgeArticle.id)
@@ -471,12 +475,11 @@ def reconcile_lost_sources(session: Session, *, org_id: int, now: dt.datetime) -
     """Deal with the organization's articles that lost a source.
 
     A source is lost when what it named was deleted (its id became NULL). For
-    each article with one, the lost rows are removed. Then an article an admin
-    has reviewed (verified now, or sent back to review with a note before) goes
-    back to review with :data:`SOURCE_LOST_NOTE`, even with no source left, so
-    the admin's work is never deleted behind their back; a retired one stays
-    retired. An article nobody reviewed is deleted when no source is left, and
-    otherwise stays as it is. Removing the lost rows means an admin who verifies
+    each article with one, the lost rows are removed. An article nobody has
+    verified is deleted when no source is left. Any other article goes back to
+    review with :data:`SOURCE_LOST_NOTE` (a retired one stays retired), even an
+    article an admin verified that has no source left, so the admin's work is
+    never deleted behind their back. Removing the lost rows means an admin who verifies
     the article again decides, from the note and the live sources, who may read
     it. Idempotent.
     """
@@ -508,10 +511,9 @@ def reconcile_lost_sources(session: Session, *, org_id: int, now: dt.datetime) -
         .execution_options(populate_existing=True)
     ).all()
     for row in rows:
-        if not _reviewed(row):
-            if not live.get(row.id):
-                session.delete(row)
-                deleted.append(row.id)
+        if not _reviewed(row) and not live.get(row.id):
+            session.delete(row)
+            deleted.append(row.id)
         elif row.state != "retired":
             _back_to_review(row, SOURCE_LOST_NOTE, now)
             returned.append(row.id)

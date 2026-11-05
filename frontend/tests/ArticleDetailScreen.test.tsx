@@ -79,12 +79,14 @@ describe("ArticleDetailScreen (#112)", () => {
     getArticleMock.mockResolvedValue({
       ...DRAFT,
       review_note: "出典の資料が更新されました。",
+      verified_at: "2026-11-02T10:00:00",
     });
     render(<ArticleDetailScreen articleId="7" />);
 
     expect(await screen.findByRole("note")).toHaveTextContent(
       "確認に戻った理由: 出典の資料が更新されました。",
     );
+    expect(screen.getByText(/前回の確認:/)).toBeInTheDocument();
   });
 
   it("lets the admin edit and verify", async () => {

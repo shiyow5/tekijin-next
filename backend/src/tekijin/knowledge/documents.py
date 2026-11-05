@@ -159,8 +159,8 @@ def draft_document(
         ).first()
         if current is None or current.content_hash != digest:
             return DocumentDraftReport(item_id=item_id, passages=len(passages), outdated=True)
-        # Drafts nobody reviewed, made only from this document: the new ones replace
-        # them. One with a note was verified once, and stays for the admin.
+        # Drafts nobody verified, made only from this document: the new ones replace
+        # them. One that was verified once stays for the admin, with its note.
         replaced = drop_unreviewed_drafts(session, org_id=org_id, source_item_id=item_id)
         existing = articles_citing(session, org_id=org_id, source_item_id=item_id)
         # An issue already answered from this document is not drafted again, unless

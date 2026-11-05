@@ -9,7 +9,7 @@ from sqlalchemy import select, text
 
 from tekijin.data.conversations import IncomingMessage, delete_messages, ingest_messages
 from tekijin.data.db import get_sessionmaker
-from tekijin.data.knowledge import article_sources, retire_article
+from tekijin.data.knowledge import SOURCE_EDITED_NOTE, article_sources, retire_article
 from tekijin.data.visibility import EVERYTHING
 from tekijin.knowledge.conversations import (
     WINDOW_MAX,
@@ -19,7 +19,7 @@ from tekijin.knowledge.conversations import (
 )
 from tekijin.knowledge.extract import DraftExtractor
 from tekijin.llm.schemas import KnowledgeDraftSchema
-from tekijin.models.tables import Employee, KnowledgeArticle, Organization
+from tekijin.models.tables import ChannelMessage, Employee, KnowledgeArticle, Organization
 
 GUILD = "113777"
 NOW = dt.datetime(2026, 11, 5, 12, 0, 0)
@@ -243,3 +243,29 @@ def test_a_long_conversation_is_cut_to_its_end(db, org, fake_embedder) -> None:
     sources = article_sources(db, [case.id], org_id=org, scope=EVERYTHING)[case.id]
     assert len(sources) == WINDOW_MAX
     assert sources[-1].quote == "見てます"
+
+
+def test_a_message_edited_while_the_model_reads_drops_the_case(db, org, fake_embedder) -> None:
+    """The stretch is checked again before the case is stored (Codex)."""
+
+    _ingest(db, org, fake_embedder, FOCUS)
+
+    class _EditsTheAnswer(_FakeModel):
+        def invoke(self, prompt):
+            out = super().invoke(prompt)
+            row = db.scalars(select(ChannelMessage).where(ChannelMessage.message_id == 2)).one()
+            row.content = "延長筒ではなく接眼部を回して"
+            db.flush()
+            return out
+
+    report = _capture(db, org, _EditsTheAnswer(), 3)
+    assert report is not None and (report.stored, report.outdated) == (0, 1)
+    assert _cases(db, org) == []
+
+
+def test_an_edit_after_the_case_marks_it_for_review(db, org, fake_embedder) -> None:
+    _ingest(db, org, fake_embedder, FOCUS)
+    _capture(db, org, _FakeModel(), 3)
+    _ingest(db, org, fake_embedder, [_msg(2, "2", "延長筒は右のポケットです")])
+    [case] = _cases(db, org)
+    assert (case.state, case.review_note) == ("draft", SOURCE_EDITED_NOTE)

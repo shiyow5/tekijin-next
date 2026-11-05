@@ -325,7 +325,8 @@ export function ArticleDetailScreen({ articleId }: { articleId: string }) {
               {state.article.author_name ? <span>作成: {state.article.author_name}</span> : null}
               {state.article.verified_at ? (
                 <span>
-                  確認: {state.article.verifier_name ?? "管理者"}（
+                  {state.article.state === "verified" ? "確認" : "前回の確認"}:{" "}
+                  {state.article.verifier_name ?? "管理者"}（
                   {formatDateJst(state.article.verified_at) ?? "—"}）
                 </span>
               ) : null}

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -64,6 +64,8 @@ class ExtractionReport:
     skipped: int = 0
     errored: int = 0
     article_ids: tuple[int, ...] = field(default_factory=tuple)
+    # Records whose source changed while the model read them; nothing was stored.
+    outdated: int = 0
 
 
 class Extractor(Protocol):
@@ -109,15 +111,19 @@ def extract_and_store(
     extractor: Extractor,
     *,
     now: dt.datetime,
+    still_current: Callable[[ExtractionSource], bool] | None = None,
 ) -> ExtractionReport:
     """Extract each record and store a draft for it.
 
     A record that fails (the model or the write raised) is logged and counted as
     ``errored``, and its partial write is rolled back to a savepoint, so one bad
-    record does not lose the others. The caller owns the transaction.
+    record does not lose the others. ``still_current`` is asked after the model
+    answered and before the draft is written: ``False`` means the record changed
+    meanwhile, and nothing is stored for it (``outdated``). The caller owns the
+    transaction.
     """
 
-    seen = stored = skipped = errored = 0
+    seen = stored = skipped = errored = outdated = 0
     created: list[int] = []
     for source in sources:
         seen += 1
@@ -125,6 +131,9 @@ def extract_and_store(
             draft = extractor.extract(source)
             if draft is None:
                 skipped += 1
+                continue
+            if still_current is not None and not still_current(source):
+                outdated += 1
                 continue
             with session.begin_nested():
                 article = create_draft(
@@ -145,5 +154,10 @@ def extract_and_store(
             errored += 1
             logger.warning("knowledge extraction failed for a record", exc_info=True)
     return ExtractionReport(
-        seen=seen, stored=stored, skipped=skipped, errored=errored, article_ids=tuple(created)
+        seen=seen,
+        stored=stored,
+        skipped=skipped,
+        errored=errored,
+        article_ids=tuple(created),
+        outdated=outdated,
     )
