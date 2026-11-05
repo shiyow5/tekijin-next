@@ -21,24 +21,48 @@ _FIXED_REPLIES = {
 }
 
 
+# #106: what happened to the self-introduction typed with join / intro.
+_INTRO_NOTES: dict[object, str] = {
+    True: "自己紹介を登録しました。",
+    False: "推薦の対象から外れているので、自己紹介は登録しませんでした。",
+}
+_INTRO_REPLIES = {
+    "intro_saved": "自己紹介を登録しました。前に登録したものは、これに置き換わります。",
+    "intro_unchanged": "自己紹介の文が空だったので、何も変えていません。",
+    "intro_refused": (
+        "推薦の対象から外れているので、自己紹介は登録しませんでした。"
+        "登録するには、先に `/tekijin optin` を打ってください。"
+    ),
+    "not_joined": "自己紹介を登録するには、先に `/tekijin join` でTEKIJINに参加してください。",
+}
+
+
 def format_member_reply(result: dict[str, Any]) -> str:
-    """The reply to ``/tekijin join|optout|optin``."""
+    """The reply to ``/tekijin join|optout|optin|intro``."""
 
     status = result.get("status")
     if status == "joined" and result.get("login_url"):
         return (
-            "TEKIJINに参加しました。次のURLからWebにログインできます。"
+            "TEKIJINに参加しました。"
+            f"{_INTRO_NOTES.get(result.get('intro_saved'), '')}"
+            "次のURLからWebにログインできます。"
             "10分以内に1回だけ使えます。ほかの人には送らないでください。\n"
             f"{result['login_url']}\n\n"
             "期限が切れたら、もう一度 `/tekijin join` を打ってください。"
         )
     if status == "opted_out":
         return (
-            "あなたを、TEKIJINが詳しい人として推薦する対象から外しました。"
+            "あなたを、TEKIJINが詳しい人として推薦する対象から外し、自己紹介を消しました。"
             "戻すときは `/tekijin optin` を打ってください。"
         )
     if status == "opted_in":
-        return "あなたを、TEKIJINが詳しい人として推薦する対象に戻しました。"
+        return (
+            "あなたを、TEKIJINが詳しい人として推薦する対象に戻しました。"
+            "消した自己紹介は戻らないので、`/tekijin intro` で書き直してください。"
+            "自己紹介の資料にあった分は、その資料が次に取り込まれたときに戻ります。"
+        )
+    if status in _INTRO_REPLIES:
+        return _INTRO_REPLIES[status]
     if status == "unlinked":
         return _FIXED_REPLIES["unlinked"]
     return _FIXED_REPLIES["error"]

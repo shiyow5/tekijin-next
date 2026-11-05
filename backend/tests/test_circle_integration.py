@@ -12,7 +12,14 @@ from tekijin.data.circle import GUILD_ID, external_id, load_circle, seed_circle
 from tekijin.data.db import get_sessionmaker
 from tekijin.data.sources import count_source_items
 from tekijin.data.visibility import PUBLIC
-from tekijin.models.tables import ChannelMessage, Chunk, Employee, Organization, SourceItem
+from tekijin.models.tables import (
+    ChannelMessage,
+    Chunk,
+    Employee,
+    Organization,
+    SelfIntro,
+    SourceItem,
+)
 
 NOW = dt.datetime(2026, 11, 1, 12, 0, 0)
 
@@ -123,3 +130,21 @@ def test_other_organizations_are_left_alone(session, fake_embedder) -> None:
 
     assert _count(session, SourceItem, other.id) == 0
     assert _count(session, Employee, other.id) == 0
+
+
+def test_the_intro_slides_give_twelve_self_intros(session, fake_embedder) -> None:
+    """#106: one ``slides`` row per slide, each the member the slide names."""
+
+    circle = load_circle()
+    org_id = seed_circle(session, fake_embedder, circle, now=NOW).org_id
+    session.flush()
+
+    rows = session.scalars(select(SelfIntro).where(SelfIntro.org_id == org_id)).all()
+    assert len(rows) == 12
+    assert {row.origin for row in rows} == {"slides"}
+    names = {session.get(Employee, row.member_id).name for row in rows}
+    assert "岩田 颯太" in names and "野口 大和" not in names
+
+    seed_circle(session, fake_embedder, circle, now=NOW + dt.timedelta(days=1))
+    session.flush()
+    assert _count(session, SelfIntro, org_id) == 12

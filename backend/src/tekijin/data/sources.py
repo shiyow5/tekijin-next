@@ -18,6 +18,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from tekijin.data.self_intros import sync_document_intros
 from tekijin.data.visibility import SourceScope, visible
 from tekijin.ingest.chunking import passage_text, split_text
 from tekijin.models.tables import Chunk, SourceItem
@@ -107,7 +108,7 @@ def upsert_source_item(
     digest = content_hash(title, body)
     item = _find(session, org_id, provider, external_id)
     if item is not None and item.content_hash == digest:
-        return UpsertResult("unchanged", item.id, _count_chunks(session, item.id))
+        return _unchanged(session, embedder, item, now)
     if item is not None:
         _check_owner(item, author_id, override_owner)
 
@@ -124,7 +125,7 @@ def upsert_source_item(
     # request next to the body, hash and chunks of another.
     item = _lock(session, item.id)
     if item.content_hash == digest:
-        return UpsertResult("unchanged", item.id, _count_chunks(session, item.id))
+        return _unchanged(session, embedder, item, now)
     if created:
         item.author_id = author_id
     else:
@@ -137,7 +138,30 @@ def upsert_source_item(
         for seq, (piece, vector) in enumerate(zip(pieces, vectors, strict=True))
     )
     session.flush()
+    _sync_intros(session, embedder, item, now)
     return UpsertResult(status, item.id, len(pieces))
+
+
+def _unchanged(
+    session: Session, embedder: Embedder, item: SourceItem, now: dt.datetime
+) -> UpsertResult:
+    # #106: also on an unchanged body, so introductions are built for a document
+    # stored before they existed, and for a member who joined after it was stored.
+    _sync_intros(session, embedder, item, now)
+    return UpsertResult("unchanged", item.id, _count_chunks(session, item.id))
+
+
+def _sync_intros(session: Session, embedder: Embedder, item: SourceItem, now: dt.datetime) -> None:
+    sync_document_intros(
+        session,
+        embedder,
+        org_id=item.org_id,
+        item_id=item.id,
+        provider=item.provider,
+        title=item.title,
+        body=item.body,
+        now=now,
+    )
 
 
 def _find(session: Session, org_id: int, provider: str, external_id: str) -> SourceItem | None:

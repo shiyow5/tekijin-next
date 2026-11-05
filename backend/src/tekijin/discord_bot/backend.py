@@ -52,10 +52,16 @@ async def member_backend(
     secret: str,
     user: dict[str, Any],
     action: str,
+    intro: str | None = None,
 ) -> dict[str, Any]:
-    """``/tekijin join|optout|optin``. Same never-raise contract as :func:`ask_backend`."""
+    """``/tekijin join|optout|optin|intro``. Same never-raise contract as
+    :func:`ask_backend`. ``intro`` is the self-introduction (#106), sent only when
+    given."""
 
-    return await _post(http, base_url, secret, "member", {**user, "action": action})
+    body: dict[str, Any] = {**user, "action": action}
+    if intro is not None:
+        body["intro"] = intro
+    return await _post(http, base_url, secret, "member", body)
 
 
 async def add_backend(

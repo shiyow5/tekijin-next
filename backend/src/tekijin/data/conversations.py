@@ -23,6 +23,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tekijin.data.members import resolve_discord_member
+from tekijin.data.self_intros import (
+    delete_message_intros,
+    is_intro_channel,
+    sync_message_intros,
+)
 from tekijin.data.sources import upsert_source_item
 from tekijin.models.tables import ChannelMessage, Employee, Organization, SourceItem
 from tekijin.retrieval.embedding import Embedder
@@ -87,6 +92,10 @@ def ingest_messages(
     """
 
     changed: set[str] = set()
+    # #106: posts in the introduction channel, and edits that may have moved a
+    # post out of it. Unchanged posts are checked too, so replaying history fills
+    # in introductions for posts stored before they existed.
+    intros: list[ChannelMessage] = []
     for message in messages:
         member = resolve_discord_member(
             session, org, message.author_discord_id, display_name=message.author_name, now=now
@@ -95,15 +104,21 @@ def ingest_messages(
         if row is None:
             row = _insert(session, org.id, message.message_id)
         elif _same(row, message, member.id):
+            if is_intro_channel(row.channel_name):
+                intros.append(row)
             continue
         else:
             changed.add(_key_of(row))
+            intros.append(row)
         row.channel_id, row.channel_name = message.channel_id, message.channel_name
         row.thread_id, row.thread_name = message.thread_id, message.thread_name
         row.author_id, row.content = member.id, message.content
         row.created_at, row.edited_at = message.created_at, message.edited_at
         changed.add(_key_of(row))
+        if is_intro_channel(row.channel_name) and row not in intros:
+            intros.append(row)
     session.flush()
+    sync_message_intros(session, embedder, org_id=org.id, rows=intros, now=now)
     rebuilt = sum(_rebuild(session, embedder, org.id, guild_id, key, now) for key in changed)
     return IngestResult(stored=len(messages), conversations=rebuilt)
 
@@ -178,6 +193,7 @@ def delete_messages(
         )
     ).all()
     keys = {_key_of(row) for row in rows}
+    delete_message_intros(session, org_id=org_id, message_ids=[row.message_id for row in rows])
     for row in rows:
         if row.hidden_at is not None:
             # Deleted from the web before: keep the row as that marker (or the
@@ -243,6 +259,7 @@ def delete_conversation(
     ).all()
     for row in rows:
         row.hidden_at = now
+    delete_message_intros(session, org_id=org_id, message_ids=[row.message_id for row in rows])
     session.execute(
         delete(SourceItem).where(
             SourceItem.org_id == org_id,
