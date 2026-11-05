@@ -11,10 +11,12 @@ correct members, and the routes. ``--rows`` also prints one line per question.
 Read only: the session's transaction is ``READ ONLY`` and is rolled back at the
 end, so a write anywhere in the run fails instead of landing in the database.
 
-Knowledge (#113): ``--knowledge on`` wires the knowledge answer (verified knowledge,
-floor ``--knowledge-floor``, default the configured one) and ``--knowledge both``
-runs the questions twice, off then on. ``--floor-sweep`` prints, for each floor,
-how many questions the nearest verified knowledge would take (no graph run).
+Knowledge (#113, #118): ``--knowledge on`` offers verified knowledge at or above
+``--knowledge-floor`` (default the configured one) to the self-answer composer next
+to the sources, and ``--knowledge both`` runs the questions twice, off then on. The
+``knowledge`` column counts the answers that cited knowledge. ``--floor-sweep``
+prints, for each floor, how many questions the nearest verified knowledge would
+reach (no graph run).
 Building that knowledge is the one step that writes, and only to the circle's
 organization: ``--build-knowledge`` deletes the circle's knowledge, drafts it again
 from the circle's documents and solved conversations with the configured LLM,
@@ -120,10 +122,10 @@ def main(argv: list[str] | None = None) -> int:
         "--knowledge",
         choices=("off", "on", "both"),
         default="off",
-        help="answer from verified knowledge (#113)",
+        help="offer verified knowledge to the composer (#118)",
     )
     parser.add_argument(
-        "--knowledge-floor", type=float, default=None, help="the knowledge answer's floor"
+        "--knowledge-floor", type=float, default=None, help="the floor knowledge must reach"
     )
     parser.add_argument(
         "--build-knowledge",

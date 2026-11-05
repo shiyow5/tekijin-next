@@ -112,6 +112,10 @@ SESSION_TTL_SECONDS = 3600.0
 # The nodes the graph pauses *before* when it interrupts (HITL waits).
 _INTERRUPT_NODES: frozenset[str] = frozenset({"ask", "send"})
 
+# The nodes whose update reports knowledge to count (#118): C4 the drafts that
+# would have answered, the composers the verified articles their answer cited.
+_KNOWLEDGE_USE_NODES: frozenset[str] = frozenset({"c4_retrieve", "self_answer", "additive_answer"})
+
 
 class SessionConflict(Exception):
     """The request conflicts with the session's state (maps to HTTP 409)."""
@@ -245,8 +249,9 @@ class AgentService:
         self._answerability_threshold = answerability_threshold
         # #291: self-answer composer; None (default) compiles the pre-#291 graph.
         self._self_answer = self_answer_model
-        # #357 slice 4c: knowledge-answer similarity floor; None (default) compiles
-        # the pre-#357 graph (no knowledge_answer node). Passed to build_agent.
+        # #118: the floor a verified article must reach to be offered to the
+        # self-answer composer; None (default) offers no knowledge. Passed to
+        # build_agent.
         self._knowledge_answer_min_similarity = knowledge_answer_min_similarity
         # Optional C4/C6 overrides — default (None) uses the real HybridRetriever
         # / ExpertiseScorer over the request session; tests inject deterministic
@@ -855,7 +860,7 @@ class AgentService:
 
     def schedule_knowledge_embed(self) -> None:
         """Fire-and-forget: fill embeddings for any knowledge articles missing one, so
-        an article just verified in Slack becomes searchable by ``knowledge_answer``
+        an article just verified in Slack becomes searchable by the knowledge search
         without a manual indexing pass (#531, #112). Runs in a daemon thread — encoding
         can exceed Slack's interactivity budget — and swallows/logs its own errors (a
         missing embedding leaves the article un-searchable, never crashes the click)."""
@@ -1641,16 +1646,7 @@ class AgentService:
                             # A clarification reply enriched the question in-graph;
                             # persist it so /inbox and /history match the run (#268).
                             self._persist_question_body(question_id, data)
-                        elif node == "knowledge_answer":
-                            # #357 slice 4c: a grounded knowledge answer terminates
-                            # BEFORE C5, so c5_route never persists a route. Stamp a
-                            # synthetic "knowledge" route so dashboards that segment by
-                            # route account for knowledge-answered questions instead of
-                            # silently omitting them (self-resolution is still credited
-                            # by _persist_self_answered on the shared self_answered node).
-                            if (data or {}).get("self_answer_grounded"):
-                                route = "knowledge"
-                                self._persist_route(question_id, {"route": "knowledge"})
+                        elif node in _KNOWLEDGE_USE_NODES:
                             self._persist_knowledge_use(data)
                         elif node == "c5_route":
                             route = (data or {}).get("route") or route
@@ -1831,8 +1827,9 @@ class AgentService:
                 mark_question_resolved(session, question_id, self._now_factory())
 
     def _persist_knowledge_use(self, data: dict[str, Any] | None) -> None:
-        """Count the answer each verified article gave, and the questions each draft
-        would have answered (#112). Best-effort: a failed count never breaks the run."""
+        """Count the answer each cited verified article gave, and the questions each
+        draft would have answered (#112, #118). Best-effort: a failed count never
+        breaks the run."""
 
         used = list((data or {}).get("knowledge_article_ids") or [])
         wanted = list((data or {}).get("knowledge_draft_ids") or [])

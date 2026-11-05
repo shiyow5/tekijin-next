@@ -193,6 +193,22 @@ def _service(
     )
 
 
+class _RecordingSelfAnswer:
+    """#118: records the evidence it was offered and cites the given ids."""
+
+    def __init__(self, *, cites=()) -> None:
+        self._cites = list(cites)
+        self.seen: list = []
+
+    def compose(self, question, evidence):
+        from tekijin.agent.protocols import SelfAnswerResult
+
+        self.seen = list(evidence)
+        return SelfAnswerResult(
+            answer="拠点ごとに設定します。", cited_source_ids=self._cites, grounded=True
+        )
+
+
 class _FixedSelfAnswer:
     """#291 self-answer composer stand-in for the SSE test."""
 
@@ -1163,13 +1179,14 @@ def test_self_answer_message_carries_citations(seed_counts, engine, fake_embedde
     ]
 
 
-def test_knowledge_answer_persists_route_self_resolution_and_use(
+def test_an_answer_citing_knowledge_counts_only_the_cited_article(
     seed_counts, engine, fake_embedder
 ) -> None:
-    # #112: a member's question answered from verified knowledge ends before C5, so
-    # the run must still (a) emit a self_answered message, (b) persist a synthetic
-    # "knowledge" route and mark the question self-resolved, and (c) count the use
-    # of the article (reuse_count, last_used_at).
+    # #118: verified knowledge is offered to the composer next to the sources. An
+    # answer that cites one article (a) is a self_answered message citing it, (b)
+    # resolves the question on the route C5 chose (no synthetic "knowledge" route
+    # any more), and (c) counts only that
+    # article's use (reuse_count, last_used_at), not the other one offered.
     from sqlalchemy import text as sql
 
     from tekijin.data.knowledge import create_draft, verify_article
@@ -1177,7 +1194,7 @@ def test_knowledge_answer_persists_route_self_resolution_and_use(
     from tekijin.models.tables import Employee, KnowledgeArticle, Organization
 
     # Not a request for a person (C1's stub reads 「相談したい」 as one), so the
-    # knowledge step may take it.
+    # question goes to the composer, not to a hand-off.
     question = "現行のVPN機器で3拠点の拠点間接続を設定する手順を教えてください"
     setup = get_sessionmaker(engine)()
     try:
@@ -1196,18 +1213,28 @@ def test_knowledge_answer_persists_route_self_resolution_and_use(
             now=NOW,
         )
         verify_article(setup, article.id, org_id=org.id, verifier_id=None, now=NOW)
+        offered = create_draft(
+            setup,
+            org_id=org.id,
+            kind="procedure",
+            issue="3拠点の拠点間接続で使う機器の型番",
+            resolution="型番は総務が管理",
+            now=NOW,
+        )
+        verify_article(setup, offered.id, org_id=org.id, verifier_id=None, now=NOW)
         embed_articles(setup, fake_embedder)
         setup.commit()
-        member_id, article_id = member.id, article.id
+        member_id, article_id, offered_id = member.id, article.id, offered.id
     finally:
         setup.close()
 
     try:
+        composer = _RecordingSelfAnswer(cites=[f"ka_{article_id}"])
         client = _client(
             engine,
             fake_embedder,
-            retriever=_FakeRetriever(people=[1, 2]),
-            knowledge_answer_min_similarity=0.1,
+            self_answer_model=composer,
+            knowledge_answer_min_similarity=0.0,
         )
         client.post(
             "/ask",
@@ -1218,14 +1245,18 @@ def test_knowledge_answer_persists_route_self_resolution_and_use(
         message = next(d for e, d in events if e == "message")
         assert message["status"] == "self_answered"
         assert message["citations"][0]["source_id"] == f"ka_{article_id}"
+        assert {e.source_id for e in composer.seen} == {f"ka_{article_id}", f"ka_{offered_id}"}
 
         check = get_sessionmaker(engine)()
         try:
             q = check.query(Question).filter(Question.session_id == "skb").first()
-            assert q is not None and q.route == "knowledge"  # synthetic route persisted
-            assert q.resolved_at is not None and q.resolution_kind == "self"
+            assert q is not None and q.route == "document"
+            # The document route stamps resolved_at at C5 (#97); the first stamp wins.
+            assert q.resolved_at is not None
             used = check.get(KnowledgeArticle, article_id)
             assert used.reuse_count == 1 and used.last_used_at == NOW
+            unused = check.get(KnowledgeArticle, offered_id)
+            assert unused.reuse_count == 0 and unused.last_used_at is None
         finally:
             check.close()
     finally:

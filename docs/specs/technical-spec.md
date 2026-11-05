@@ -228,7 +228,7 @@ g.add_node("additive_answer", additive_answer) # LLM（#413・person経路で引
 g.add_node("c6_score", c6_score)               # 決定的（説明可能・#405 qsim 加点）
 g.add_node("c7_draft", c7_draft)               # LLM
 g.add_node("c8_update", c8_update)             # 決定的（グラフ更新）
-# knowledge_answer（#357・決定的知識回答）も C5 の前に配線可能だが既定 OFF。
+# 確認済みの知識（#118）は C4 で資料と並べて self_answer に渡す。既定 OFF。
 g.add_edge(START, "c1_understand")
 g.add_conditional_edges("c1_understand", lambda s: "end" if s["out_of_scope"] else "c2")
 g.add_conditional_edges("c2_sufficiency", lambda s: "c4" if s["sufficient"] else "c2")

@@ -878,7 +878,9 @@ class SourceCitation(BaseModel):
 
     source_id: str
     # "qa" (past Q&A) | "document" (internal doc)
-    # | "knowledge" (structured knowledge unit, #357 — emitted by `knowledge_answer`)
+    # | "knowledge" (a verified knowledge article, ``ka_{id}``, #118 — cited by a
+    #   self-answer, and followed by what the article was made from)
+    # | "message" (a Discord message a cited article was made from, #113)
     # | "source" (something the organization ingested, #81)
     kind: str
     # Only a "source" has these.

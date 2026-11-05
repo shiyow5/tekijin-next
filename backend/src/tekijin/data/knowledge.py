@@ -8,8 +8,9 @@ an admin of the organization, and used to answer questions once verified.
 * :func:`update_article`, :func:`verify_article`, :func:`send_back_article` and
   :func:`retire_article` are the review actions.
 * :func:`search_verified` finds verified knowledge near a question, inside one
-  organization and limited to what the reader may see; :func:`record_use` counts an
-  answer it gave. :func:`matching_drafts` / :func:`record_demand` count the
+  organization and limited to what the reader may see, and :func:`verified_articles`
+  reads the found articles again when an answer is composed; :func:`record_use`
+  counts an answer that cited one. :func:`matching_drafts` / :func:`record_demand` count the
   questions a draft would have answered, which orders the review queue.
 
 When a source changes or goes (#113), :func:`return_to_review` and
@@ -816,6 +817,26 @@ def search_verified(
         top_k=top_k,
         min_similarity=min_similarity,
     )
+
+
+def verified_articles(
+    session: Session, article_ids: Sequence[int], *, org_id: int, scope: SourceScope
+) -> dict[int, ArticleDTO]:
+    """The verified articles of ``org_id`` among ``article_ids`` that ``scope`` may see.
+
+    Read again when an answer is composed (#118), so an article retired, sent back
+    or moved out of the reader's sight after the search is left out."""
+
+    if not article_ids:
+        return {}
+    rows = session.scalars(
+        select(KnowledgeArticle).where(
+            KnowledgeArticle.id.in_(list(article_ids)),
+            KnowledgeArticle.state == VERIFIED,
+            article_visible(org_id, scope),
+        )
+    ).all()
+    return {row.id: ArticleDTO.from_row(row) for row in rows}
 
 
 def matching_drafts(

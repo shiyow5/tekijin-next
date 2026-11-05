@@ -47,6 +47,13 @@ class SourceHit(TypedDict):
     score: float
 
 
+class KnowledgeHit(TypedDict):
+    """One verified knowledge article near a member's question (#118)."""
+
+    article_id: int
+    similarity: float
+
+
 class RetrievalResult(TypedDict):
     """The C4 (HybridRetriever) output shape shared by C5/C6.
 
@@ -80,6 +87,11 @@ class RetrievalResult(TypedDict):
     # as it does for documents.
     sources: NotRequired[list[SourceHit]]
     source_confidence: NotRequired[float]
+    # #118: the verified knowledge of the organization near the question, offered to
+    # the self-answer composer next to ``sources``. Only when knowledge is switched
+    # on; ``document_confidence`` then carries the better of the two confidences.
+    knowledge: NotRequired[list[KnowledgeHit]]
+    knowledge_confidence: NotRequired[float]
     # #107: for a member's question, everyone the evidence points to, best first, as
     # recommendation rows (``Expert.as_recommendation``). ``candidate_people`` holds
     # their ids, so C6 picks from these without searching again.
@@ -181,8 +193,9 @@ class AgentState(TypedDict, total=False):
     self_answer_grounded: bool
     self_answer_text: str | None
     self_answer_citations: list[dict[str, str]]
-    # #112: the verified articles the knowledge step answered from (the API counts
-    # their use), and the drafts that would have answered (the review queue order).
+    # #118: the verified articles the shown answer cited (the API counts their use),
+    # and the drafts that would have answered when no verified article was near
+    # (the review queue order).
     knowledge_article_ids: list[int]
     knowledge_draft_ids: list[int]
 

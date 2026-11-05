@@ -1,26 +1,33 @@
-"""The graph answers a member's question from verified knowledge (#112, R6).
+"""Verified knowledge is evidence for the self-answer (#118, R6).
 
-The knowledge step runs after C3 and before C4. It answers only from verified
-knowledge of the asker's organization that the asker may read, never takes a
-question that asks for a person, and otherwise lets the run go on as before.
+C4 offers the verified knowledge of the asker's organization that the asker may
+read next to the documents, and the composer picks what it uses. Only the articles
+the answer cites are counted, and an answer citing one also cites what the article
+was made from. A question that asks for a person still goes to a person.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import pytest
 from sqlalchemy import text
 
 from tekijin.agent.graph import build_agent
-from tekijin.agent.protocols import IntentResult
+from tekijin.agent.protocols import IntentResult, SelfAnswerResult
 from tekijin.data.db import get_sessionmaker
 from tekijin.data.knowledge import SourceRef, create_draft, verify_article
 from tekijin.data.visibility import SourceScope, scope_to_state
 from tekijin.knowledge.index import embed_articles
-from tekijin.models.tables import ChannelMessage, DiscordChannel, Employee, Organization
+from tekijin.models.tables import (
+    ChannelMessage,
+    DiscordChannel,
+    Employee,
+    Organization,
+    SourceItem,
+)
 from tekijin.retrieval.experts import SELF_INTRO, Evidence, Expert, ExpertResult, rank_experts
 from tekijin.retrieval.fragments import CitedEvidence
 from tekijin.retrieval.sources import SourceSearchResult
@@ -28,6 +35,8 @@ from tekijin.retrieval.sources import SourceSearchResult
 NOW = dt.datetime(2026, 11, 5, 12, 0, 0)
 QUESTION = "部室 の 鍵 は どこ に あり ます か"
 PRIVATE = 8802
+# The id the fake document search cites (not a stored row).
+GUIDE = 424242
 
 
 class _Intent:
@@ -39,13 +48,37 @@ class _Intent:
 
 
 class _Sources:
-    """Nothing in the documents: a question the knowledge does not answer goes to a person."""
+    """What the documents hold: nothing by default, or one passage of a guide."""
+
+    def __init__(self, *, found: bool = False) -> None:
+        self.found = found
 
     def search(self, query, org_id, query_vector, scope) -> SourceSearchResult:
-        return SourceSearchResult(hits=[], confidence=0.0)
+        if not self.found:
+            return SourceSearchResult(hits=[], confidence=0.0)
+        return SourceSearchResult(
+            hits=[{"chunk_id": 1, "source_item_id": GUIDE, "score": 0.5}], confidence=0.1
+        )
 
     def evidence(self, hits, org_id, scope) -> list[CitedEvidence]:
-        return []
+        if not hits:
+            return []
+        return [CitedEvidence(f"src_{GUIDE}", "source", "合宿の手引き 鍵は顧問が持つ", "手引き")]
+
+
+class _Composer:
+    """Records what it was offered and cites the ids it is told to (when offered)."""
+
+    def __init__(self, cite: Callable[[list[CitedEvidence]], list[str]] | None = None) -> None:
+        self.cite = cite or (lambda evidence: [e.source_id for e in evidence])
+        self.seen: list[CitedEvidence] = []
+
+    def compose(self, question: str, evidence: Sequence[CitedEvidence]) -> SelfAnswerResult:
+        self.seen = list(evidence)
+        cited = self.cite(self.seen)
+        if not cited:
+            return SelfAnswerResult()
+        return SelfAnswerResult("部室の箱の中です。", cited, True)
 
 
 class _Finder:
@@ -103,9 +136,25 @@ def org(engine):
             content="鍵",
             created_at=NOW,
         )
-        session.add(secret)
+        item = SourceItem(
+            org_id=org.id,
+            provider="manual",
+            external_id="manual:keys",
+            title="鍵の決まり",
+            url="https://ex.com/keys",
+            body="鍵は部室の箱",
+            content_hash="h",
+            updated_at=NOW,
+        )
+        session.add_all([secret, item])
         session.commit()
-        ids = {"org": org.id, "other": other.id, "alice": alice.id, "secret": secret.id}
+        ids = {
+            "org": org.id,
+            "other": other.id,
+            "alice": alice.id,
+            "secret": secret.id,
+            "item": item.id,
+        }
     yield ids
     with factory() as session:
         for table in (
@@ -113,6 +162,7 @@ def org(engine):
             "knowledge_articles",
             "channel_messages",
             "discord_channels",
+            "source_items",
         ):
             session.execute(text(f"DELETE FROM {table}"))  # noqa: S608 - fixed names
         session.execute(text("DELETE FROM employees WHERE org_id IS NOT NULL"))
@@ -128,13 +178,15 @@ def db(engine, org):
         session.rollback()
 
 
-def _article(db, fake_embedder, org_id, *, verify=True, sources=()) -> int:
+def _article(
+    db, fake_embedder, org_id, *, verify=True, sources=(), issue=QUESTION, resolution=None
+) -> int:
     article = create_draft(
         db,
         org_id=org_id,
         kind="procedure",
-        issue=QUESTION,
-        resolution="部室 の 箱 の 中",
+        issue=issue,
+        resolution=resolution or "部室 の 箱 の 中",
         sources=sources,
         now=NOW,
     )
@@ -144,16 +196,28 @@ def _article(db, fake_embedder, org_id, *, verify=True, sources=()) -> int:
     return article.id
 
 
-def _agent(db, fake_embedder, org, *, seeks=False, floor: float | None = 0.3):
+def _agent(
+    db,
+    fake_embedder,
+    org,
+    *,
+    seeks=False,
+    floor: float | None = 0.3,
+    composer: _Composer | None = None,
+    sources: _Sources | None = None,
+    additive: bool = False,
+):
     return build_agent(
         fake_embedder,
         db,
         intent_model=_Intent(seeks),
         retriever=_MustNotRun(),
         scorer=_MustNotRun(),
-        source_search=_Sources(),
+        self_answer_model=composer if composer is not None else _Composer(),
+        source_search=sources or _Sources(),
         expert_finder=_Finder(org["alice"]),
         knowledge_answer_min_similarity=floor,
+        additive_self_answer_enabled=additive,
     )
 
 
@@ -172,59 +236,163 @@ def _ask(agent, thread, org_id, scope: SourceScope | None = None):
     return state, config
 
 
-def test_a_members_question_is_answered_from_verified_knowledge(db, fake_embedder, org) -> None:
+def _ids(evidence: Sequence[CitedEvidence]) -> list[str]:
+    return [e.source_id for e in evidence]
+
+
+# -- (a) knowledge enters the candidates -----------------------------------
+def test_verified_knowledge_is_offered_next_to_the_documents(db, fake_embedder, org) -> None:
     article_id = _article(db, fake_embedder, org["org"])
-    agent = _agent(db, fake_embedder, org)
-    state, config = _ask(agent, "kb-hit", org["org"])
+    composer = _Composer()
+    agent = _agent(db, fake_embedder, org, composer=composer, sources=_Sources(found=True))
+    state, config = _ask(agent, "kb-offer", org["org"])
 
-    assert not agent.get_state(config).next  # finished, no hand-off
+    assert _ids(composer.seen) == [f"src_{GUIDE}", f"ka_{article_id}"]
+    offered = composer.seen[1]
+    assert offered.kind == "knowledge" and offered.title == QUESTION
+    assert "答え: 部室 の 箱 の 中" in offered.text
+    assert state["retrieval"]["knowledge"][0]["article_id"] == article_id
+    assert state["route"] == "document"
     assert state["self_answer_grounded"] is True
-    assert "答え: 部室 の 箱 の 中" in state["answer"]
-    assert state["self_answer_citations"][0]["source_id"] == f"ka_{article_id}"
-    assert state["knowledge_article_ids"] == [article_id]
+    assert not agent.get_state(config).next  # answered, no hand-off
 
 
-def test_a_draft_does_not_answer_but_is_counted(db, fake_embedder, org) -> None:
-    draft_id = _article(db, fake_embedder, org["org"], verify=False)
-    agent = _agent(db, fake_embedder, org)
-    state, config = _ask(agent, "kb-draft", org["org"])
+def test_knowledge_alone_can_carry_the_question_to_an_answer(db, fake_embedder, org) -> None:
+    # Nothing in the documents: the knowledge's similarity is what sends the
+    # question to the composer instead of a person.
+    article_id = _article(db, fake_embedder, org["org"])
+    composer = _Composer()
+    state, _ = _ask(_agent(db, fake_embedder, org, composer=composer), "kb-alone", org["org"])
+
+    assert state["retrieval"]["source_confidence"] == 0.0
+    assert state["retrieval"]["document_confidence"] == pytest.approx(
+        state["retrieval"]["knowledge_confidence"]
+    )
+    assert _ids(composer.seen) == [f"ka_{article_id}"]
+    assert state["self_answer_grounded"] is True
+
+
+def test_the_composer_may_leave_the_knowledge_unused(db, fake_embedder, org) -> None:
+    # Similar but not the answer: the composer declines, and the run goes on as it
+    # would without knowledge (the document terminal offers a person).
+    _article(db, fake_embedder, org["org"])
+    composer = _Composer(cite=lambda evidence: [])
+    agent = _agent(db, fake_embedder, org, composer=composer)
+    state, config = _ask(agent, "kb-declined", org["org"])
 
     assert state["self_answer_grounded"] is False
-    assert state["knowledge_draft_ids"] == [draft_id]
-    assert agent.get_state(config).next == ("send",)  # went on to a person
+    assert state["knowledge_article_ids"] == []
+    assert state["answer"].startswith("資料の中に、この質問の答えは見つかりませんでした。")
+    assert not agent.get_state(config).next
 
 
-def test_another_organizations_knowledge_is_not_used(db, fake_embedder, org) -> None:
-    _article(db, fake_embedder, org["other"])
-    agent = _agent(db, fake_embedder, org)
-    state, _ = _ask(agent, "kb-other", org["org"])
-    assert state["self_answer_grounded"] is False
+# -- (b) only the cited articles are counted -------------------------------
+def test_only_the_articles_the_answer_cites_are_counted(db, fake_embedder, org) -> None:
+    used = _article(db, fake_embedder, org["org"])
+    unused = _article(
+        db, fake_embedder, org["org"], issue="部室 の 鍵 の 予備 は どこ", resolution="顧問 の 机"
+    )
+    composer = _Composer(cite=lambda evidence: [f"ka_{used}"])
+    agent = _agent(db, fake_embedder, org, composer=composer, floor=0.0)
+    state, _ = _ask(agent, "kb-one", org["org"])
+
+    assert set(_ids(composer.seen)) == {f"ka_{used}", f"ka_{unused}"}
+    assert state["knowledge_article_ids"] == [used]
 
 
+def test_an_answer_from_the_documents_counts_no_knowledge(db, fake_embedder, org) -> None:
+    _article(db, fake_embedder, org["org"])
+    composer = _Composer(cite=lambda evidence: [f"src_{GUIDE}"])
+    agent = _agent(db, fake_embedder, org, composer=composer, sources=_Sources(found=True))
+    state, _ = _ask(agent, "kb-docs", org["org"])
+
+    assert state["self_answer_grounded"] is True
+    assert state["knowledge_article_ids"] == []
+    assert [c["source_id"] for c in state["self_answer_citations"]] == [f"src_{GUIDE}"]
+
+
+# -- (c) citations name the article and its sources ------------------------
+def test_a_cited_article_is_followed_by_its_sources(db, fake_embedder, org) -> None:
+    article_id = _article(
+        db, fake_embedder, org["org"], sources=[SourceRef(source_item_id=org["item"])]
+    )
+    state, _ = _ask(_agent(db, fake_embedder, org), "kb-cite", org["org"])
+
+    assert state["self_answer_citations"] == [
+        {"source_id": f"ka_{article_id}", "kind": "knowledge", "title": QUESTION},
+        {
+            "source_id": f"src_{org['item']}",
+            "kind": "source",
+            "title": "鍵の決まり",
+            "url": "https://ex.com/keys",
+        },
+    ]
+    assert state["answer"] == "部室の箱の中です。"
+
+
+# -- (d) a question for a person still goes to a person --------------------
 def test_a_question_for_a_person_is_not_taken_by_knowledge(db, fake_embedder, org) -> None:
     _article(db, fake_embedder, org["org"])
     agent = _agent(db, fake_embedder, org, seeks=True)
     state, config = _ask(agent, "kb-seek", org["org"])
 
+    assert state["route"] == "person"
     assert state["self_answer_grounded"] is False
     assert agent.get_state(config).next == ("send",)
     assert [r["person_id"] for r in state["recommendations"]] == [org["alice"]]
 
 
-def test_knowledge_from_a_channel_the_asker_cannot_read_is_not_used(db, fake_embedder, org) -> None:
+def test_knowledge_shown_next_to_a_hand_off_is_counted(db, fake_embedder, org) -> None:
+    # #413: on the person route the additive answer may cite the knowledge; the
+    # hand-off still follows, and the cited article is counted.
+    article_id = _article(db, fake_embedder, org["org"])
+    agent = _agent(db, fake_embedder, org, seeks=True, additive=True)
+    state, config = _ask(agent, "kb-additive", org["org"])
+
+    assert agent.get_state(config).next == ("send",)
+    assert state["additive_citations"][0]["source_id"] == f"ka_{article_id}"
+    assert state["knowledge_article_ids"] == [article_id]
+
+
+# -- (e) organization and verified-only ------------------------------------
+def test_a_draft_is_not_offered_but_is_counted(db, fake_embedder, org) -> None:
+    draft_id = _article(db, fake_embedder, org["org"], verify=False)
+    composer = _Composer()
+    agent = _agent(db, fake_embedder, org, composer=composer)
+    state, config = _ask(agent, "kb-draft", org["org"])
+
+    assert composer.seen == []
+    assert state["self_answer_grounded"] is False
+    assert state["knowledge_draft_ids"] == [draft_id]
+    assert agent.get_state(config).next == ("send",)  # went on to a person
+
+
+def test_another_organizations_knowledge_is_not_offered(db, fake_embedder, org) -> None:
+    _article(db, fake_embedder, org["other"])
+    composer = _Composer()
+    state, _ = _ask(_agent(db, fake_embedder, org, composer=composer), "kb-other", org["org"])
+    assert composer.seen == []
+    assert state["self_answer_grounded"] is False
+
+
+def test_knowledge_from_a_channel_the_asker_cannot_read_is_not_offered(
+    db, fake_embedder, org
+) -> None:
     _article(db, fake_embedder, org["org"], sources=[SourceRef(channel_message_id=org["secret"])])
-    agent = _agent(db, fake_embedder, org)
+    composer = _Composer()
+    agent = _agent(db, fake_embedder, org, composer=composer)
     state, _ = _ask(agent, "kb-private", org["org"])
+    assert composer.seen == []
     assert state["self_answer_grounded"] is False
 
     reader = SourceScope(channels=frozenset({PRIVATE}))
     state, _ = _ask(agent, "kb-private-reader", org["org"], scope=reader)
     assert state["self_answer_grounded"] is True
+    assert [c["kind"] for c in state["self_answer_citations"]] == ["knowledge", "message"]
 
 
 def test_a_question_without_an_organization_skips_knowledge(db, fake_embedder, org) -> None:
     _article(db, fake_embedder, org["org"])
-    agent = _agent(db, fake_embedder, org)
 
     class _Retriever:
         def search(self, query, *, query_vector=None):
@@ -238,12 +406,45 @@ def test_a_question_without_an_organization_skips_knowledge(db, fake_embedder, o
         intent_model=_Intent(),
         retriever=_Retriever(),
         scorer=type("S", (), {"rank": lambda self, *a, **k: {"recommendations": []}})(),
+        self_answer_model=_Composer(),
         knowledge_answer_min_similarity=0.3,
     )
     state, _ = _ask(agent, "kb-company", None)
+    assert "knowledge" not in state["retrieval"]
     assert state["self_answer_grounded"] is False
 
 
-def test_the_step_is_absent_when_the_flag_is_off(db, fake_embedder, org) -> None:
-    agent = _agent(db, fake_embedder, org, floor=None)
-    assert "knowledge_answer" not in agent.get_graph().nodes
+# -- the switch -------------------------------------------------------------
+def test_nothing_is_offered_when_the_flag_is_off(db, fake_embedder, org) -> None:
+    _article(db, fake_embedder, org["org"])
+    composer = _Composer()
+    agent = _agent(db, fake_embedder, org, floor=None, composer=composer)
+    state, _ = _ask(agent, "kb-off", org["org"])
+
+    assert "knowledge" not in state["retrieval"]
+    assert composer.seen == []
+
+
+def test_the_short_circuit_is_gone(db, fake_embedder, org) -> None:
+    for floor in (None, 0.3):
+        agent = _agent(db, fake_embedder, org, floor=floor)
+        assert "knowledge_answer" not in agent.get_graph().nodes
+
+
+def test_knowledge_needs_the_composer(db, fake_embedder, org) -> None:
+    # Without a composer nothing could read the knowledge, so it is not searched
+    # and the routes stay what they were.
+    _article(db, fake_embedder, org["org"])
+    agent = build_agent(
+        fake_embedder,
+        db,
+        intent_model=_Intent(),
+        retriever=_MustNotRun(),
+        scorer=_MustNotRun(),
+        source_search=_Sources(),
+        expert_finder=_Finder(org["alice"]),
+        knowledge_answer_min_similarity=0.3,
+    )
+    state, config = _ask(agent, "kb-no-composer", org["org"])
+    assert "knowledge" not in state["retrieval"]
+    assert agent.get_state(config).next == ("send",)

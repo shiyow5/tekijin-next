@@ -22,6 +22,7 @@ from tekijin.agent.protocols import (
     ExpertFinder,
     IntentModel,
     IntentResult,
+    KnowledgeSearch,
     Retriever,
     SelfAnswerModel,
     SelfAnswerResult,
@@ -37,10 +38,9 @@ from tekijin.agent.stubs import (
     collect_known_values,
     missing_required_slots,
 )
-from tekijin.data.knowledge import matching_drafts
 from tekijin.data.questions import count_similar_prior_askers
 from tekijin.data.visibility import scope_from_state
-from tekijin.knowledge.answer import answer_from_knowledge
+from tekijin.knowledge.answer import KNOWLEDGE_KIND, expand_citations, knowledge_article_id
 from tekijin.retrieval.embedding import QUERY, Embedder
 from tekijin.retrieval.fragments import CitedEvidence, FragmentSource, collect_cited_evidence
 from tekijin.scorer.scorer import ExpertiseScorer
@@ -175,8 +175,7 @@ class AgentNodes:
         fragment_source: FragmentSource | None = None,
         prior_answer_reuse_min: int | None = None,
         prior_answer_relevance_floor: float = 0.15,
-        knowledge_session: Any | None = None,
-        knowledge_answer_min_similarity: float | None = None,
+        knowledge_search: KnowledgeSearch | None = None,
         similar_asker_session: Any | None = None,
         query_expansion_enabled: bool = False,
         question_fit_enabled: bool = False,
@@ -201,12 +200,9 @@ class AgentNodes:
         # from. Both None (default) -> no self_answer node is added (inert).
         self._self_answer = self_answer_model
         self._fragment_source = fragment_source
-        # #357 slice 4c: optional knowledge-answer step. ``knowledge_answer_min_
-        # similarity`` None (default) -> no knowledge_answer node is added (inert);
-        # a float wires the node, which answers a query directly from approved
-        # knowledge units before routing (bypassing the C5 separation problem, #327).
-        self._knowledge_session = knowledge_session
-        self._knowledge_floor = knowledge_answer_min_similarity
+        # #118: the organization's verified knowledge, offered to the composer next
+        # to the sources. ``None`` (default) -> C4 searches no knowledge (inert).
+        self._knowledge = knowledge_search
         # #475 Screen 01: read session used by c1_intent to count OTHER prior askers
         # in the same topic area. ``None`` (default) -> the count is never computed
         # and never attached, so ``understood`` is byte-identical when the feature
@@ -438,6 +434,17 @@ class AgentNodes:
                 "source_confidence": found.confidence,
                 "document_confidence": found.confidence,
             }
+            update: AgentState = {}
+            if self._knowledge is not None:
+                # #118: verified knowledge joins the sources as a candidate. Its
+                # similarity counts toward the document route, so a question only
+                # the knowledge answers still reaches the composer, which decides
+                # whether the knowledge answers it at all.
+                knowledge = self._knowledge.search(org_id, query_vector, scope)
+                retrieval["knowledge"] = knowledge.hits
+                retrieval["knowledge_confidence"] = knowledge.confidence
+                retrieval["document_confidence"] = max(found.confidence, knowledge.confidence)
+                update["knowledge_draft_ids"] = knowledge.draft_ids
             if self._expert_finder is not None:
                 asker = state.get("asker")
                 experts = self._expert_finder.find(
@@ -452,7 +459,7 @@ class AgentNodes:
                 retrieval["experts"] = rows
                 retrieval["candidate_people"] = [row["person_id"] for row in rows]
                 retrieval["people_confidence"] = experts.confidence
-            return {"retrieval": retrieval}
+            return {**update, "retrieval": retrieval}
         topics = state.get("topics") or []
         # #371: on a multi-facet question (e.g. "経理×データ基盤") the raw query's dense
         # signal collapses onto the facet with the thicker corpus, dropping the other
@@ -760,45 +767,6 @@ class AgentNodes:
             "組織の活動や、メンバーの知見に関することをお尋ねください。"
         }
 
-    # -- knowledge answer (#112): answer from the organization's verified knowledge
-    def knowledge_answer(self, state: AgentState) -> AgentState:
-        """Answer a member's question from verified knowledge, before C4 (#112).
-
-        Runs (when wired) right after C3 embeds the question. Only the asker's
-        organization's verified knowledge that the asker may read is searched. A hit
-        at or above the floor is answered from the articles' own fields (no LLM) and
-        ends at ``self_answered``, citing each article and its sources. A question
-        that asks for a person (C1's ``seeks_person``) is never taken here, and a
-        question without an organization has no knowledge. Otherwise the run goes on
-        to C4, and the drafts that would have answered are recorded for review.
-        """
-
-        assert self._knowledge_session is not None and self._knowledge_floor is not None
-        not_answered: AgentState = {"self_answer_grounded": False}
-        query_vec = state.get("query_vector") or []
-        org_id = state.get("org_id")
-        if not query_vec or org_id is None or state.get("seeks_person"):
-            return not_answered
-        session = self._knowledge_session
-        result = answer_from_knowledge(
-            session,
-            org_id=org_id,
-            query_vec=query_vec,
-            scope=scope_from_state(state.get("source_scope")),
-            min_similarity=self._knowledge_floor,
-        )
-        if result is None:
-            drafts = matching_drafts(
-                session, org_id=org_id, query_vec=query_vec, min_similarity=self._knowledge_floor
-            )
-            return {**not_answered, "knowledge_draft_ids": drafts}
-        return {
-            "self_answer_grounded": True,
-            "self_answer_text": result.answer,
-            "self_answer_citations": result.citations,
-            "knowledge_article_ids": list(result.article_ids),
-        }
-
     # -- self-answer (#291): compose a cited answer from retrieved data ----
     def self_answer(self, state: AgentState) -> AgentState:
         """Try to answer directly from the retrieved sources (data-derived routes).
@@ -818,22 +786,56 @@ class AgentNodes:
             return {"self_answer_grounded": False}
         # The composer already filters cited ids to the supplied evidence, so every
         # id resolves here; keep only resolvable ids (never mislabel an unknown one).
+        citations, used = self._answer_citations(state, result, evidence)
         return {
             "self_answer_grounded": True,
             "self_answer_text": result.answer,
-            "self_answer_citations": _citations(result, evidence),
+            "self_answer_citations": citations,
+            "knowledge_article_ids": used,
         }
 
     def _evidence(self, state: AgentState) -> list[CitedEvidence]:
         retrieval = state.get("retrieval") or empty_retrieval()
-        sources = retrieval.get("sources") or []
         org_id = state.get("org_id")
-        if sources and org_id is not None and self._source_search is not None:
-            return self._source_search.evidence(
-                sources, org_id, scope_from_state(state.get("source_scope"))
-            )
+        if org_id is not None:
+            sources = (retrieval.get("sources") or []) if self._source_search else []
+            knowledge = (retrieval.get("knowledge") or []) if self._knowledge else []
+            if sources or knowledge:
+                scope = scope_from_state(state.get("source_scope"))
+                evidence: list[CitedEvidence] = []
+                if sources and self._source_search is not None:
+                    evidence += self._source_search.evidence(sources, org_id, scope)
+                # #118: the verified knowledge follows the sources; the composer
+                # picks what answers the question.
+                if knowledge and self._knowledge is not None:
+                    evidence += self._knowledge.evidence(knowledge, org_id, scope)
+                return evidence
         assert self._fragment_source is not None  # wired with the composer
         return collect_cited_evidence(self._fragment_source, retrieval)
+
+    def _answer_citations(
+        self, state: AgentState, result: SelfAnswerResult, evidence: Sequence[CitedEvidence]
+    ) -> tuple[list[dict[str, Any]], list[int]]:
+        """The answer's citations, and the knowledge articles among them (#118).
+
+        A cited article is followed by what it was made from. Only the articles the
+        answer cites are returned to be counted, not every one that was offered."""
+
+        citations: list[dict[str, Any]] = list(_citations(result, evidence))
+        used = list(
+            dict.fromkeys(
+                article_id
+                for c in citations
+                if c["kind"] == KNOWLEDGE_KIND
+                and (article_id := knowledge_article_id(c["source_id"])) is not None
+            )
+        )
+        org_id = state.get("org_id")
+        if not used or self._knowledge is None or org_id is None:
+            return citations, used
+        scope = scope_from_state(state.get("source_scope"))
+        groups = self._knowledge.citations(used, org_id, scope)
+        return expand_citations(citations, groups), used
 
     def self_answered(self, state: AgentState) -> AgentState:
         # Terminal for a grounded self-answer: surface the composed text and carry
@@ -878,17 +880,20 @@ class AgentNodes:
             return {}
         if not result.grounded:
             return {}
+        citations, used = self._answer_citations(state, result, evidence)
         return {
             "additive_answer_text": result.answer,
-            "additive_citations": _citations(result, evidence),
+            "additive_citations": citations,
+            "knowledge_article_ids": used,
         }
 
     def document(self, state: AgentState) -> AgentState:
         retrieval = state.get("retrieval") or empty_retrieval()
         top = _top_by_score(retrieval["documents"])
-        if top is None and retrieval.get("sources"):
+        if top is None and (retrieval.get("sources") or retrieval.get("knowledge")):
             # #107: a member's question ranks people from the same sources, so the
-            # best of them is offered when the sources hold no answer.
+            # best of them is offered when the sources (or, #118, the verified
+            # knowledge) hold no answer.
             recs = state.get("recommendations") or []
             first = recs[0] if recs else None
             answer = _NOT_IN_SOURCES + (f"{first['name']}さんに相談できます。" if first else "")

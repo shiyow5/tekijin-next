@@ -81,9 +81,8 @@ def build_default_service(settings: Settings | None = None) -> AgentService:
         score_all_employees=settings.score_all_employees,
         # #475 Screen 01: attach the "N other askers in this area" reassurance count.
         similar_askers_enabled=settings.similar_askers_enabled,
-        # #357 slice 4c: wire the knowledge-answer step ONLY when enabled; else None
-        # keeps the pre-#357 graph (no knowledge_answer node). Default OFF until the
-        # knowledge corpus is populated + verified (slice 4b calibrated the floor).
+        # #118: offer verified knowledge to the self-answer composer ONLY when
+        # enabled; None offers none. Default OFF until the circle is re-measured.
         knowledge_answer_min_similarity=(
             settings.knowledge_answer_min_similarity
             if settings.knowledge_retrieval_enabled

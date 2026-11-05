@@ -250,18 +250,20 @@ class Settings(BaseSettings):
     # switched off rather than "retry" something that cannot succeed.
     consult_retrospective_enabled: bool = True
 
-    # #112 (R6): answer a member's question from the organization's VERIFIED
-    # knowledge (``knowledge_articles``) before C4. Flipping this to True adds the
-    # ``knowledge_answer`` node to the live graph: it searches only the asker's
-    # organization, only what the asker may read, never takes a question that asks
-    # for a person (C1 ``seeks_person``), and cites each article and its sources.
-    # OFF by default until drafts are made from documents and conversations (#113)
-    # and the floor is re-measured on the circle's questions.
+    # #112 / #118 (R6): offer the organization's VERIFIED knowledge
+    # (``knowledge_articles``) to the self-answer composer next to the sources C4
+    # found. It searches only the asker's organization and only what the asker may
+    # read; the composer decides whether an article answers the question, and only
+    # the articles the answer cites are counted. A question asking for a person
+    # (C1 ``seeks_person``) still goes to a person. Needs ``self_answer_enabled``.
+    # The earlier version answered from the nearest articles without an LLM and
+    # lowered the circle's scores (#113), so this stays OFF until the circle's
+    # questions are measured again with knowledge on.
     knowledge_retrieval_enabled: bool = False
-    # The cosine-similarity floor a verified article must clear to answer. 0.20 was
-    # calibrated on the company-era knowledge units (#357 slice 4b) and is kept as a
-    # starting point; #113 re-measures it on the circle's questions. Inert while
-    # knowledge_retrieval_enabled=False.
+    # The cosine-similarity floor a verified article must clear to be offered to the
+    # composer (#118). 0.20 was calibrated on the company-era knowledge units (#357
+    # slice 4b) for answering directly; as a candidate floor it only bounds what
+    # the composer reads. Inert while knowledge_retrieval_enabled=False.
     knowledge_answer_min_similarity: float = 0.20
     # #113: read every added or changed document (``/tekijin add``, the web, Google,
     # Notion) with the LLM and store its procedures and facts as knowledge drafts.
