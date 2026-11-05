@@ -639,8 +639,8 @@ class KnowledgeArticle(Base):
     ``environment`` says where it holds; ``resolution`` is the answer and ``cause``
     the reason, both optional. ``state`` is ``wip`` (no answer yet), ``draft``
     (waiting for an admin), ``verified`` (answers questions) or ``retired``. Only
-    ``verified`` knowledge is searched, and a row without a resolution is always
-    ``wip`` (the check below), so an empty answer can never be shown.
+    ``verified`` knowledge is searched, and a row without a resolution is ``wip``
+    or ``retired`` (the check below), so an empty answer can never be shown.
 
     ``reuse_count`` / ``last_used_at`` count the answers it gave; ``demand_count``
     counts the questions a draft would have answered, so the review queue shows the
@@ -660,7 +660,7 @@ class KnowledgeArticle(Base):
             name="ck_knowledge_articles_state",
         ),
         CheckConstraint(
-            "state = 'wip' OR length(btrim(coalesce(resolution, ''))) > 0",
+            "state IN ('wip', 'retired') OR length(btrim(coalesce(resolution, ''))) > 0",
             name="ck_knowledge_articles_resolution",
         ),
         Index("ix_knowledge_articles_org_state", "org_id", "state"),

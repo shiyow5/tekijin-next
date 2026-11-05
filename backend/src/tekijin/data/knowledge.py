@@ -283,7 +283,8 @@ def update_article(
         if field in changes:
             setattr(row, field, _clean(changes[field]))
     if row.resolution is None:
-        row.state = "wip"
+        if row.state != "retired":
+            row.state = "wip"
         row.verifier_id = None
         row.verified_at = None
     elif row.state == "wip":
@@ -302,12 +303,14 @@ def verify_article(
     verifier_id: int | None,
     now: dt.datetime,
 ) -> ArticleDTO:
-    """Mark a draft (or a retired article) verified. ``verifier_id`` is ``None``
-    for the settings admin, who is not a member. A ``wip`` article has no answer
-    and cannot be verified."""
+    """Mark an article verified, whatever its state, as long as it has an answer.
+
+    A ``wip`` article that was sent back keeps its answer, so it can be verified
+    again without an edit. ``verifier_id`` is ``None`` for the settings admin, who
+    is not a member."""
 
     row = _load(session, article_id, org_id)
-    if row.state not in ("draft", "retired", VERIFIED) or row.resolution is None:
+    if row.resolution is None:
         raise ArticleStateError("only an article with a resolution can be verified")
     row.state = VERIFIED
     row.verifier_id = verifier_id
@@ -342,7 +345,9 @@ def retire_article(
     now: dt.datetime,
     superseded_by: int | None = None,
 ) -> ArticleDTO:
-    """Stop using an article, optionally naming the one that replaces it."""
+    """Stop using an article, optionally naming the one that replaces it.
+
+    Any article can be retired, including a ``wip`` one with no answer."""
 
     row = _load(session, article_id, org_id)
     if superseded_by is not None:

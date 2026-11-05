@@ -230,6 +230,49 @@ def test_capture_stores_unreviewed_draft(_resolved_thread) -> None:
     assert unit.kind == "case"
 
 
+def test_a_second_reaction_does_not_add_a_second_draft(_resolved_thread) -> None:
+    from tekijin.data.knowledge import articles_from_question
+
+    factory, thread_id = _resolved_thread
+    for reactor in ("U_RESP", "U_ASKER"):
+        capture_resolved_thread(
+            factory,
+            message_ts=None,
+            channel_id=CHANNEL,
+            reactor_slack_user_id=reactor,
+            extractor=_extractor(),
+            settings=_settings(),
+        )
+    with session_scope(factory) as session:
+        assert len(articles_from_question(session, "slkcap_q")) == 1
+
+
+def test_discarding_a_draft_without_an_answer_retires_it(_resolved_thread) -> None:
+    factory, thread_id = _resolved_thread
+    with session_scope(factory) as session:
+        from tekijin.knowledge.extract import DraftExtractor, extract_and_store
+        from tekijin.knowledge.slack_thread import slack_thread_source
+
+        schema = KnowledgeDraftSchema(extractable=True, kind="case", issue="VPNが切れる")
+
+        class _NoAnswer:
+            def invoke(self, _prompt):
+                return schema
+
+        extract_and_store(
+            session,
+            [slack_thread_source(session, thread_id)],
+            DraftExtractor(model=_NoAnswer()),
+            now=NOW,
+        )
+    with session_scope(factory) as session:
+        from tekijin.slack.capture import discard_thread_draft
+
+        assert discard_thread_draft(session, thread_id) is True
+    with session_scope(factory) as session:
+        assert thread_draft(session, thread_id).state == "retired"
+
+
 def test_capture_noop_when_flag_off(_resolved_thread) -> None:
     factory, thread_id = _resolved_thread
     disabled = Settings(_env_file=None, slack_solve_capture_enabled=False)  # type: ignore[call-arg]

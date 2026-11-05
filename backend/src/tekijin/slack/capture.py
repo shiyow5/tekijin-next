@@ -262,6 +262,12 @@ def capture_resolved_thread(
             parties["responder_id"],
         ):
             return None  # a bystander in the channel cannot trigger capture
+        # The same per-thread lock as capture_and_prompt: two reactions (or a reaction
+        # and a solve utterance) must not both pass the check below and each insert
+        # a draft. Released at the end of the transaction.
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 476, "obj": thread_id}
+        )
         if articles_from_question(session, parties["question_id"]):
             return None  # already drafted (or discarded) for this thread
         extractor = extractor or DraftExtractor(settings=settings)

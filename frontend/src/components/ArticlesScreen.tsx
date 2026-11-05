@@ -16,7 +16,7 @@ import type { KnowledgeArticle } from "@/lib/api-types";
 import { formatDateJst } from "@/lib/datetime";
 import { KIND_LABEL, STATE_LABEL } from "@/lib/knowledge";
 import Link from "next/link";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 const PAGE_SIZE = 50;
 
@@ -72,23 +72,31 @@ export function ArticlesScreen() {
   const [list, setList] = useState<ListState>({ phase: "loading" });
   const [canReview, setCanReview] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Bumped by every new tab or search: a response for an older one is dropped, so a
+  // slow request never puts another tab's or query's items on screen.
+  const generation = useRef(0);
 
   const load = useCallback((nextView: View, q: string) => {
+    generation.current += 1;
+    const mine = generation.current;
     setList({ phase: "loading" });
+    setLoadingMore(false);
     return getArticles({ view: nextView, q: q || undefined, limit: PAGE_SIZE })
       .then(({ items, total, can_review }) => {
+        if (mine !== generation.current) return;
         setCanReview(can_review);
         setList({ phase: "ready", items, total });
       })
-      .catch((error: unknown) =>
+      .catch((error: unknown) => {
+        if (mine !== generation.current) return;
         setList({
           phase: "error",
           message:
             error instanceof ApiError && error.status === 403
               ? error.message
               : "知識の一覧を読み込めませんでした。",
-        }),
-      );
+        });
+      });
   }, []);
 
   useEffect(() => {
@@ -102,6 +110,7 @@ export function ArticlesScreen() {
 
   async function loadMore() {
     if (list.phase !== "ready") return;
+    const mine = generation.current;
     setLoadingMore(true);
     try {
       const page = await getArticles({
@@ -110,11 +119,13 @@ export function ArticlesScreen() {
         offset: list.items.length,
         limit: PAGE_SIZE,
       });
+      if (mine !== generation.current) return;
       setList({ phase: "ready", items: [...list.items, ...page.items], total: page.total });
     } catch {
+      if (mine !== generation.current) return;
       setList({ phase: "error", message: "続きを読み込めませんでした。" });
     } finally {
-      setLoadingMore(false);
+      if (mine === generation.current) setLoadingMore(false);
     }
   }
 

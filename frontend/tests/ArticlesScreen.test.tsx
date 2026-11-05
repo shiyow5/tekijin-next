@@ -119,4 +119,24 @@ describe("ArticlesScreen (#112)", () => {
       ),
     );
   });
+
+  it("drops a slower response for a tab that is no longer shown", async () => {
+    let finishReview: (value: unknown) => void = () => {};
+    getArticlesMock.mockImplementation(({ view }: { view: string }) =>
+      view === "review"
+        ? new Promise((resolve) => {
+            finishReview = resolve;
+          })
+        : Promise.resolve({ items: [VERIFIED], total: 1, can_review: true }),
+    );
+    render(<ArticlesScreen />);
+    fireEvent.click(await screen.findByRole("tab", { name: "確認待ち" }));
+    fireEvent.click(screen.getByRole("tab", { name: "確認済み" }));
+    expect(await screen.findByRole("link", { name: "部室の鍵はどこ" })).toBeInTheDocument();
+
+    finishReview({ items: [DRAFT], total: 1, can_review: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("link", { name: "会費はいくら" })).toBeNull();
+    expect(screen.getByRole("link", { name: "部室の鍵はどこ" })).toBeInTheDocument();
+  });
 });

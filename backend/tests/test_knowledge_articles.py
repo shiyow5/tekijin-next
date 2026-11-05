@@ -373,6 +373,25 @@ def test_send_back_returns_it_to_wip(db, world) -> None:
     assert back.resolution == "月500円"  # kept, so the next edit can build on it
 
 
+def test_a_sent_back_article_with_an_answer_can_be_verified_again(db, world) -> None:
+    article = create_draft(
+        db, org_id=world["org"], kind="fact", issue="会費", resolution="月500円", now=NOW
+    )
+    send_back_article(db, article.id, org_id=world["org"], now=NOW)
+    again = verify_article(db, article.id, org_id=world["org"], verifier_id=None, now=NOW)
+    assert again.state == "verified"
+
+
+def test_an_unanswered_article_can_be_retired(db, world) -> None:
+    article = create_draft(db, org_id=world["org"], kind="fact", issue="雨天時は？", now=NOW)
+    retired = retire_article(db, article.id, org_id=world["org"], now=NOW)
+    db.flush()
+    assert retired.state == "retired" and retired.resolution is None
+    # Editing it keeps it retired.
+    kept = update_article(db, article.id, org_id=world["org"], changes={"cause": "x"}, now=NOW)
+    assert kept.state == "retired"
+
+
 def test_retire_can_point_at_the_replacement(db, world) -> None:
     old = create_draft(
         db, org_id=world["org"], kind="fact", issue="会費", resolution="月400円", now=NOW
