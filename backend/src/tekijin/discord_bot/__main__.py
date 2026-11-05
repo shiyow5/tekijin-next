@@ -316,6 +316,10 @@ def main() -> None:
             logger.warning("could not read edited message %s", payload.message_id, exc_info=True)
             batcher.reread(payload.channel_id, payload.message_id)
             return
+        # #114: a request thread that was not cached is known only now.
+        if gate.is_request_thread(channel):
+            await requests_ui.on_thread_message(message, edited=True)
+            return
         action = edit_action(message, excluded)
         if action is None:
             return
