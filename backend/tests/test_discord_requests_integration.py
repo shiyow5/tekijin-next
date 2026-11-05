@@ -9,6 +9,7 @@ write becomes an answer and a case draft; ``/tekijin review`` is admin-only.
 from __future__ import annotations
 
 import itertools
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -94,6 +95,13 @@ def output_off(monkeypatch):
     _env(monkeypatch, output=False)
     yield
     get_settings.cache_clear()
+
+
+def _snowflake(n: int, *, at: float | None = None) -> str:
+    """A Discord message id written at ``at`` (default: now), made unique by ``n``."""
+
+    ms = int((time.time() if at is None else at) * 1000) - 1420070400000
+    return str((ms << 22) + n)
 
 
 def _user(discord_id: str) -> dict:
@@ -192,7 +200,7 @@ class _Flow:
             {
                 **_user(discord_id),
                 "thread_id": thread,
-                "message_id": str(next(self._message_ids)),
+                "message_id": _snowflake(next(self._message_ids)),
                 "body": body,
             },
         )
@@ -420,19 +428,77 @@ def test_a_thread_message_is_handled_once(output_on, flow, monkeypatch) -> None:
     monkeypatch.setattr(flow.service, "schedule_knowledge_embed", lambda: scheduled.append(1))
     _, rec, thread = flow.requested()
 
-    def write(message_id: str, body: str) -> str:
+    def write(message_id: str, body: str, **extra) -> str:
         return flow.post(
             "/thread-message",
-            {**_user(RESPONDER), "thread_id": thread, "message_id": message_id, "body": body},
+            {
+                **_user(RESPONDER),
+                "thread_id": thread,
+                "message_id": message_id,
+                "body": body,
+                **extra,
+            },
         )["status"]
 
+    before, after = _snowflake(10), None
     # Written before accepting: not kept, and not kept when sent again later.
-    assert write("10", "受ける前") == "not_accepted"
+    assert write(before, "受ける前") == "not_accepted"
+    # Written before accepting but first sent afterwards (the bot was away).
+    unsent = _snowflake(11)
     flow.act(RESPONDER, rec, "accept")
-    assert write("10", "受ける前") == "duplicate"
-    assert write("11", "答え") == "answered"
-    assert write("11", "答え") == "duplicate"
+    assert write(before, "受ける前") == "duplicate"
+    assert write(unsent, "受ける前その2") == "not_accepted"
+    time.sleep(0.01)
+    after = _snowflake(12)
+    assert write(after, "答え") == "answered"
+    assert write(after, "答え") == "duplicate"
     question_id = flow.scalar(select(Recommendation.question_id).where(Recommendation.id == rec))
     assert flow.scalars(select(Answer.body).where(Answer.question_id == question_id)) == ["答え"]
     # The draft is queued for embedding so it can be matched and rise in review.
     assert scheduled == [1]
+
+    # An edit corrects the kept answer and the draft.
+    assert write(after, "正しい答え", edited=True) == "updated"
+    assert flow.scalars(select(Answer.body).where(Answer.question_id == question_id)) == [
+        "正しい答え"
+    ]
+    assert "正しい答え" in flow.scalars(
+        select(Message.body).where(Message.recommendation_id == rec)
+    )
+    session = get_sessionmaker(flow.engine)()
+    try:
+        assert articles_from_question(session, question_id)[0].resolution == "正しい答え"
+    finally:
+        session.close()
+    # An edit of an ignored message is still ignored.
+    assert write(before, "受ける前(編集)", edited=True) == "duplicate"
+
+
+def test_review_pages_past_drafts_sent_back(output_on, flow) -> None:
+    from tekijin.data.knowledge import create_draft
+
+    session = get_sessionmaker(flow.engine)()
+    try:
+        flow.ask()  # makes the organization
+        org = session.scalars(
+            select(Organization).where(Organization.discord_guild_id == GUILD)
+        ).one()
+        import datetime as dt
+
+        for i in range(6):
+            create_draft(
+                session,
+                org_id=org.id,
+                kind="fact",
+                issue=f"課題{i}",
+                resolution="答え",
+                now=dt.datetime(2026, 11, 5),
+            )
+        session.commit()
+    finally:
+        session.close()
+    first = flow.post("/review", _user(ADMIN))
+    assert first["total"] == 6 and len(first["articles"]) == 4 and first["offset"] == 0
+    second = flow.post("/review", {**_user(ADMIN), "offset": 4})
+    assert len(second["articles"]) == 2 and second["offset"] == 4
+    assert not {a["id"] for a in first["articles"]} & {a["id"] for a in second["articles"]}

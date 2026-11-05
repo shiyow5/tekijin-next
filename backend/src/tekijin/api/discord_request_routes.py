@@ -42,16 +42,16 @@ from tekijin.data.discord_requests import (
     REQUEST,
     enqueue_post,
     mark_message_seen,
-    message_seen,
     pending_outbox,
     record_delivery,
     request_for_recommendation,
     request_for_thread,
+    seen_message,
 )
 from tekijin.data.members import find_discord_member
 from tekijin.data.messages import create_message, thread_parties
-from tekijin.knowledge.request_answer import record_thread_answer
-from tekijin.models.tables import DiscordOutbox
+from tekijin.knowledge.request_answer import record_thread_answer, update_thread_answer
+from tekijin.models.tables import DiscordOutbox, Message
 from tekijin.retrieval.embedding import PASSAGE
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/discord", include_in_schema=False)
 
 _DISCORD_ID = r"^[0-9]{1,20}$"
+# Discord ids carry their creation time in milliseconds since 2015-01-01 UTC.
+_DISCORD_EPOCH_MS = 1420070400000
 # Discord caps a message at 2000 characters (4000 with Nitro).
 _MAX_THREAD_MESSAGE = 4000
 
@@ -99,6 +101,8 @@ class DiscordThreadMessage(DiscordUser):
     thread_id: str = Field(pattern=_DISCORD_ID)
     message_id: str = Field(pattern=_DISCORD_ID)
     body: str = Field(min_length=1, max_length=_MAX_THREAD_MESSAGE)
+    # The message was edited in Discord; it corrects what it already became.
+    edited: bool = False
 
     @field_validator("body")
     @classmethod
@@ -110,7 +114,14 @@ class DiscordThreadMessage(DiscordUser):
 
 class DiscordThreadResponse(BaseModel):
     status: Literal[
-        "stored", "answered", "ignored", "not_accepted", "duplicate", "disabled", "unlinked"
+        "stored",
+        "answered",
+        "updated",
+        "ignored",
+        "not_accepted",
+        "duplicate",
+        "disabled",
+        "unlinked",
     ]
 
 
@@ -318,8 +329,10 @@ def discord_thread_message(
     request: Request,
     settings: Settings = Depends(require_bot_secret),
 ) -> DiscordThreadResponse:
-    """A message written in a request thread. Only the two parties' messages on an
-    accepted request are kept; the requested member's are also their answer."""
+    """A message written (or edited) in a request thread. Only the two parties'
+    messages written after the request was accepted are kept; the requested
+    member's are also their answer. Each Discord message is handled once; an edit
+    of one already kept corrects what it became."""
 
     if not settings.discord_output_enabled():
         return DiscordThreadResponse(status="disabled")
@@ -332,41 +345,99 @@ def discord_thread_message(
         if found is None:
             return DiscordThreadResponse(status="ignored")
         rec_id = found.recommendation_id
-        if message_seen(session, req.message_id):
-            return DiscordThreadResponse(status="duplicate")
+        accepted_at = found.accepted_at
+        seen = seen_message(session, req.message_id)
+        seen_rows = (seen.message_row_id, seen.answer_id) if seen is not None else None
         sender = find_discord_member(session, guild_id, req.discord_user_id)
         parties = thread_parties(session, rec_id)
-        status: Literal["ignored", "not_accepted"] | None = None
-        if sender is None:
-            status = "ignored"
-        elif parties is None:
-            status = "not_accepted"
-        elif sender not in (parties["asker_id"], parties["responder_id"]):
-            status = "ignored"
-        if status is not None:
-            # Remembered, so the bot sending it again (after a restart, once the
-            # request is accepted) does not turn it into an answer.
+    if seen_rows is not None:
+        if req.edited and parties is not None:
+            return _apply_edit(service, req, parties, *seen_rows)
+        return DiscordThreadResponse(status="duplicate")
+    status: Literal["ignored", "not_accepted"] | None = None
+    if sender is None:
+        status = "ignored"
+    elif parties is None or (
+        accepted_at is not None and snowflake_time(req.message_id) < accepted_at
+    ):
+        status = "not_accepted"
+    elif sender not in (parties["asker_id"], parties["responder_id"]):
+        status = "ignored"
+    if status is not None:
+        # Remembered, so the bot sending it again (after a restart, once the
+        # request is accepted) does not turn it into an answer.
+        with session_scope(service.session_factory) as session:
             mark_message_seen(session, req.message_id, rec_id)
-            return DiscordThreadResponse(status=status)
+        return DiscordThreadResponse(status=status)
     assert parties is not None and sender is not None
     is_answer = sender == parties["responder_id"]
     embedding = _embed(service, req.body) if is_answer else None
     now = _now()
     with session_scope(service.session_factory) as session:
-        if not mark_message_seen(session, req.message_id, rec_id):
+        if seen_message(session, req.message_id) is not None:
             return DiscordThreadResponse(status="duplicate")
-        create_message(session, rec_id, sender, req.body, now)
-        if not is_answer:
-            return DiscordThreadResponse(status="stored")
-        # One draft per question even when two answers arrive together.
-        session.execute(
-            text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 114, "obj": rec_id}
-        )
-        record_thread_answer(session, parties=parties, body=req.body, embedding=embedding, now=now)
+        row = create_message(session, rec_id, sender, req.body, now)
+        answer_id = None
+        if is_answer:
+            # One draft per question even when two answers arrive together.
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 114, "obj": rec_id}
+            )
+            answer_id, _ = record_thread_answer(
+                session, parties=parties, body=req.body, embedding=embedding, now=now
+            )
+        if not mark_message_seen(
+            session, req.message_id, rec_id, message_row_id=row["id"], answer_id=answer_id
+        ):
+            raise HTTPException(status_code=409, detail="message already handled")
+    if not is_answer:
+        return DiscordThreadResponse(status="stored")
     # The draft has no embedding yet (or lost it to the new resolution); without
     # one it cannot be matched to new questions or rise in the review queue.
     service.schedule_knowledge_embed()
     return DiscordThreadResponse(status="answered")
+
+
+def _apply_edit(
+    service: AgentService,
+    req: DiscordThreadMessage,
+    parties: dict,
+    message_row_id: int | None,
+    answer_id: str | None,
+) -> DiscordThreadResponse:
+    """Correct the chat message and answer an edited Discord message became."""
+
+    if message_row_id is None:
+        return DiscordThreadResponse(status="duplicate")  # it was ignored; still is
+    embedding = _embed(service, req.body) if answer_id is not None else None
+    now = _now()
+    with session_scope(service.session_factory) as session:
+        message = session.get(Message, message_row_id)
+        if message is not None:
+            message.body = req.body
+        if answer_id is not None:
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:cls, :obj)"),
+                {"cls": 114, "obj": message.recommendation_id if message else 0},
+            )
+            update_thread_answer(
+                session,
+                parties=parties,
+                answer_id=answer_id,
+                body=req.body,
+                embedding=embedding,
+                now=now,
+            )
+    if answer_id is not None:
+        service.schedule_knowledge_embed()
+    return DiscordThreadResponse(status="updated")
+
+
+def snowflake_time(snowflake: str) -> dt.datetime:
+    """When a Discord message was written (naive UTC), read from its id."""
+
+    ms = (int(snowflake) >> 22) + _DISCORD_EPOCH_MS
+    return dt.datetime.fromtimestamp(ms / 1000, dt.UTC).replace(tzinfo=None)
 
 
 def _embed(service: AgentService, body: str) -> list[float] | None:

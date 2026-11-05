@@ -36,8 +36,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/internal/discord", include_in_schema=False)
 
-#: Discord allows 5 rows of components; one row of buttons per draft.
-REVIEW_PAGE = 5
+#: Discord allows 5 rows of components: one row of buttons per draft, and the
+#: fifth for 「次へ」.
+REVIEW_PAGE = 4
 _ISSUE_MAX = 200
 _RESOLUTION_MAX = 300
 
@@ -51,10 +52,16 @@ class ReviewArticle(BaseModel):
     demand_count: int
 
 
+class DiscordReviewRequest(DiscordUser):
+    # Where the page starts, so drafts sent back (still waiting) can be passed over.
+    offset: int = Field(default=0, ge=0, le=100000)
+
+
 class DiscordReviewResponse(BaseModel):
     status: Literal["ok", "forbidden", "unlinked"]
     articles: list[ReviewArticle] = Field(default_factory=list)
     total: int = 0
+    offset: int = 0
 
 
 class DiscordReviewAction(DiscordUser):
@@ -82,7 +89,7 @@ def _admin_guild(settings: Settings, user: DiscordUser) -> tuple[str | None, boo
 
 @router.post("/review", response_model=DiscordReviewResponse)
 def discord_review(
-    req: DiscordUser,
+    req: DiscordReviewRequest,
     request: Request,
     settings: Settings = Depends(require_bot_secret),
 ) -> DiscordReviewResponse:
@@ -97,11 +104,17 @@ def discord_review(
     with session_scope(service.session_factory) as session:
         org = get_or_create_org_for_guild(session, guild_id, name=f"Discord {guild_id}")
         articles, total = list_articles(
-            session, org_id=org.id, states=REVIEW_STATES, scope=EVERYTHING, limit=REVIEW_PAGE
+            session,
+            org_id=org.id,
+            states=REVIEW_STATES,
+            scope=EVERYTHING,
+            offset=req.offset,
+            limit=REVIEW_PAGE,
         )
     return DiscordReviewResponse(
         status="ok",
         total=total,
+        offset=req.offset,
         articles=[
             ReviewArticle(
                 id=a.id,

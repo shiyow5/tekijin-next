@@ -15,11 +15,18 @@ is never posted to Discord: the asker did not choose to show it there.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from sqlalchemy.orm import Session, sessionmaker
 
 from tekijin.config import get_settings
 from tekijin.data.db import session_scope
-from tekijin.data.discord_requests import DISCORD_SESSION_PREFIX, create_request, enqueue_post
+from tekijin.data.discord_requests import (
+    DISCORD_SESSION_PREFIX,
+    create_request,
+    enqueue_post,
+    mark_accepted,
+)
 from tekijin.data.members import discord_user_id_for
 from tekijin.models.tables import Employee, Question, Recommendation
 
@@ -135,4 +142,5 @@ class DiscordNotifier:
         if not _enabled():
             return
         with session_scope(session_factory) as session:
+            mark_accepted(session, thread_id, dt.datetime.now(dt.UTC).replace(tzinfo=None))
             enqueue_post(session, thread_id, accepted_text(parties.get("responder_name") or ""))

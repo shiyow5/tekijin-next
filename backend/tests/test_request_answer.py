@@ -16,7 +16,7 @@ from sqlalchemy import select
 from tekijin.data.db import get_sessionmaker
 from tekijin.data.knowledge import article_sources, articles_from_question, verify_article
 from tekijin.data.visibility import EVERYTHING
-from tekijin.knowledge.request_answer import record_thread_answer
+from tekijin.knowledge.request_answer import record_thread_answer, update_thread_answer
 from tekijin.models.tables import Answer, Employee, Organization, Question
 
 NOW = dt.datetime(2026, 11, 5, 12, 0)
@@ -60,10 +60,10 @@ def _parties(db) -> dict:
 
 def test_answers_are_stored_and_the_case_draft_follows_them(db) -> None:
     parties = _parties(db)
-    first = record_thread_answer(
+    _, first = record_thread_answer(
         db, parties=parties, body="ルーターを再起動してください", embedding=None, now=NOW
     )
-    second = record_thread_answer(
+    _, second = record_thread_answer(
         db, parties=parties, body="直らなければ回線を確認", embedding=None, now=NOW
     )
 
@@ -88,10 +88,10 @@ def test_answers_are_stored_and_the_case_draft_follows_them(db) -> None:
 
 def test_a_verified_article_is_left_alone(db) -> None:
     parties = _parties(db)
-    article_id = record_thread_answer(db, parties=parties, body="答え", embedding=None, now=NOW)
+    _, article_id = record_thread_answer(db, parties=parties, body="答え", embedding=None, now=NOW)
     verify_article(db, article_id, org_id=parties["org_id"], verifier_id=None, now=NOW)
 
-    again = record_thread_answer(db, parties=parties, body="補足", embedding=None, now=NOW)
+    _, again = record_thread_answer(db, parties=parties, body="補足", embedding=None, now=NOW)
     assert again is None
     assert articles_from_question(db, "rq_test_1")[0].resolution == "答え"
     # The answer itself is still kept.
@@ -101,6 +101,22 @@ def test_a_verified_article_is_left_alone(db) -> None:
 def test_no_organization_keeps_only_the_answer(db, monkeypatch) -> None:
     monkeypatch.setattr("tekijin.knowledge.request_answer.thread_org_id", lambda *_: None)
     parties = _parties(db)
-    assert record_thread_answer(db, parties=parties, body="答え", embedding=None, now=NOW) is None
+    _, draft = record_thread_answer(db, parties=parties, body="答え", embedding=None, now=NOW)
+    assert draft is None
     assert articles_from_question(db, "rq_test_1") == []
     assert db.scalar(select(Answer.id).where(Answer.body == "答え")) is not None
+
+
+def test_an_edited_answer_replaces_its_text_in_the_draft(db) -> None:
+    parties = _parties(db)
+    answer_id, article_id = record_thread_answer(
+        db, parties=parties, body="間違った手順", embedding=None, now=NOW
+    )
+    assert (
+        update_thread_answer(
+            db, parties=parties, answer_id=answer_id, body="正しい手順", embedding=None, now=NOW
+        )
+        == article_id
+    )
+    assert db.get(Answer, answer_id).body == "正しい手順"
+    assert articles_from_question(db, "rq_test_1")[0].resolution == "正しい手順"

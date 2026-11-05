@@ -43,6 +43,10 @@ SEND_TEMPLATE = r"tk:send:(?P<session_id>discord_[0-9a-f]{32})"
 ACTION_TEMPLATE = r"tk:req:(?P<action>accept|decline|refer):(?P<rec>[0-9]{1,12})"
 REFER_TEMPLATE = r"tk:ref:(?P<rec>[0-9]{1,12})"
 REVIEW_TEMPLATE = r"tk:rev:(?P<action>verify|back):(?P<article>[0-9]{1,12})"
+REVIEW_PAGE_TEMPLATE = r"tk:revn:(?P<offset>[0-9]{1,6})"
+#: Drafts per ``/tekijin review`` page (the backend's page size): one row of
+#: buttons each, and the fifth row for 「次へ」.
+REVIEW_PAGE = 4
 
 #: How often the outbox is read when nothing asks for it sooner.
 OUTBOX_INTERVAL_S = 5.0
@@ -68,6 +72,10 @@ def refer_id(recommendation_id: int) -> str:
 
 def review_id(action: str, article_id: int) -> str:
     return f"tk:rev:{action}:{article_id}"
+
+
+def review_page_id(offset: int) -> str:
+    return f"tk:revn:{offset}"
 
 
 def _button(label: str, custom_id: str, style: discord.ButtonStyle) -> discord.ui.Button:
@@ -108,9 +116,11 @@ def refer_view(recommendation_id: int) -> discord.ui.View:
     return view
 
 
-def review_view(articles: list[dict[str, Any]]) -> discord.ui.View:
+def review_view(
+    articles: list[dict[str, Any]], *, next_offset: int | None = None
+) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
-    for row, article in enumerate(articles[:5]):
+    for row, article in enumerate(articles[:REVIEW_PAGE]):
         aid = int(article["id"])
         view.add_item(
             discord.ui.Button(
@@ -126,6 +136,15 @@ def review_view(articles: list[dict[str, Any]]) -> discord.ui.View:
                 custom_id=review_id("back", aid),
                 style=discord.ButtonStyle.secondary,
                 row=row,
+            )
+        )
+    if next_offset is not None:
+        view.add_item(
+            discord.ui.Button(
+                label="次へ",
+                custom_id=review_page_id(next_offset),
+                style=discord.ButtonStyle.primary,
+                row=4,
             )
         )
     return view
@@ -211,13 +230,19 @@ class RequestUI:
         await self._reply(interaction, format_action_reply(result))
         self.kick.set()
 
-    async def on_review(self, interaction: Any) -> None:
-        """``/tekijin review``."""
+    async def on_review(self, interaction: Any, offset: int = 0) -> None:
+        """``/tekijin review``, or 「次へ」 from its page at ``offset``."""
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-        result = await self._call("review", _who(interaction))
+        result = await self._call("review", {**_who(interaction), "offset": offset})
         articles = (result.get("articles") or []) if result.get("status") == "ok" else []
-        kwargs = {"view": review_view(articles)} if articles else {}
+        following = offset + len(articles)
+        more = following < int(result.get("total") or 0)
+        kwargs = (
+            {"view": review_view(articles, next_offset=following if more else None)}
+            if articles
+            else {}
+        )
         await self._reply(interaction, format_review(result), **kwargs)
 
     async def on_review_action(self, interaction: Any, article_id: int, action: str) -> None:
@@ -233,8 +258,8 @@ class RequestUI:
         await self._reply(interaction, format_review_action_reply(result))
 
     # -- messages in request threads -------------------------------------- #
-    async def on_thread_message(self, message: Any) -> None:
-        """Forward what someone wrote in a request thread."""
+    async def on_thread_message(self, message: Any, *, edited: bool = False) -> None:
+        """Forward what someone wrote (or edited) in a request thread."""
 
         if message.guild is None or message.author.bot:
             return
@@ -249,7 +274,22 @@ class RequestUI:
             "message_id": str(message.id),
             "body": content[:_THREAD_MESSAGE_MAX],
         }
+        if edited:
+            body["edited"] = True
         await self._forward(body)
+
+    async def on_thread_edit(self, client: Any, channel_id: int, message_id: int) -> None:
+        """An edit in a request thread: the backend corrects the kept answer."""
+
+        try:
+            channel = client.get_channel(channel_id) or await client.fetch_channel(channel_id)
+            if not self.gate.is_request_thread(channel):
+                return
+            message = await channel.fetch_message(message_id)
+        except discord.DiscordException:
+            logger.warning("could not read edited request thread message %s", message_id)
+            return
+        await self.on_thread_message(message, edited=True)
 
     async def _forward(self, body: dict[str, Any]) -> bool:
         """Send one thread message; keep it for later when the backend is away.
@@ -415,12 +455,28 @@ class ReviewButton(discord.ui.DynamicItem[discord.ui.Button], template=REVIEW_TE
         await _ui.on_review_action(interaction, self.article_id, self.action)
 
 
+class ReviewPageButton(discord.ui.DynamicItem[discord.ui.Button], template=REVIEW_PAGE_TEMPLATE):
+    def __init__(self, offset: int) -> None:
+        super().__init__(_button("次へ", review_page_id(offset), discord.ButtonStyle.primary))
+        self.offset = offset
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str]):  # type: ignore[override]
+        return cls(int(match["offset"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if _ui is None:
+            await _no_ui(interaction)
+            return
+        await _ui.on_review(interaction, self.offset)
+
+
 def install(client: discord.Client, group: app_commands.Group, ui: RequestUI) -> None:
     """Register the persistent buttons and ``/tekijin review`` on the bot."""
 
     global _ui
     _ui = ui
-    client.add_dynamic_items(SendButton, RequestButton, ReferSelect, ReviewButton)
+    client.add_dynamic_items(SendButton, RequestButton, ReferSelect, ReviewButton, ReviewPageButton)
 
     @group.command(name="review", description="確認を待っている知識の下書きを見る(管理者のみ)")
     async def review(interaction: discord.Interaction) -> None:

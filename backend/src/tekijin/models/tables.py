@@ -582,6 +582,9 @@ class DiscordRequest(Base):
     channel_id: Mapped[str | None] = mapped_column(String(32))
     thread_id: Mapped[str | None] = mapped_column(String(32), unique=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+    # When the request was accepted (UTC). A thread message written before it is
+    # never an answer, even when the bot only sends it afterwards.
+    accepted_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
 
 
 class DiscordThreadMessage(Base):
@@ -597,6 +600,11 @@ class DiscordThreadMessage(Base):
     recommendation_id: Mapped[int] = mapped_column(
         ForeignKey("discord_requests.recommendation_id", ondelete="CASCADE"), index=True
     )
+    # What it became, so an edit in Discord can correct them (NULL: ignored).
+    message_row_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE")
+    )
+    answer_id: Mapped[str | None] = mapped_column(ForeignKey("answers.id", ondelete="CASCADE"))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 

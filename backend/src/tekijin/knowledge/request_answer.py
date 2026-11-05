@@ -43,27 +43,58 @@ def record_thread_answer(
     body: str,
     embedding: Sequence[float] | None,
     now: dt.datetime,
-) -> int | None:
+) -> tuple[str, int | None]:
     """Store ``body`` as the responder's answer and refresh the case draft.
 
     ``parties`` is what :func:`tekijin.data.messages.thread_parties` returns for the
-    accepted hand-off. Returns the draft's id, or ``None`` when no draft was written
-    (no organization to keep it in, or the article was already checked).
+    accepted hand-off. Returns ``(answer_id, draft_id)``; ``draft_id`` is ``None``
+    when no draft was written (no organization to keep it in, or the article was
+    already checked).
     """
 
-    question_id = parties["question_id"]
-    responder_id = parties["responder_id"]
-    question = session.get(Question, question_id)
+    question = session.get(Question, parties["question_id"])
     topics = (question.topics if question is not None else None) or []
-    create_answer(
+    answer_id = create_answer(
         session,
-        question_id=question_id,
-        responder_id=responder_id,
+        question_id=parties["question_id"],
+        responder_id=parties["responder_id"],
         body=body,
         topic=topics[0] if topics else None,
         embedding=embedding,
         created_at=now,
     )
+    return answer_id, refresh_case_draft(session, parties=parties, now=now)
+
+
+def update_thread_answer(
+    session: Session,
+    *,
+    parties: dict[str, Any],
+    answer_id: str,
+    body: str,
+    embedding: Sequence[float] | None,
+    now: dt.datetime,
+) -> int | None:
+    """An answer edited in the thread: replace its text and refresh the draft."""
+
+    answer = session.get(Answer, answer_id)
+    if answer is None:
+        return None
+    answer.body = body
+    answer.embedding = list(embedding) if embedding is not None else None
+    session.flush()
+    return refresh_case_draft(session, parties=parties, now=now)
+
+
+def refresh_case_draft(
+    session: Session, *, parties: dict[str, Any], now: dt.datetime
+) -> int | None:
+    """Write the responder's answers into the question's case draft, creating it
+    if needed. A checked (verified) or retired article is left alone."""
+
+    question_id = parties["question_id"]
+    responder_id = parties["responder_id"]
+    question = session.get(Question, question_id)
     if question is None or not (question.body or "").strip():
         return None
     org_id = thread_org_id(session, parties["asker_id"])

@@ -377,12 +377,43 @@ def test_persistent_items_rebuild_from_their_ids() -> None:
 def test_review_text_shows_every_draft_it_has_buttons_for() -> None:
     articles = [
         {"id": 100 + i, "kind": "procedure", "issue": "問" * 200, "resolution": "答" * 300}
-        for i in range(5)
+        for i in range(4)
     ]
-    text = format_review({"status": "ok", "total": 40, "articles": articles})
+    text = format_review({"status": "ok", "total": 40, "offset": 8, "articles": articles})
     assert len(text) <= 2000
     assert all(f"#{a['id']}" in text for a in articles)
-    assert "残り" in text
+    assert "9〜12件目" in text and "「次へ」" in text
+
+
+def test_review_offers_the_next_page(calls) -> None:
+    calls.replies["review"] = {
+        "status": "ok",
+        "total": 9,
+        "offset": 4,
+        "articles": [{"id": i, "kind": "fact", "issue": "x"} for i in range(4)],
+    }
+    interaction = _interaction(9001)
+    asyncio.run(_ui().on_review(interaction, 4))
+    assert calls[0][1]["offset"] == 4
+    ids = _ids(interaction.followup.sent[0][1]["view"])
+    assert ids[-1] == "tk:revn:8" and len(ids) == 9
+    assert re.fullmatch(bot_requests.REVIEW_PAGE_TEMPLATE, ids[-1])
+
+
+def test_an_edit_in_a_request_thread_is_forwarded_as_an_edit(calls) -> None:
+    thread = _Channel(700, parent_id=OUTPUT)
+    message = _thread_message(thread, content="直した答え")
+
+    async def fetch_message(mid):
+        return message
+
+    thread.fetch_message = fetch_message
+    asyncio.run(_ui().on_thread_edit(_Client(thread), 700, 55))
+    assert calls[0][1]["edited"] is True and calls[0][1]["body"] == "直した答え"
+    other = _Channel(31, parent_id=30)
+    other.fetch_message = fetch_message
+    asyncio.run(_ui().on_thread_edit(_Client(other), 31, 55))
+    assert len(calls) == 1
 
 
 def test_a_thread_message_the_backend_missed_is_sent_again(monkeypatch, calls) -> None:

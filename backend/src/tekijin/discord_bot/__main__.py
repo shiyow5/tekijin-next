@@ -291,6 +291,11 @@ def main() -> None:
     async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent) -> None:
         if payload.guild_id != guild_id:
             return
+        # #114: an edit in a request thread corrects the answer it became; these
+        # threads are not ingested, so nothing below applies to them.
+        if gate.is_request_thread(client.get_channel(payload.channel_id)):
+            await requests_ui.on_thread_edit(client, payload.channel_id, payload.message_id)
+            return
         # Taken before fetching: a deletion or a newer edit arriving while the
         # fetch is in flight makes its result stale, and the batcher drops it.
         token = batcher.begin_edit(payload.message_id)

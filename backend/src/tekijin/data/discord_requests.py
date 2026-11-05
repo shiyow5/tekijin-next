@@ -97,22 +97,43 @@ def request_for_thread(session: Session, thread_id: str) -> DiscordRequest | Non
     ).first()
 
 
-def message_seen(session: Session, message_id: str) -> bool:
-    return session.get(DiscordThreadMessage, message_id) is not None
+def seen_message(session: Session, message_id: str) -> DiscordThreadMessage | None:
+    return session.get(DiscordThreadMessage, message_id)
 
 
-def mark_message_seen(session: Session, message_id: str, recommendation_id: int) -> bool:
+def mark_message_seen(
+    session: Session,
+    message_id: str,
+    recommendation_id: int,
+    *,
+    message_row_id: int | None = None,
+    answer_id: str | None = None,
+) -> bool:
     """Record a thread message as handled. ``False`` when it already was."""
 
     try:
         with session.begin_nested():
             session.add(
-                DiscordThreadMessage(message_id=message_id, recommendation_id=recommendation_id)
+                DiscordThreadMessage(
+                    message_id=message_id,
+                    recommendation_id=recommendation_id,
+                    message_row_id=message_row_id,
+                    answer_id=answer_id,
+                )
             )
             session.flush()
     except IntegrityError:
         return False
     return True
+
+
+def mark_accepted(session: Session, recommendation_id: int, now: dt.datetime) -> None:
+    """Stamp when the request was accepted (first stamp wins)."""
+
+    request = session.get(DiscordRequest, recommendation_id)
+    if request is not None and request.accepted_at is None:
+        request.accepted_at = now
+        session.flush()
 
 
 def enqueue_post(session: Session, recommendation_id: int, text: str) -> bool:
