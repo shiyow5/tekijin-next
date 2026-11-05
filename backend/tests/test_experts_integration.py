@@ -7,21 +7,26 @@ outlives it and no shared table needs cleaning.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
 
 import pytest
 from sqlalchemy import update
 
+from tekijin.api.events import node_event
+from tekijin.channels.ask_summary import summarize_events
 from tekijin.data.conversations import IncomingMessage, ingest_messages
 from tekijin.data.db import get_sessionmaker
 from tekijin.data.members import resolve_discord_member
 from tekijin.data.self_intros import set_join_intro
 from tekijin.data.sources import upsert_source_item
 from tekijin.data.visibility import EVERYTHING, PUBLIC, SourceScope, record_visibility
+from tekijin.discord_bot.format import format_reply
 from tekijin.models.tables import Answer, Employee, Organization, Question
 from tekijin.retrieval.bm25_cache import clear_bm25_cache
 from tekijin.retrieval.experts import (
     ANSWER,
+    ANSWER_REASON,
     ANSWER_TOP_K,
     CONVERSATION,
     DOCUMENT,
@@ -245,9 +250,12 @@ def test_a_private_conversation_neither_credits_nor_is_cited(session, fake_embed
     assert seen.experts
 
 
-def _answer(session, embedder, *, asker: Employee, responder: Employee, body=QUERY) -> None:
+PRIVATE_QUESTION = "赤道儀が動かないのは私が壊したからです"
+
+
+def _answer(session, embedder, *, asker: Employee, responder: Employee, body=QUERY) -> str:
     qid = f"q_{uuid.uuid4().hex}"
-    session.add(Question(id=qid, asker_id=asker.id, body="赤道儀が動かない", created_at=NOW))
+    session.add(Question(id=qid, asker_id=asker.id, body=PRIVATE_QUESTION, created_at=NOW))
     session.flush()
     session.add(
         Answer(
@@ -259,6 +267,7 @@ def _answer(session, embedder, *, asker: Employee, responder: Employee, body=QUE
         )
     )
     session.flush()
+    return qid
 
 
 def test_a_tekijin_answer_credits_its_responder(session, fake_embedder, org) -> None:
@@ -269,10 +278,33 @@ def test_a_tekijin_answer_credits_its_responder(session, fake_embedder, org) -> 
     result = _find(session, fake_embedder, org)
 
     assert _ids(result) == [iwata.id]
-    assert result.experts[0].reasons[0] == {
-        "type": ANSWER,
-        "detail": "「赤道儀が動かない」の質問に答えた",
-    }
+    assert result.experts[0].reasons[0] == {"type": ANSWER, "detail": ANSWER_REASON}
+
+
+def test_another_members_question_is_never_quoted(session, fake_embedder, org) -> None:
+    """Questions come from another member's /ask and may be private: neither the
+    question, the answer nor the question's id may reach a different asker."""
+
+    asker = _member(session, org, "1", "質問 する人")
+    iwata = _member(session, org, "2", "岩田 颯太")
+    secret_answer = QUERY + " 内緒 の 回答"
+    qid = _answer(session, fake_embedder, asker=asker, responder=iwata, body=secret_answer)
+    _answer(session, fake_embedder, asker=asker, responder=iwata, body=QUERY)
+
+    rec = _find(session, fake_embedder, org, asker=None).experts[0].as_recommendation()
+    sse = node_event("c6_score", {"recommendations": [rec]})
+    assert sse is not None
+    payload = json.loads(sse.data or "{}")
+    outcome = summarize_events([("recommend", payload)])
+    reply = format_reply(outcome.model_dump(), web_url="https://tekijin.example/")
+
+    # Two answers, one fixed reason.
+    assert rec["reasons"] == [{"type": ANSWER, "detail": ANSWER_REASON}]
+    for text in (json.dumps(rec, ensure_ascii=False), sse.data or "", reply):
+        assert PRIVATE_QUESTION[:4] not in text
+        assert "内緒" not in text
+        assert qid not in text
+    assert ANSWER_REASON in reply
 
 
 def test_answers_by_people_left_out_do_not_crowd_out_an_eligible_one(

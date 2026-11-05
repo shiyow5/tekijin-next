@@ -90,7 +90,8 @@ INTRO_TOP_K = 20
 ANSWER_TOP_K = 20
 _INTRO_CHARS = 60
 _TITLE_CHARS = 40
-_QUESTION_CHARS = 30
+# What an ``answer`` reason says. Never the question or the answer itself.
+ANSWER_REASON = "TEKIJINで似た質問に答えた"
 # The web gauge shows ``score / 1.8`` (frontend/src/lib/fit.ts), the company
 # scorer's ceiling. A member whose evidence is first in two kinds fills it.
 _SCORE_CEILING = 1.8
@@ -441,7 +442,7 @@ class DbExpertFinder:
         asker = aliased(Employee)
         distance = Answer.embedding.cosine_distance(query_vector).label("distance")
         rows = self._session.execute(
-            select(Answer.responder_id, Question.body, distance)
+            select(Answer.responder_id, distance)
             .join(Question, Question.id == Answer.question_id)
             .join(asker, asker.id == Question.asker_id)
             .where(
@@ -458,10 +459,9 @@ class DbExpertFinder:
                 member_id=row.responder_id,
                 rank=rank,
                 cosine=1.0 - float(row.distance),
-                reason={
-                    "type": ANSWER,
-                    "detail": f"「{clip_text(row.body or '', _QUESTION_CHARS)}」の質問に答えた",
-                },
+                # A fixed text: the question came from another member's /ask and may
+                # be private, so neither it nor the answer is quoted to this asker.
+                reason={"type": ANSWER, "detail": ANSWER_REASON},
             )
             for rank, row in enumerate(rows, start=1)
         ]
