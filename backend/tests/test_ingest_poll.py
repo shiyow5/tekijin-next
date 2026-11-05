@@ -194,6 +194,49 @@ def test_an_incomplete_listing_stores_but_deletes_nothing(engine, fake_embedder,
     assert set(_items(engine, org_id)) == {"a", "b"}
 
 
+def test_a_notion_search_failing_mid_way_deletes_nothing(engine, fake_embedder, org) -> None:
+    """The real Notion provider: a search that errors on its second page must not
+    make the stored pages look unshared (#101)."""
+
+    from tekijin.ingest.notion import NotionProvider
+
+    org_id, _ = org
+    fail_second_page = False
+
+    def page(page_id: str) -> dict:
+        return {
+            "object": "page",
+            "id": page_id,
+            "url": f"https://www.notion.so/{page_id}",
+            "last_edited_time": "2026-11-01T03:00:00.000Z",
+            "properties": {"名前": {"type": "title", "title": [{"plain_text": page_id}]}},
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/search":
+            if b"start_cursor" in request.content:
+                if fail_second_page:
+                    return httpx.Response(400, json={"code": "validation_error"})
+                return httpx.Response(200, json={"results": [page("p2")], "has_more": False})
+            return httpx.Response(
+                200, json={"results": [page("p1")], "has_more": True, "next_cursor": "c"}
+            )
+        paragraph = {"type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "本文"}]}}
+        return httpx.Response(200, json={"results": [paragraph], "has_more": False})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = NotionProvider(client, "tok", sleep=lambda s: None, min_interval_s=0)
+
+    assert _sync(engine, fake_embedder, org_id, provider).added == 2
+    assert set(_items(engine, org_id, "notion")) == {"p1", "p2"}
+
+    fail_second_page = True
+    report = _sync(engine, fake_embedder, org_id, provider)
+
+    assert report.listing_failed and report.deleted == 0
+    assert set(_items(engine, org_id, "notion")) == {"p1", "p2"}
+
+
 def test_one_failing_document_does_not_stop_the_pass(engine, fake_embedder, org) -> None:
     org_id, _ = org
     _sync(engine, fake_embedder, org_id, FakeProvider([_doc("a")]))
@@ -266,7 +309,20 @@ def test_run_forever_does_nothing_once_stopped() -> None:
 
 
 def test_build_providers_is_empty_without_settings() -> None:
-    assert build_providers(Settings(google_service_account_file=""), httpx.Client()) == []
+    settings = Settings(google_service_account_file="", notion_token="")
+    assert build_providers(settings, httpx.Client()) == []
+
+
+def test_build_providers_adds_notion_when_its_token_is_set() -> None:
+    settings = Settings(google_service_account_file="", notion_token="ntn_test")
+    providers = build_providers(settings, httpx.Client())
+    assert [p.name for p in providers] == ["notion"]
+    assert "ntn_test" not in repr(settings)
+
+
+def test_build_providers_ignores_a_blank_notion_token() -> None:
+    settings = Settings(google_service_account_file="", notion_token="  ")
+    assert build_providers(settings, httpx.Client()) == []
 
 
 def test_build_providers_rejects_a_missing_key(tmp_path) -> None:
@@ -276,9 +332,11 @@ def test_build_providers_rejects_a_missing_key(tmp_path) -> None:
 
 
 def test_main_exits_with_a_message_when_nothing_is_configured(capsys) -> None:
-    settings = Settings(discord_guild_id=GUILD, google_service_account_file="")
+    settings = Settings(discord_guild_id=GUILD, google_service_account_file="", notion_token="")
     assert main(["--once"], settings=settings) == 2
-    assert "TEKIJIN_GOOGLE_SERVICE_ACCOUNT_FILE" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "TEKIJIN_GOOGLE_SERVICE_ACCOUNT_FILE" in err
+    assert "TEKIJIN_NOTION_TOKEN" in err
 
 
 def test_main_needs_the_organization(capsys) -> None:

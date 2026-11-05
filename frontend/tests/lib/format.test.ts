@@ -42,4 +42,9 @@ describe("sourceOrigin (#76)", () => {
     );
     expect(sourceOrigin({ provider: "google", author_name: null, url: null })).toBe("Google");
   });
+
+  it("names a Notion page (#101)", () => {
+    const url = "https://www.notion.so/abc";
+    expect(sourceOrigin({ provider: "notion", author_name: null, url })).toBe("Notion");
+  });
 });

@@ -20,7 +20,7 @@ export function formatConfidence(confidence: number): string {
  * Who a source came from, for the 資料 screens (#76). A Discord conversation has
  * many authors and is shown as such; a source without an author was added by the
  * admin account. A shared Google file (#99) is told apart by its link: Docs live
- * under /document/, Slides under /presentation/.
+ * under /document/, Slides under /presentation/. A Notion page (#101) is "Notion".
  */
 export function sourceOrigin(source: {
   provider: string;
@@ -28,6 +28,7 @@ export function sourceOrigin(source: {
   url?: string | null;
 }): string {
   if (source.provider === "discord") return "Discordの会話";
+  if (source.provider === "notion") return "Notion";
   if (source.provider === "google") {
     if (source.url?.includes("docs.google.com/presentation/")) return "Googleスライド";
     if (source.url?.includes("docs.google.com/document/")) return "Googleドキュメント";

@@ -1,6 +1,6 @@
 """What a scheduled ingestion source looks like to the poller (#99, R4).
 
-A provider (Google Drive now, Notion next) only has to list the documents it can
+A provider (Google Drive, Notion) only has to list the documents it can
 see and fetch the text of one of them. Deciding what to fetch, storing it and
 deleting what is gone is the poller's job (``ingest/poll.py``), shared by all.
 """
@@ -37,6 +37,16 @@ class Listing:
 
     documents: Sequence[RemoteDocument]
     complete: bool = True
+
+
+def parse_time(value: str) -> dt.datetime:
+    """An RFC 3339 time from a provider (Drive, Notion) as naive UTC, the form
+    ``source_items`` stores."""
+
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed
+    return parsed.astimezone(dt.UTC).replace(tzinfo=None)
 
 
 class SkipDocument(Exception):

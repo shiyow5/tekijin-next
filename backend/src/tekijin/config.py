@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repository root, resolved relative to this file:
@@ -593,6 +593,10 @@ class Settings(BaseSettings):
     # account are ingested; empty (default) = the Google provider is off. The key
     # itself is never logged.
     google_service_account_file: str = ""
+    # Token of a Notion internal integration (#101). Pages connected to the
+    # integration are ingested; empty (default) = the Notion provider is off. A
+    # secret: SecretStr keeps it out of reprs, and it is never logged.
+    notion_token: SecretStr = SecretStr("")
 
     def slack_configured(self) -> bool:
         """True once the OAuth app credentials needed to start linking exist.

@@ -11,7 +11,6 @@ The key file and the access token never reach a log line.
 
 from __future__ import annotations
 
-import datetime as dt
 import logging
 import os
 import stat
@@ -25,7 +24,7 @@ import httpx
 from google.oauth2 import service_account
 
 from tekijin.ingest.http import Sleep, send_with_retries
-from tekijin.ingest.provider import Listing, RemoteDocument, SkipDocument
+from tekijin.ingest.provider import Listing, RemoteDocument, SkipDocument, parse_time
 
 logger = logging.getLogger(__name__)
 
@@ -115,15 +114,6 @@ def _document(file: Mapping[str, Any]) -> RemoteDocument:
         url=file.get("webViewLink"),
         modified_at=parse_time(str(file["modifiedTime"])),
     )
-
-
-def parse_time(value: str) -> dt.datetime:
-    """An RFC 3339 time from Drive as naive UTC, the form ``source_items`` stores."""
-
-    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        return parsed
-    return parsed.astimezone(dt.UTC).replace(tzinfo=None)
 
 
 def _reasons(response: httpx.Response) -> set[str]:

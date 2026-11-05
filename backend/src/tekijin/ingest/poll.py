@@ -7,7 +7,7 @@ ones the provider no longer lists (unshared, trashed) are deleted. One failing
 document never stops the pass, and a failed listing deletes nothing.
 
 A provider is anything that satisfies :class:`tekijin.ingest.provider.Provider`.
-Adding one (Notion, say) means writing that class and one branch in
+Adding one means writing that class and one branch in
 :func:`build_providers`.
 
 CLI::
@@ -216,6 +216,11 @@ def build_providers(settings: Settings, client: httpx.Client) -> list[Provider]:
         from tekijin.ingest.google import build_google_provider
 
         providers.append(build_google_provider(settings.google_service_account_file, client))
+    notion_token = settings.notion_token.get_secret_value()
+    if notion_token.strip():
+        from tekijin.ingest.notion import build_notion_provider
+
+        providers.append(build_notion_provider(notion_token, client))
     return providers
 
 
@@ -288,7 +293,8 @@ def main(
         if not providers:
             sys.stderr.write(
                 "Nothing to ingest: set TEKIJIN_GOOGLE_SERVICE_ACCOUNT_FILE to the path of "
-                "a Google service account key.\n"
+                "a Google service account key, or TEKIJIN_NOTION_TOKEN to the token of a "
+                "Notion internal integration.\n"
             )
             return 2
         session_factory, embedder = connect(settings)
