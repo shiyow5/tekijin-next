@@ -77,6 +77,24 @@ def test_nothing_above_the_floor_recommends_nobody() -> None:
     assert result.confidence == 0.0
 
 
+def test_documents_and_conversations_do_not_raise_the_people_confidence() -> None:
+    # C4's own hits already are document_confidence; C5 must not read them twice.
+    result = rank_experts(
+        [_ev(DOCUMENT, 1, 1, cosine=0.55), _ev(CONVERSATION, 2, 1, cosine=0.6)],
+        MEMBERS,
+        floors=NO_FLOOR,
+    )
+
+    assert [e.member_id for e in result.experts] == [1, 2]
+    assert result.confidence == 0.0
+
+
+def test_a_tekijin_answer_raises_the_people_confidence() -> None:
+    result = rank_experts([_ev(ANSWER, 1, 1, cosine=0.45)], MEMBERS, floors=NO_FLOOR)
+
+    assert result.confidence == pytest.approx(0.45)
+
+
 def test_members_outside_the_eligible_set_are_never_ranked() -> None:
     # The asker, opted-out, inactive or declined members are left out of ``members``.
     result = rank_experts([_ev(SELF_INTRO, 9, 1)], MEMBERS, floors=NO_FLOOR)
@@ -106,9 +124,7 @@ def test_the_same_reason_is_shown_once() -> None:
 
 
 def test_ties_break_on_member_id() -> None:
-    result = rank_experts(
-        [_ev(SELF_INTRO, 3, 1), _ev(SELF_INTRO, 2, 1)], MEMBERS, floors=NO_FLOOR
-    )
+    result = rank_experts([_ev(SELF_INTRO, 3, 1), _ev(SELF_INTRO, 2, 1)], MEMBERS, floors=NO_FLOOR)
 
     assert [e.member_id for e in result.experts] == [2, 3]
 
@@ -130,9 +146,7 @@ def test_recommendation_has_every_field_consumers_read() -> None:
 
 
 def test_a_self_introduction_alone_is_low_confidence_and_a_document_high() -> None:
-    result = rank_experts(
-        [_ev(SELF_INTRO, 1, 1), _ev(DOCUMENT, 2, 1)], MEMBERS, floors=NO_FLOOR
-    )
+    result = rank_experts([_ev(SELF_INTRO, 1, 1), _ev(DOCUMENT, 2, 1)], MEMBERS, floors=NO_FLOOR)
     labels = {e.member_id: e.as_recommendation()["confidence"] for e in result.experts}
 
     assert labels == {1: "低", 2: "高"}

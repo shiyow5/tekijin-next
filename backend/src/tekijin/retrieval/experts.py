@@ -67,10 +67,22 @@ WEIGHTS: Mapping[str, float] = MappingProxyType(
     {SELF_INTRO: 1.0, DOCUMENT: 1.0, CONVERSATION: 0.5, ANSWER: 1.0}
 )
 # The cosine similarity an evidence item needs to count. Measured on evo-x2 with
-# Nemotron-3-Embed-1B on the fictional circle (#107): see the PR's table.
-# TODO(#107): fill with the measured values.
+# Nemotron-3-Embed-1B on the fictional circle's 36 questions (#107, 2026-11-05):
+#
+# * self_intro 0.20: the correct member's introduction scored 0.213-0.328 on the 8
+#   person questions; the best introduction on the 6 abstain questions scored
+#   0.024-0.198. Any floor in 0.18-0.21 kept recall@3 at 8/8. The margin is
+#   thin, so re-measure on a real organization (R7).
+# * document 0.25: the correct author's document scored 0.259-0.485; the abstain
+#   questions' best documents scored 0.065-0.480, so no floor separates them.
+#   0.24-0.30 all kept 8/8; 0.25 drops the four unrelated abstain questions.
+# * conversation 0.32: with expertise_from_messages on, 0.32-0.34 kept 8/8 and
+#   recommended someone on 2 of 6 abstain questions; with no floor, small talk
+#   pushed a correct member to 4th (7/8).
+# * answer 0.20: not measured (the circle has no TEKIJIN answers yet); set with
+#   self_intro, the other kind written by a person about what they know.
 FLOORS: Mapping[str, float] = MappingProxyType(
-    {SELF_INTRO: 0.0, DOCUMENT: 0.0, CONVERSATION: 0.0, ANSWER: 0.0}
+    {SELF_INTRO: 0.20, DOCUMENT: 0.25, CONVERSATION: 0.32, ANSWER: 0.20}
 )
 MAX_REASONS = 3
 # How many self-introductions and TEKIJIN answers are read per question.
@@ -83,6 +95,8 @@ _QUESTION_CHARS = 30
 # scorer's ceiling. A member whose evidence is first in two kinds fills it.
 _SCORE_CEILING = 1.8
 _FULL_SCORE = 2 * max(WEIGHTS.values()) / (RRF_K + 1)
+# Kinds whose cosine is a signal about people rather than about the documents.
+_PERSON_SIGNAL_KINDS = frozenset({SELF_INTRO, ANSWER})
 # Kinds that make a recommendation 高: the person wrote the document or answered.
 _STRONG_KINDS = frozenset({DOCUMENT, ANSWER})
 _KIND_ORDER = {SELF_INTRO: 0, DOCUMENT: 1, ANSWER: 2, CONVERSATION: 3}
@@ -131,7 +145,12 @@ class Expert:
 @dataclass(frozen=True, slots=True)
 class ExpertResult:
     experts: list[Expert]
-    # The best cosine of any evidence that counted; C5 reads it as people_confidence.
+    # C5 reads this as ``people_confidence``: the best cosine of a counted
+    # self-introduction or TEKIJIN answer. Documents and conversations are left
+    # out: they are C4's own hits, whose cosine already is ``document_confidence``,
+    # and counting them again would turn every well-documented question into a
+    # hand-off instead of an answer from the documents (measured: 12 of the
+    # circle's 28 answer/abstain questions changed route when they counted).
     confidence: float
 
 
@@ -158,7 +177,8 @@ def rank_experts(
         credit = weights.get(item.kind, 0.0) * item.share / (k + item.rank)
         totals[item.member_id] = totals.get(item.member_id, 0.0) + credit
         credited.setdefault(item.member_id, []).append((credit, item))
-        best = max(best, item.cosine)
+        if item.kind in _PERSON_SIGNAL_KINDS:
+            best = max(best, item.cosine)
     experts = [
         Expert(
             member_id=member_id,
@@ -370,9 +390,7 @@ class DbExpertFinder:
             )
         )
 
-    def _speakers(
-        self, org_id: int, item: SourceItem, rank: int, cosine: float
-    ) -> list[Evidence]:
+    def _speakers(self, org_id: int, item: SourceItem, rank: int, cosine: float) -> list[Evidence]:
         chars = func.sum(func.length(ChannelMessage.content))
         rows = self._session.execute(
             select(ChannelMessage.author_id, chars)
