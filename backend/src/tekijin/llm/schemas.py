@@ -7,6 +7,8 @@ The vLLM adapters convert an instance of these back into the protocol dataclasse
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -63,52 +65,38 @@ class AnswerabilitySchema(BaseModel):
     reason: str | None = Field(default=None, description="判断の根拠を一言で（任意）")
 
 
-class CaseExtractionSchema(BaseModel):
-    """Knowledge-unit extraction structured output (#357 slice 2, case type).
+class KnowledgeDraftSchema(BaseModel):
+    """One knowledge draft in the KCS shape, read from one record (#112, R6).
 
-    The model reads ONE raw record (a chat conversation or a resolved thread) and, if it
-    holds a reusable *case*, distils it into ``問題(状況) → 打ち手 → 結果``. Not every
-    record is a case — a status note with no problem/action is not — so
-    ``extractable`` lets the model pass (the caller then stores nothing, keeping a
-    non-case out of the knowledge base). For a source that CARRIES precomputed tags
-    (a thread's question) ``topics`` come from those tags, never the model, so the
-    knowledge vocabulary can never drift. For a source with NO
-    tags (chat, #448) the model instead proposes ``topic_hints`` and the caller snaps
-    them onto the canonical vocabulary (``normalize_topics``) — same drift exposure
-    as C1 routing, and anything off-vocabulary is dropped. The model must ground
-    every field in the supplied text and never invent a ``result`` (leave it null).
+    The model reads one record (a resolved conversation, a part of a document) and,
+    when it holds something worth keeping, writes the ``issue`` in the words a
+    member would ask it, the ``resolution``, and optionally where it holds
+    (``environment``) and why (``cause``). ``extractable`` false means there is
+    nothing to keep, and the caller stores nothing. A missing ``resolution`` is
+    allowed: the draft is stored as ``wip`` and never answers a question. Every
+    field must come from the record.
     """
 
     extractable: bool = Field(
-        default=False, description="この記録が再利用可能なケース(課題→打ち手→結果)を含むなら true"
+        default=False, description="記録に、残して再利用できる知識が含まれるなら true"
     )
-    problem: str = Field(default="", description="顧客の状況・課題（記録に書かれた範囲で）")
-    action: str = Field(default="", description="打ち手・提案した商材やソリューション")
-    result: str | None = Field(
-        default=None, description="結果（受注・継続商談など）。記録に無ければ null"
+    kind: Literal["case", "procedure", "fact", "decision"] = Field(
+        default="case",
+        description="case=困りごとと解決、procedure=手順、fact=事実・決まりごと、decision=決めたことと理由",
     )
-    industry: str | None = Field(
-        default=None, description="顧客の業種（記録に明示があれば）。無ければ null"
+    issue: str = Field(default="", description="困りごと、または問い。質問する人の言葉に近い形で")
+    environment: str | None = Field(
+        default=None, description="どの場面で成り立つか(活動、道具、時期など)。記録に無ければ null"
     )
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="抽出の確信度")
-    topic_hints: list[str] = Field(
-        default_factory=list,
-        description=(
-            "この知識が属するトピック候補（タグの無いチャット等の抽出でのみ使用）。"
-            "決められた語彙から選ぶ。タグを持つ記録では空のままでよい。"
-        ),
+    resolution: str | None = Field(
+        default=None, description="答え・解決のしかた。記録に書かれていなければ null"
     )
+    cause: str | None = Field(default=None, description="原因。記録に無ければ null")
 
     @model_validator(mode="after")
-    def _extractable_requires_problem_and_action(self) -> CaseExtractionSchema:
-        # A case is meaningless without BOTH a problem and an action — if the model
-        # claims extractable it must supply both, else the caller would store an
-        # empty unit. (extractable=false with stray text is harmless: skipped.)
-        if self.extractable:
-            if not self.problem.strip():
-                raise ValueError("problem is required when extractable is true")
-            if not self.action.strip():
-                raise ValueError("action is required when extractable is true")
+    def _extractable_requires_an_issue(self) -> KnowledgeDraftSchema:
+        if self.extractable and not self.issue.strip():
+            raise ValueError("issue is required when extractable is true")
         return self
 
 

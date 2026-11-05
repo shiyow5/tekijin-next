@@ -99,6 +99,25 @@ function IconChatNav({ className }: { className: string }) {
   );
 }
 
+function IconArticles({ className }: { className: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+      className={className}
+    >
+      <path
+        d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function IconSources({ className }: { className: string }) {
   return (
     <svg
@@ -167,6 +186,8 @@ const NAV = [
   { href: "/knowledge", label: "ナレッジ", icon: IconKnowledge, adminOnly: false },
   // The organization's documents and the form to add one (#72).
   { href: "/sources", label: "資料", icon: IconSources, adminOnly: false },
+  // The organization's verified knowledge; the admin also checks drafts here (#112).
+  { href: "/articles", label: "知識", icon: IconArticles, adminOnly: false },
   { href: "/dashboard", label: "ダッシュボード", icon: IconDashboardNav, adminOnly: true },
 ] as const;
 

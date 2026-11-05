@@ -32,15 +32,28 @@ describe("SourceCitations", () => {
     expect(screen.queryByText(/過去の回答/)).toBeNull();
   });
 
-  it("labels a knowledge unit as knowledge, not as a past answer (#366)", () => {
-    // #357 slice 4c emits `{source_id: "ku_…", kind: "knowledge"}` when a grounded
-    // knowledge answer fires. The renderer's final branch is a catch-all that says
-    // 「過去の回答」, so before this the knowledge layer would have mislabelled every
-    // one of its own citations the moment `knowledge_retrieval_enabled` went true.
-    // That is why this is the enablement gate for #357.
-    renderCitations([{ source_id: "ku_12", kind: "knowledge" }]);
+  it("links a knowledge article to its page, not as a past answer (#366, #112)", () => {
+    renderCitations([{ source_id: "ka_12", kind: "knowledge", title: "部室の鍵はどこ" }]);
     expect(screen.queryByText(/過去の回答/)).toBeNull();
-    expect(screen.getByText(/ナレッジ/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /部室の鍵はどこ/ })).toHaveAttribute(
+      "href",
+      "/articles/12",
+    );
+  });
+
+  it("links the Discord message a knowledge article came from (#112)", () => {
+    renderCitations([
+      {
+        source_id: "msg_3",
+        kind: "message",
+        title: "#質問",
+        url: "https://discord.com/channels/1/2/3",
+      },
+    ]);
+    expect(screen.getByRole("link", { name: /#質問/ })).toHaveAttribute(
+      "href",
+      "https://discord.com/channels/1/2/3",
+    );
   });
 
   it("still labels a qa citation as a past answer", () => {

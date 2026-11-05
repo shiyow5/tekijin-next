@@ -1163,58 +1163,85 @@ def test_self_answer_message_carries_citations(seed_counts, engine, fake_embedde
     ]
 
 
-def test_knowledge_answer_persists_route_and_self_resolution(
+def test_knowledge_answer_persists_route_self_resolution_and_use(
     seed_counts, engine, fake_embedder
 ) -> None:
-    # #357 slice 4c: a grounded knowledge answer terminates before C5, so the run
-    # must still (a) emit a self_answered message and (b) persist a synthetic
-    # "knowledge" route + mark the question self-resolved (dashboards segment by route).
-    from tekijin.data.knowledge import (
-        get_knowledge_unit_by_source,
-        set_review_status,
-        upsert_knowledge_unit,
-    )
-    from tekijin.knowledge.index import embed_knowledge_units
+    # #112: a member's question answered from verified knowledge ends before C5, so
+    # the run must still (a) emit a self_answered message, (b) persist a synthetic
+    # "knowledge" route and mark the question self-resolved, and (c) count the use
+    # of the article (reuse_count, last_used_at).
+    from sqlalchemy import text as sql
 
+    from tekijin.data.knowledge import create_draft, verify_article
+    from tekijin.knowledge.index import embed_articles
+    from tekijin.models.tables import Employee, KnowledgeArticle, Organization
+
+    # Not a request for a person (C1's stub reads 「相談したい」 as one), so the
+    # knowledge step may take it.
+    question = "現行のVPN機器で3拠点の拠点間接続を設定する手順を教えてください"
     setup = get_sessionmaker(engine)()
     try:
-        upsert_knowledge_unit(
+        org = Organization(name="知識の会", discord_guild_id="kb-api")
+        setup.add(org)
+        setup.flush()
+        member = Employee(name="アリス", org_id=org.id)
+        setup.add(member)
+        setup.flush()
+        article = create_draft(
             setup,
-            kind="case",
-            problem=GOOD_Q,
-            action="SFA/CRM を提案",
-            result="受注",
-            topics=["CRM・営業支援"],
-            source_type="slack_thread",
-            source_id="kb_api_1",
-            confidence=0.9,
+            org_id=org.id,
+            kind="procedure",
+            issue=question,
+            resolution="SFA/CRM を提案",
+            now=NOW,
         )
-        setup.flush()
-        dto = get_knowledge_unit_by_source(setup, "slack_thread", "kb_api_1")
-        set_review_status(setup, dto.id, "approved")
-        setup.flush()
-        embed_knowledge_units(setup, fake_embedder)
+        verify_article(setup, article.id, org_id=org.id, verifier_id=None, now=NOW)
+        embed_articles(setup, fake_embedder)
         setup.commit()
+        member_id, article_id = member.id, article.id
     finally:
         setup.close()
 
-    client = _client(
-        engine,
-        fake_embedder,
-        retriever=_FakeRetriever(people=[1, 2]),
-        knowledge_answer_min_similarity=0.1,
-    )
-    client.post("/ask", json={"asker_id": 8, "question": GOOD_Q, "session_id": "skb"})
-    events = _events(client, "skb")
-    assert next(d for e, d in events if e == "message")["status"] == "self_answered"
-
-    check = get_sessionmaker(engine)()
     try:
-        q = check.query(Question).filter(Question.session_id == "skb").first()
-        assert q is not None and q.route == "knowledge"  # synthetic route persisted
-        assert q.resolved_at is not None and q.resolution_kind == "self"
+        client = _client(
+            engine,
+            fake_embedder,
+            retriever=_FakeRetriever(people=[1, 2]),
+            knowledge_answer_min_similarity=0.1,
+        )
+        client.post(
+            "/ask",
+            json={"asker_id": member_id, "question": question, "session_id": "skb"},
+            headers=_user_headers(member_id),
+        )
+        events = _events(client, "skb")
+        message = next(d for e, d in events if e == "message")
+        assert message["status"] == "self_answered"
+        assert message["citations"][0]["source_id"] == f"ka_{article_id}"
+
+        check = get_sessionmaker(engine)()
+        try:
+            q = check.query(Question).filter(Question.session_id == "skb").first()
+            assert q is not None and q.route == "knowledge"  # synthetic route persisted
+            assert q.resolved_at is not None and q.resolution_kind == "self"
+            used = check.get(KnowledgeArticle, article_id)
+            assert used.reuse_count == 1 and used.last_used_at == NOW
+        finally:
+            check.close()
     finally:
-        check.close()
+        cleanup = get_sessionmaker(engine)()
+        cleanup.execute(sql("DELETE FROM knowledge_articles"))
+        mine = "(SELECT id FROM questions WHERE asker_id = :m)"
+        for table in ("events", "recommendations", "answers", "feedback"):
+            cleanup.execute(
+                sql(f"DELETE FROM {table} WHERE question_id IN {mine}"),  # noqa: S608
+                {"m": member_id},
+            )
+        cleanup.execute(sql("DELETE FROM questions WHERE asker_id = :m"), {"m": member_id})
+        cleanup.execute(sql("DELETE FROM employees WHERE id = :m"), {"m": member_id})
+        cleanup.execute(sql("DELETE FROM organizations WHERE discord_guild_id = 'kb-api'"))
+        cleanup.commit()
+        cleanup.close()
 
 
 def test_self_answer_on_prior_answer_route_marks_self_resolved(
@@ -5815,25 +5842,6 @@ def test_feedback_with_unknown_question_id_records_without_the_link(
 # documents (NOT scoped to one asker, and NOT admin-only, unlike /dashboard).
 # source_id/kind match a self-answer's citation (#291) for the same entity.
 # --------------------------------------------------------------------------- #
-def _approved_ku_count(engine) -> int:
-    """Approved knowledge units count toward the library's global total (#533). Queried
-    live so the total stays correct even when another test leaves approved units in the
-    shared schema (the seed itself has none)."""
-    from sqlalchemy import func, select
-
-    from tekijin.models.tables import KnowledgeUnit
-
-    with engine.connect() as conn:
-        return (
-            conn.scalar(
-                select(func.count())
-                .select_from(KnowledgeUnit)
-                .where(KnowledgeUnit.review_status == "approved")
-            )
-            or 0
-        )
-
-
 def test_knowledge_lists_seeded_answers_and_documents(seed_counts, engine, fake_embedder) -> None:
     client = _client(engine, fake_embedder)
     resp = client.get("/knowledge")
@@ -5843,7 +5851,7 @@ def test_knowledge_lists_seeded_answers_and_documents(seed_counts, engine, fake_
     # The seed's answers are 1:1 with questions (test_dashboard_route_shape_
     # and_seed_values), so the total is global (both kinds), independent of
     # the default response cap.
-    total = seed_counts["answers"] + seed_counts["documents"] + _approved_ku_count(engine)
+    total = seed_counts["answers"] + seed_counts["documents"]
     assert body["summary"]["total_items"] == total
     assert body["summary"]["self_resolution_rate"] == 0.0  # matches the dashboard's seed baseline
     assert "top_responders" not in body["summary"]  # de-scoped to /dashboard (PR #340 review)
@@ -5851,7 +5859,7 @@ def test_knowledge_lists_seeded_answers_and_documents(seed_counts, engine, fake_
     assert len(body["items"]) > 0
     assert body["total_matching"] == total  # unfiltered: every item matches
     for item in body["items"]:
-        assert item["kind"] in ("qa", "document", "knowledge")
+        assert item["kind"] in ("qa", "document")
         assert item["summary"]  # the item's own text, not just metadata
 
 
@@ -5931,7 +5939,7 @@ def test_knowledge_available_to_non_admin_user(seed_counts, engine, fake_embedde
     client = _client(engine, fake_embedder)
     resp = client.get("/knowledge", headers=_user_headers(10))
     assert resp.status_code == 200
-    total = seed_counts["answers"] + seed_counts["documents"] + _approved_ku_count(engine)
+    total = seed_counts["answers"] + seed_counts["documents"]
     assert resp.json()["summary"]["total_items"] == total
 
 
@@ -5941,7 +5949,7 @@ def test_knowledge_respects_limit(seed_counts, engine, fake_embedder) -> None:
     body = resp.json()
     assert len(body["items"]) == 1
     # The summary total stays global — it does not shrink with the page limit.
-    total = seed_counts["answers"] + seed_counts["documents"] + _approved_ku_count(engine)
+    total = seed_counts["answers"] + seed_counts["documents"]
     assert body["summary"]["total_items"] == total
     assert body["total_matching"] == total  # unfiltered: still every item
 
@@ -5959,7 +5967,7 @@ def test_knowledge_offset_pages_through_results_without_overlap(
     ids2 = {i["source_id"] for i in page2["items"]}
     assert ids1.isdisjoint(ids2)  # no overlap between pages
     # total_matching is the same on both pages (the count BEFORE paging).
-    total = seed_counts["answers"] + seed_counts["documents"] + _approved_ku_count(engine)
+    total = seed_counts["answers"] + seed_counts["documents"]
     assert page1["total_matching"] == page2["total_matching"] == total
 
     empty = client.get("/knowledge", params={"limit": 15, "offset": total}).json()

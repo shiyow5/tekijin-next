@@ -44,7 +44,10 @@ from tekijin.data.mappers import build_all
 # them). They are not listed here; CASCADE empties the ones that reference
 # ``employees``, and the code never reads or writes any of them.
 _TRUNCATE_ORDER: tuple[str, ...] = (
-    "knowledge_units",
+    # #112: the KCS knowledge tables. ``knowledge_units`` (the company-era table
+    # they replace) is no longer created; an older database keeps it unread.
+    "knowledge_sources",
+    "knowledge_articles",
     "events",
     "eval_runs",
     # #247: runtime-only (no fixture writes it), FKs questions + employees.
@@ -315,8 +318,9 @@ def _apply_schema_upgrades(engine: Engine) -> None:
                 "  cur text;\n"
                 "BEGIN\n"
                 "  FOREACH tbl IN ARRAY ARRAY['employee_profiles','questions',"
-                "'answers','documents','chunks','self_intros'] LOOP\n"
-                # #70, #106: a table newer than the DB (chunks, self_intros) is skipped; create_all
+                "'answers','documents','chunks','self_intros','knowledge_articles'] LOOP\n"
+                # #70, #106, #112: a table newer than the DB (chunks, self_intros,
+                # knowledge_articles) is skipped; create_all
                 # builds it at the current width.
                 "    CONTINUE WHEN to_regclass(tbl) IS NULL;\n"
                 "    SELECT format_type(atttypid, atttypmod) INTO cur\n"

@@ -8,7 +8,8 @@ import Link from "next/link";
  * レビュー指摘の再発防止）。`document` は内部文書ビューアへ、`qa` はナレッジ詳細
  * （#293 part2, `/knowledge/[id]`）へリンク — `source_id` は自己回答の citation と
  * 同じ実体（`Answer.id`）を指すので、それぞれの詳細ページがそのまま解決できる。
- * `knowledge`（#357）は詳細ページが無いのでラベルチップ。型に無い種類（保存済みの履歴に残る
+ * `knowledge`（#112）は知識の詳細ページ（`/articles/[id]`）へ、`message` は元のDiscordの発言へ
+ * リンクする。型に無い種類（保存済みの履歴に残る
  * 旧 `daily` など）は、存在しないページへリンクしないよう「出典」のラベルチップにする。
  */
 export function SourceCitations({
@@ -37,13 +38,25 @@ export function SourceCitations({
                 {citation.title || "資料"}
               </Link>
             ) : citation.kind === "knowledge" ? (
-              // #357/#366: a structured knowledge unit. No detail page yet (that
-              // arrives with #354), so a label chip — but a DISTINCT one: 「過去の回答」
-              // would be a false claim about where the answer came from.
-              <span className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm font-bold text-on-surface-variant text-sm">
+              // #112: a verified knowledge article (`ka_{id}`); its page is /articles.
+              <Link
+                href={`/articles/${encodeURIComponent(citation.source_id.replace(/^ka_/, ""))}`}
+                className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm text-sm font-bold text-primary transition-colors hover:bg-surface-container"
+              >
                 <span aria-hidden="true">📚</span>
-                ナレッジ {citation.source_id}
-              </span>
+                {citation.title || "知識"}
+              </Link>
+            ) : citation.kind === "message" && citation.url ? (
+              // #112: the Discord message a knowledge article was made from.
+              <a
+                href={citation.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex min-h-[44px] items-center gap-xs rounded-full border border-outline-variant bg-surface px-md py-sm text-sm font-bold text-primary transition-colors hover:bg-surface-container"
+              >
+                <span aria-hidden="true">💬</span>
+                {citation.title || "Discordの発言"}
+              </a>
             ) : citation.kind === "document" ? (
               <Link
                 href={`/documents/${encodeURIComponent(citation.source_id)}${

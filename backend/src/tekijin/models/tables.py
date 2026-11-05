@@ -4,7 +4,7 @@ The schema follows ``docs/specs/db-schema.md`` and is organised in layers:
 
 * **A. Input data** — employees, profiles, chat, ingested sources and chunks.
 * **B. Runtime** — questions, answers, recommendations, events, documents.
-* **D. Knowledge** — formalised knowledge units.
+* **D. Knowledge** — KCS-shaped knowledge articles and their sources.
 
 (The former **C. Expertise graph** layer — ``person_topic_edges`` / ``evidence``
 — had no reader and was removed in #89. Daily reports, projects, project
@@ -630,63 +630,105 @@ class Document(Base):
 
 
 # --------------------------------------------------------------------------- #
-# D. Knowledge layer (#357 — tacit → explicit)
+# D. Knowledge layer (#112, R6 — KCS-shaped knowledge)
 # --------------------------------------------------------------------------- #
-class KnowledgeUnit(Base):
-    """A structured unit of formalised knowledge extracted from raw data (#357).
+class KnowledgeArticle(Base):
+    """One piece of an organization's knowledge, in the KCS shape (#112, R6).
 
-    The product pivot ([[tekijin-product-direction]]) is to turn tacit knowledge
-    into *explicit, reusable* units rather than searching raw text. The PoC unit is
-    the **case** (``kind='case'``): ``problem`` (状況・課題) → ``action`` (打ち手) →
-    ``result`` (結果). ``procedure`` / ``decision`` are reserved in the check but not
-    yet produced.
+    ``issue`` is the problem or question, in words close to how members ask it;
+    ``environment`` says where it holds; ``resolution`` is the answer and ``cause``
+    the reason, both optional. ``state`` is ``wip`` (no answer yet), ``draft``
+    (waiting for an admin), ``verified`` (answers questions) or ``retired``. Only
+    ``verified`` knowledge is searched, and a row without a resolution is ``wip``
+    or ``retired`` (the check below), so an empty answer can never be shown.
 
-    Every unit keeps its ``(source_type, source_id)`` provenance back to the raw
-    record it was extracted from — a unit is never stored without it, so a
-    hallucinated unit has no home. ``(source_type, source_id)`` is UNIQUE, making
-    re-extraction an idempotent upsert (one source record → at most one unit for
-    the PoC). ``review_status`` gates a unit into the retrieval/self-answer path:
-    only ``approved`` units are trusted (the human-review導線 is #354). ``topics``
-    reuses the same 22-word vocabulary as the eval gold, so knowledge retrieval and
-    the existing scorer speak one language. ``embedding`` indexes the *unit* (the
-    structure), not the raw text — filled by a later ingestion slice, hence NULL
-    at insert.
+    ``reuse_count`` / ``last_used_at`` count the answers it gave; ``demand_count``
+    counts the questions a draft would have answered, so the review queue shows the
+    most wanted drafts first. Where it came from is in :class:`KnowledgeSource`.
+    This replaces the company-era ``knowledge_units`` table, which an older
+    database keeps and nothing reads.
     """
 
-    __tablename__ = "knowledge_units"
+    __tablename__ = "knowledge_articles"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('case', 'procedure', 'decision')", name="ck_knowledge_units_kind"
+            "kind IN ('case', 'procedure', 'fact', 'decision')",
+            name="ck_knowledge_articles_kind",
         ),
         CheckConstraint(
-            "review_status IN ('unreviewed', 'approved', 'rejected')",
-            name="ck_knowledge_units_review_status",
+            "state IN ('wip', 'draft', 'verified', 'retired')",
+            name="ck_knowledge_articles_state",
         ),
-        # Provenance is unique so re-extraction upserts rather than duplicates.
-        Index(
-            "uq_knowledge_units_source",
-            "source_type",
-            "source_id",
-            unique=True,
+        CheckConstraint(
+            "state IN ('wip', 'retired') OR length(btrim(coalesce(resolution, ''))) > 0",
+            name="ck_knowledge_articles_resolution",
         ),
-        # ``knowledge_units_by_topics`` filters with ``topics && :topics``; GIN
-        # accelerates the array-overlap the same way it does for ``questions``.
-        Index("ix_knowledge_units_topics", "topics", postgresql_using="gin"),
+        Index("ix_knowledge_articles_org_state", "org_id", "state"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(16))
-    problem: Mapped[str | None] = mapped_column(Text)
-    action: Mapped[str | None] = mapped_column(Text)
-    result: Mapped[str | None] = mapped_column(Text)
-    topics: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
-    industry: Mapped[str | None] = mapped_column(String(255))
-    source_type: Mapped[str] = mapped_column(String(32))
-    source_id: Mapped[str] = mapped_column(String(64))
-    confidence: Mapped[float | None] = mapped_column(Float)
-    review_status: Mapped[str] = mapped_column(String(16), server_default="unreviewed")
+    issue: Mapped[str] = mapped_column(Text)
+    environment: Mapped[str | None] = mapped_column(Text)
+    resolution: Mapped[str | None] = mapped_column(Text)
+    cause: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(16), server_default="wip")
+    reuse_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    demand_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+    superseded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("knowledge_articles.id", ondelete="SET NULL")
+    )
+    author_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employees.id", ondelete="SET NULL"), index=True
+    )
+    verifier_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employees.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime)
+    verified_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class KnowledgeSource(Base):
+    """What a :class:`KnowledgeArticle` was made from (#112).
+
+    One of ``source_item_id`` (a document or conversation that was ingested),
+    ``channel_message_id`` (one Discord message) or ``question_id`` (a question
+    answered through a hand-off) is set. ``quote`` is the part relied on. One
+    source may back several articles, and one article may have several sources.
+
+    When the thing itself is deleted, its id is set to NULL rather than the row
+    removed: a row with no id is a lost source, and it hides the article from
+    members (see ``data.knowledge.article_visible``). Otherwise knowledge made
+    from a private conversation would become visible to everyone the moment the
+    conversation was deleted. Putting such an article back in review is #113.
+    """
+
+    __tablename__ = "knowledge_sources"
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(source_item_id, channel_message_id, question_id) <= 1",
+            name="ck_knowledge_sources_one",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_articles.id", ondelete="CASCADE"), index=True
+    )
+    source_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_items.id", ondelete="SET NULL"), index=True
+    )
+    channel_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("channel_messages.id", ondelete="SET NULL"), index=True
+    )
+    question_id: Mapped[str | None] = mapped_column(
+        ForeignKey("questions.id", ondelete="SET NULL"), index=True
+    )
+    quote: Mapped[str | None] = mapped_column(Text)
 
 
 __all__ = [
@@ -702,5 +744,6 @@ __all__ = [
     "EvalRun",
     "Event",
     "Document",
-    "KnowledgeUnit",
+    "KnowledgeArticle",
+    "KnowledgeSource",
 ]

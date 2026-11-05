@@ -252,7 +252,8 @@ def test_older_switches_cannot_reach_other_organizations(
     def must_not_run(*args, **kwargs):
         raise AssertionError("an organization's question reached the undivided tables")
 
-    monkeypatch.setattr("tekijin.agent.nodes.answer_from_knowledge", must_not_run)
+    # The knowledge step runs (#112): knowledge is divided by organization, and this
+    # organization has none, so the run goes on to the sources.
     scorer = _Scorer()
     scorer.rank = must_not_run
     org_id, _, _ = orgs

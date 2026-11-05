@@ -250,25 +250,18 @@ class Settings(BaseSettings):
     # switched off rather than "retry" something that cannot succeed.
     consult_retrospective_enabled: bool = True
 
-    # #357: knowledge framework. When the knowledge layer is wired into retrieval,
-    # answer a question from structured knowledge units (problem → action → result,
-    # with provenance) instead of, or before, pointing at a person. OFF by default —
-    # this is the schema/CRUD skeleton slice; extraction, vector retrieval, and the
-    # graph wiring land in later slices, and the graph does not call it yet. Enable
-    # only after the extraction quality + A/B are verified on the eval.
-    # #357: answer directly from structured knowledge units. Slice 4c wired the
-    # ``knowledge_answer`` node into the graph (before C5), so flipping this to True
-    # DOES make /ask try a knowledge answer live. OFF by default until the knowledge
-    # corpus is populated (extract + embed + human-approve) AND the frontend renders
-    # the ``knowledge`` citation kind (see #357 slice-4d gate). Off = pre-#357 graph.
+    # #112 (R6): answer a member's question from the organization's VERIFIED
+    # knowledge (``knowledge_articles``) before C4. Flipping this to True adds the
+    # ``knowledge_answer`` node to the live graph: it searches only the asker's
+    # organization, only what the asker may read, never takes a question that asks
+    # for a person (C1 ``seeks_person``), and cites each article and its sources.
+    # OFF by default until drafts are made from documents and conversations (#113)
+    # and the floor is re-measured on the circle's questions.
     knowledge_retrieval_enabled: bool = False
-    # #357 slice 4: the cosine-similarity floor a retrieved knowledge unit must clear
-    # to be used in a knowledge answer. CALIBRATED on the eval (slice 4b A/B, DGX,
-    # real Nemotron): CRM-topic queries score 0.224–0.305 against CRM case units,
-    # non-CRM queries 0.015–0.312 (compressed cosines). A floor of 0.20 answers all
-    # 3 CRM eval queries (topic-matched) with only 3/84 non-CRM false-fires; 0.35
-    # (the initial guess) sat ABOVE the CRM range and would never fire. Small CRM
-    # sample (n=3) — directional. Inert while knowledge_retrieval_enabled=False.
+    # The cosine-similarity floor a verified article must clear to answer. 0.20 was
+    # calibrated on the company-era knowledge units (#357 slice 4b) and is kept as a
+    # starting point; #113 re-measures it on the circle's questions. Inert while
+    # knowledge_retrieval_enabled=False.
     knowledge_answer_min_similarity: float = 0.20
 
     # #371: fold the C1-extracted topics into the C4 retrieval query. The idea was

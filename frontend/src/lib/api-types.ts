@@ -604,18 +604,12 @@ export interface DoneData {
 export interface SourceCitation {
   source_id: string;
   /**
-   * Closed set from the backend contract (fragments.py): a past Q&A, an internal
-   * doc, a structured knowledge unit (#357), or an ingested source (#81).
-   * "knowledge" has no detail page yet, so the UI shows it as a label chip
-   * rather than a link.
-   *
-   * Adding "knowledge" here is the enablement gate for #357 (#366): the renderer's
-   * final branch is a catch-all that reads 「過去の回答」, so a `ku_*` citation would
-   * be mislabelled as a past answer the moment `knowledge_retrieval_enabled` went
-   * true.
+   * Closed set from the backend contract: a past Q&A, an internal doc, a verified
+   * knowledge article (#112, `ka_{id}`, opens `/articles/{id}`), an ingested source
+   * (#81), or a Discord message a knowledge article was made from (#112).
    */
-  kind: "qa" | "document" | "knowledge" | "source";
-  /** `kind="source"` のときだけ付く(#81)。 */
+  kind: "qa" | "document" | "knowledge" | "source" | "message";
+  /** source・knowledge・message のときに付く(#81、#112)。 */
   title?: string | null;
   url?: string | null;
 }
@@ -796,4 +790,54 @@ export interface SourceCreateResponse {
   status: "added" | "updated" | "unchanged";
   id: number;
   chunks: number;
+}
+
+/** One piece of the organization's knowledge in the KCS shape (#112). */
+export interface KnowledgeArticle {
+  id: number;
+  kind: "case" | "procedure" | "fact" | "decision";
+  issue: string;
+  environment: string | null;
+  resolution: string | null;
+  cause: string | null;
+  state: "wip" | "draft" | "verified" | "retired";
+  reuse_count: number;
+  demand_count: number;
+  last_used_at: string | null;
+  superseded_by: number | null;
+  author_name: string | null;
+  verifier_name: string | null;
+  created_at: string;
+  updated_at: string;
+  verified_at: string | null;
+}
+
+/** What an article was made from (#112). */
+export interface ArticleSource {
+  /** `lost`: the item it came from was deleted (only the admin sees such articles). */
+  kind: "source" | "message" | "question" | "lost";
+  source_item_id?: number | null;
+  title?: string | null;
+  url?: string | null;
+  quote?: string | null;
+}
+
+export interface ArticleDetail extends KnowledgeArticle {
+  sources: ArticleSource[];
+  /** The organization's admin may edit, verify, send back and retire. */
+  can_review: boolean;
+}
+
+export interface ArticleListResponse {
+  items: KnowledgeArticle[];
+  total: number;
+  can_review: boolean;
+}
+
+export interface ArticleEditRequest {
+  kind?: KnowledgeArticle["kind"];
+  issue?: string;
+  environment?: string | null;
+  resolution?: string | null;
+  cause?: string | null;
 }

@@ -287,13 +287,14 @@ recommendations(id, question_id, employee_id, rank, score, reasons jsonb,
 -- 文書
 documents(id, title, body, source, updated_at, embedding vector)
 
--- 形式知（#357/#448・知識抽出パイプラインの出力・graph 外で upsert）
-knowledge_units(id, kind, problem, action, result, topics text[], industry,
-                source_type, source_id, confidence, review_status, embedding vector,
-                created_at)
-  -- kind ∈ {case, procedure, decision} / review_status ∈ {unreviewed, approved, rejected}
-  -- UNIQUE(source_type, source_id)（出典で冪等）/ GIN(topics)
-  -- 生データ（チャット knowledge/chat.py・解決済スレッド knowledge/slack_thread.py）から蒸留
+-- 知識(#112、R6。KCSの形)
+knowledge_articles(id, org_id, kind, issue, environment, resolution, cause, state,
+                   reuse_count, demand_count, last_used_at, superseded_by,
+                   author_id, verifier_id, created_at, updated_at, verified_at, embedding vector)
+  -- kind ∈ {case, procedure, fact, decision} / state ∈ {wip, draft, verified, retired}
+  -- resolution が空なら state = wip(CHECK)。回答に使うのは verified だけ
+knowledge_sources(id, article_id, source_item_id | channel_message_id | question_id, quote)
+  -- 3つの出典のうち1つだけを持つ(CHECK)。1出典から複数の知識を作れる
 
 -- 計測
 events(id, question_id, stage, started_at, ended_at, meta jsonb)

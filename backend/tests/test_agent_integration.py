@@ -1038,77 +1038,10 @@ def test_ask_ignores_non_string_resume(seed_counts, session, fake_embedder) -> N
 
 
 # --------------------------------------------------------------------------- #
-# knowledge answer (#357 slice 4c): answer from structured knowledge before C5
+# knowledge answer (#112): answer from verified knowledge before C4
 # --------------------------------------------------------------------------- #
-def _seed_approved_knowledge(session, fake_embedder, source_id, problem, action) -> None:
-    from tekijin.data.knowledge import (
-        get_knowledge_unit_by_source,
-        set_review_status,
-        upsert_knowledge_unit,
-    )
-    from tekijin.knowledge.index import embed_knowledge_units
-
-    upsert_knowledge_unit(
-        session,
-        kind="case",
-        problem=problem,
-        action=action,
-        result="受注",
-        topics=["CRM・営業支援"],
-        source_type="slack_thread",
-        source_id=source_id,
-        confidence=0.9,
-    )
-    session.flush()
-    dto = get_knowledge_unit_by_source(session, "slack_thread", source_id)
-    set_review_status(session, dto.id, "approved")
-    session.flush()
-    embed_knowledge_units(session, fake_embedder)
-
-
-def test_knowledge_answer_terminates_before_routing(seed_counts, session, fake_embedder) -> None:
-    # A query matching an approved knowledge unit is answered from structure and
-    # terminates at self_answered — before C5 routing (bypassing #327/ADR-0007).
-    # Use the canonical GOOD_Q so C2 passes; seed a unit whose problem IS that query
-    # so the (bag-of-tokens) fake embedding is a strong match.
-    _seed_approved_knowledge(session, fake_embedder, "kb_c4c_1", GOOD_Q, "SFA/CRM を提案")
-    agent = build_agent(
-        fake_embedder,
-        session,
-        retriever=_FakeRetriever(people=[1, 2]),
-        knowledge_answer_min_similarity=0.1,
-    )
-    state = agent.invoke(_init(), _cfg("kb_ok"))
-
-    assert state["self_answer_grounded"] is True
-    assert GOOD_Q in state["answer"]  # the case's problem is surfaced in the answer
-    # Cited as the knowledge unit (ku_{id}), kind "knowledge".
-    assert len(state["self_answer_citations"]) == 1
-    cite = state["self_answer_citations"][0]
-    assert cite["kind"] == "knowledge" and cite["source_id"].startswith("ku_")
-    # It never reached a person hand-off: terminal, no send interrupt (C5/C6 never ran;
-    # any ``route`` value is only the reset() default, not a real routing decision).
-    assert not _is_paused(agent, _cfg("kb_ok"))
-
-
-def test_knowledge_answer_falls_through_when_irrelevant(
-    seed_counts, session, fake_embedder
-) -> None:
-    # No approved knowledge matches (floor above any similarity) -> the run proceeds
-    # to normal retrieval/routing exactly as pre-#357 (a person hand-off here).
-    _seed_approved_knowledge(session, fake_embedder, "kb_c4c_2", "全く無関係な話題", "何もしない")
-    for emp in (1, 2):
-        _seed_evidence(session, f"ev_kb_{emp}", emp)
-    agent = build_agent(
-        fake_embedder,
-        session,
-        retriever=_FakeRetriever(people=[1, 2]),
-        knowledge_answer_min_similarity=0.99,  # unreachable floor -> never fires
-    )
-    state = agent.invoke(_init(), _cfg("kb_fall"))
-
-    assert state["self_answer_grounded"] is False
-    assert _is_paused(agent, _cfg("kb_fall"))  # fell through to the person hand-off
+# The knowledge step itself (org-scoped, verified-only, never for a person seeker)
+# is covered in test_knowledge_graph.py (#112).
 
 
 def test_knowledge_answer_dormant_when_unwired(seed_counts, session, fake_embedder) -> None:

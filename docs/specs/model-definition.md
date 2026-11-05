@@ -8,8 +8,8 @@ version 0.3 / 2026-08-26（#291 方針転換に加え、System1 の本番有効�
 >   引用付きの回答を**人取次ぎと並べて**提示する（取次ぎは必ず残す）。System1 が data 経路だけでなく person 経路でも発火。
 > - ~~**日報を知識源に**（#433 daily）~~: #91 で日報の機能ごと削除した（`company-v1` タグに残る）。
 > - **C6 に質問一致項**（#405 qsim・既定ON）: 質問↔過去回答の意味一致で専門家順位を質問特異的に補正（経路不変）。
-> - **知識抽出パイプライン**（#357/#448）: 生データ（チャット・解決済スレッド）から構造化ケース知識（`knowledge_units`）を
->   オフライン抽出（蓄積＝主軸の実体化）。
+> - **知識の下書き**（#112）: 解決済スレッドなどの記録から、KCS形式の知識（`knowledge_articles`）の下書きを作る。
+>   組織の管理者が確認したものだけが回答に使われる。
 
 メイン機能は次の**三系統**（2026-08-25 の方針転換・#291）:
 
@@ -54,7 +54,7 @@ LLM への接続は **LangChain**（`init_chat_model` / `with_structured_output`
 | C7 | 依頼文の下書き生成 | LLM | ノード（LLM） | 質問＋相手＋必須項目 → 依頼文 |
 | C7' | 自己回答生成（#291・**配線済み/既定ON（#380）**） | LLM（構造化出力） | ノード（LLM、`self_answer_enabled` で gate・既定 true）。データ由来経路(document/prior_answer)で C5 の後に発火し、grounded なら `self_answered` 終端、不足なら元経路へフォールバック | 質問＋検索根拠（過去QA/文書/日報, 出典ID付き） → 出典付き回答 or 「答えられない」 |
 | C7''| 自己回答の**併記**（#413 additive・**既定ON**） | LLM（構造化出力・C7' の composer を共有） | ノード `additive_answer`（`additive_self_answer_enabled` で gate・既定 true）。**person 経路**で C5 の後・C6 の前に発火し、relevance floor(0.20) を超え grounded なら引用付き回答を `reference` イベントで**取次ぎと併記**（終端にしない・取次ぎは必ず残す） | 質問＋検索根拠 → 併記用の出典付き回答（best-effort・失敗時は取次ぎのみ） |
-| C8 | 専門性グラフ更新＋**形式知の蓄積** | 決定的（オンライン更新）＋オフライン抽出 | ノード（決定的）＋**知識抽出バッチ**（#357/#448・graph外） | 結果イベント → エッジ重み更新／取次ぎで得た回答を蓄積／生データ(日報・チャット)から `knowledge_units` を抽出 |
+| C8 | 専門性グラフ更新＋**形式知の蓄積** | 決定的（オンライン更新）＋オフライン抽出 | ノード（決定的）＋**知識抽出バッチ**（#357/#448・graph外） | 結果イベント → エッジ重み更新／取次ぎで得た回答を蓄積／記録から `knowledge_articles` の下書きを作る |
 
 LLM を使うのは **C1・C2・C7（＋#291 で C7'／#413 で C7''）**。推薦の中核（C4・C5・C6・C8）は決定的ノード。
 C7'（self-answer）は**提供された根拠だけ**から回答し、使った出典を `cited_source_ids` に列挙、根拠が
@@ -309,22 +309,14 @@ flowchart LR
 
 - **出力**: 更新後の `person_topic_edges`（weight, confidence, evidence_count）。
 
-#### 知識抽出パイプライン（#357/#448・オフライン・graph 外）
+#### 知識の下書きと確認(#112、R6)
 
-蓄積（主軸）の骨格。生データを**構造化ケース知識** `knowledge_units`（`kind="case"`・問題→打ち手→結果・
-`topics`・`embedding`・`review_status`・出典 `source_type/source_id`）へ LLM で蒸留し、冪等に upsert する
-バッチ（graph からは呼ばない）。抽出後に埋め込み索引を張れば、C4／自己回答が再利用できる。
+知識はKCSの形(`knowledge_articles`: kind、issue、environment、resolution、cause、state)で持つ。記録をLLMに読ませて下書きを1つ作るのが `knowledge/extract.py` で、語彙や会社向けの言い回しは使わない。作った下書きは `data/knowledge.create_draft` で保存し、resolution が空なら wip になる。
 
-- **解決済スレッドから**（`knowledge/slack_thread.py`・#476）: トピックタグは質問の事前タグを継承
-  （語彙固定＝ドリフトしない）。日報からの抽出（`scripts/extract_knowledge.py`）は #91 で削除した。
-- **チャットから**（`knowledge/chat.py`・`scripts/extract_chat_knowledge.py`・#448）: `employee_chat_history` を
-  channel×時間窓で**会話単位**にまとめ（生チャットはノイズなので"やり取り"を単位にする）、会話プロンプトで
-  `extractable=false` を強く効かせて雑談を捨てる。チャットはタグを持たないので、LLM の `topic_hints` を正規22語彙へ
-  `normalize_topics` でスナップ（off-vocab は破棄＝モデルは新トピックを作れない）。
-- **measure-first の結果（DGX 実測）**: 合成チャット92会話→抽出 **0件**（実LLMが全会話を「回答の付かない独立
-  リクエストの羅列＝ケース不在」と正しく判定＝捏造しない）。同パイプラインは日報30件→**25件**の coherent なケースを
-  抽出（陽性対照）。**手法は正・合成チャットに知識が無いのが限界**。実データ（解決済スレッド）なら抽出が効く。
-- **review ゲート**: 抽出物は `review_status="unreviewed"` で入り、承認するまで検索経路に出さない（#354）。
+- **解決済スレッドから**(`knowledge/slack_thread.py`、#476): 質問と回答を1つの記録にし、下書きの出典には質問を付ける。
+- **文書と会話から**: #113 で作る。
+- **確認**: 組織の管理者がWebの「知識」画面で編集・確認・差し戻し・引退を行う。回答に使うのは verified だけ。
+- **回答**: `knowledge_retrieval_enabled`(既定オフ)をオンにすると、C3のあとで確認済みの知識を探し、近いものがあればLLMを使わずに項目から答えを組み立てる。人を探す質問(seeks_person)は対象にしない。
 
 ---
 

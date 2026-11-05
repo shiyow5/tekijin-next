@@ -181,6 +181,10 @@ class AgentState(TypedDict, total=False):
     self_answer_grounded: bool
     self_answer_text: str | None
     self_answer_citations: list[dict[str, str]]
+    # #112: the verified articles the knowledge step answered from (the API counts
+    # their use), and the drafts that would have answered (the review queue order).
+    knowledge_article_ids: list[int]
+    knowledge_draft_ids: list[int]
 
     # -- additive self-answer (#413) --------------------------------------
     # Set by the additive_answer node on the PERSON route (only when

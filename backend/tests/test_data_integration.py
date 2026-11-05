@@ -43,7 +43,7 @@ def test_pgvector_extension_and_schema(engine) -> None:
         ext = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).scalar()
         assert ext == 1
         # A representative table from each layer exists.
-        for table in ("employees", "answers", "knowledge_units"):
+        for table in ("employees", "answers", "knowledge_articles"):
             exists = conn.execute(text("SELECT to_regclass(:t)"), {"t": table}).scalar()
             assert exists is not None
 
@@ -899,156 +899,31 @@ def test_apply_migrations_is_non_destructive(engine, seed_counts) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# knowledge units (#357 — schema + CRUD skeleton)
+# knowledge articles (#112): created on an existing database without loss
 # --------------------------------------------------------------------------- #
-def test_knowledge_units_table_created_by_create_all(engine) -> None:
-    """#357: the new table is created by ``create_all`` (no ALTER migration needed)."""
+def test_migrate_adds_the_knowledge_tables_to_an_existing_database(engine, seed_counts) -> None:
+    """``python -m tekijin.data.migrate`` creates the KCS tables and keeps the data."""
+
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE knowledge_sources"))
+        conn.execute(text("DROP TABLE knowledge_articles"))
+    factory = get_sessionmaker(engine)
+    with factory() as sess:
+        before = len(Repository(sess).list_employees())
+    apply_migrations(engine=engine)
+    apply_migrations(engine=engine)  # idempotent
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT to_regclass('knowledge_units')")).scalar() is not None
-
-
-def test_knowledge_unit_upsert_is_idempotent_on_provenance(seed_counts, session) -> None:
-    """#357: re-extracting the same source updates in place, never duplicates."""
-    from tekijin.data import knowledge as kb
-
-    kb.upsert_knowledge_unit(
-        session,
-        kind="case",
-        problem="CRM 導入が停滞",
-        action="SFA/CRM を提案",
-        result=None,
-        topics=["CRM・営業支援"],
-        industry="製造業",
-        source_type="slack_thread",
-        source_id="9001",
-        confidence=0.7,
-    )
-    session.flush()
-    first = kb.get_knowledge_unit_by_source(session, "slack_thread", "9001")
-    assert first is not None
-    assert first.review_status == "unreviewed"  # server default
-    assert first.result is None and first.topics == ("CRM・営業支援",)
-
-    # A human approves it, THEN a re-extraction refreshes the content.
-    kb.set_review_status(session, first.id, "approved")
-    session.flush()
-    kb.upsert_knowledge_unit(
-        session,
-        kind="case",
-        problem="CRM 導入が停滞",
-        action="SFA/CRM を提案し他社事例を提示",
-        result="受注",  # now known
-        topics=["CRM・営業支援"],
-        industry="製造業",
-        source_type="slack_thread",
-        source_id="9001",
-        confidence=0.9,
-    )
-    session.flush()
-    again = kb.list_knowledge_units(session)
-    same = [u for u in again if u.source_type == "slack_thread" and u.source_id == "9001"]
-    assert len(same) == 1  # upsert, not insert
-    assert same[0].id == first.id
-    assert same[0].result == "受注" and same[0].confidence == 0.9
-    # Human decision survives re-extraction (on_conflict does not touch review_status).
-    assert same[0].review_status == "approved"
-
-
-def test_knowledge_units_by_topics_gates_on_review(seed_counts, session) -> None:
-    """#357: only ``approved`` units reach the default retrieval scope."""
-    from tekijin.data import knowledge as kb
-
-    kb.upsert_knowledge_unit(
-        session,
-        kind="case",
-        problem="p-approved",
-        action="a",
-        topics=["CRM・営業支援"],
-        source_type="slack_thread",
-        source_id="9101",
-    )
-    kb.upsert_knowledge_unit(
-        session,
-        kind="case",
-        problem="p-unreviewed",
-        action="a",
-        topics=["CRM・営業支援"],
-        source_type="slack_thread",
-        source_id="9102",
-    )
-    session.flush()
-    approved = kb.get_knowledge_unit_by_source(session, "slack_thread", "9101")
-    kb.set_review_status(session, approved.id, "approved")
-    session.flush()
-
-    # Default (approved-only): the unreviewed unit is invisible.
-    got = kb.knowledge_units_by_topics(session, ["CRM・営業支援"])
-    srcs = {u.source_id for u in got}
-    assert "9101" in srcs and "9102" not in srcs
-    # review_status=None includes every status (admin/management view).
-    every = kb.knowledge_units_by_topics(session, ["CRM・営業支援"], review_status=None)
-    every_srcs = {u.source_id for u in every}
-    assert {"9101", "9102"} <= every_srcs
-    # No topic overlap → empty; empty topics → empty without a query.
-    assert kb.knowledge_units_by_topics(session, ["セキュリティ"]) == []
-    assert kb.knowledge_units_by_topics(session, []) == []
-    # unreviewed queue lists the not-yet-reviewed one.
-    queue = {u.source_id for u in kb.list_knowledge_units(session, review_status="unreviewed")}
-    assert "9102" in queue and "9101" not in queue
-
-
-def test_list_knowledge_includes_approved_knowledge_units(seed_counts, session) -> None:
-    """#533: an APPROVED knowledge unit is browsable/searchable in the library as a
-    ``kind='knowledge'`` item (source_id ``ku_{id}``); unreviewed/rejected are not."""
-    from tekijin.data import knowledge as kb
-    from tekijin.data.knowledge_library import list_knowledge
-
-    kb.upsert_knowledge_unit(
-        session,
-        kind="case",
-        problem="CRMを導入したが現場が入力せず定着しない",
-        action="入力項目を5つに絞り日報と連携",
-        result="入力率が上がり定着した",
-        topics=["CRM・営業支援"],
-        source_type="slack_thread",
-        source_id="lib_ku_1",
-    )
-    kb.upsert_knowledge_unit(
-        session,
-        kind="case",
-        problem="未承認の課題",
-        action="a",
-        topics=["CRM・営業支援"],
-        source_type="slack_thread",
-        source_id="lib_ku_2",
-    )
-    session.flush()
-    approved = kb.get_knowledge_unit_by_source(session, "slack_thread", "lib_ku_1")
-    kb.set_review_status(session, approved.id, "approved")
-    session.flush()
-
-    # Keyword search on the case text surfaces the approved unit only.
-    items, _total, summary = list_knowledge(session, q="CRM")
-    knowledge = [i for i in items if i["kind"] == "knowledge"]
-    assert len(knowledge) == 1
-    got = knowledge[0]
-    assert got["source_id"] == f"ku_{approved.id}"  # matches a self-answer citation
-    assert got["title"] == "CRMを導入したが現場が入力せず定着しない"
-    assert "打ち手:" in got["summary"] and "結果:" in got["summary"]
-    assert got["topics"] == ["CRM・営業支援"]
-    # The unreviewed unit ("未承認") is never surfaced.
-    assert all("未承認" not in i["title"] for i in items)
-
-    # A department filter (units have no department) excludes knowledge units entirely.
-    dept_items, _t, _s = list_knowledge(session, q="CRM", department="営業部")
-    assert all(i["kind"] != "knowledge" for i in dept_items)
-
-    # A topic filter KEEPS knowledge units (they carry topics) — the asymmetry with
-    # department, which excludes them. A non-matching topic drops the unit.
-    topic_items, _t2, _s2 = list_knowledge(session, topic="CRM・営業支援")
-    assert any(i["source_id"] == f"ku_{approved.id}" for i in topic_items)
-    other_topic, _t3, _s3 = list_knowledge(session, topic="セキュリティ")
-    assert all(i["source_id"] != f"ku_{approved.id}" for i in other_topic)
+        for table in ("knowledge_articles", "knowledge_sources"):
+            assert conn.execute(text("SELECT to_regclass(:t)"), {"t": table}).scalar()
+        width = conn.execute(
+            text(
+                "SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+                "WHERE attrelid = 'knowledge_articles'::regclass AND attname = 'embedding'"
+            )
+        ).scalar()
+    assert width == f"vector({get_settings().embedding_dim})"
+    with factory() as sess:
+        assert len(Repository(sess).list_employees()) == before
 
 
 # --------------------------------------------------------------------------- #
