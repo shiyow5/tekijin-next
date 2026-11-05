@@ -454,7 +454,7 @@ def test_replay_reads_only_request_threads(calls) -> None:
     other = _History(31, parent_id=30, messages=[])
     other.messages = [_thread_message(other)]
     asyncio.run(_ui().replay([request_thread, other]))
-    assert [b["thread_id"] for _, b in calls] == ["700"]
+    assert [b["thread_id"] for p, b in calls if p == "thread-message"] == ["700"]
 
 
 def test_a_lost_report_is_sent_again_without_posting_again(monkeypatch, calls) -> None:
@@ -502,7 +502,9 @@ def test_a_thread_known_late_is_read_again(monkeypatch, calls) -> None:
 
     output = _History(OUTPUT, parent_id=None, messages=[])
     _outbox(monkeypatch, [REQUEST_ITEM])
-    replies = iter([{"kind": "error"}, {"status": "ok"}, {"status": "answered"}])
+    replies = iter(
+        [{"kind": "error"}, {"status": "ok"}, {"status": "answered"}, {"status": "ignored"}]
+    )
 
     async def flaky(http, *, base_url, secret, path, body):
         calls.append((path, body))
@@ -523,7 +525,12 @@ def test_a_thread_known_late_is_read_again(monkeypatch, calls) -> None:
     client.channels[700] = output.threads[0]
     _outbox(monkeypatch, [])
     asyncio.run(ui.deliver(client))
-    assert [p for p, _ in calls] == ["outbox/1", "outbox/1", "thread-message"]
+    assert [p for p, _ in calls] == [
+        "outbox/1",
+        "outbox/1",
+        "thread-message",
+        "thread-message/captured",
+    ]
 
 
 def test_a_deleted_message_waiting_to_be_sent_is_never_sent(monkeypatch, calls) -> None:
@@ -626,7 +633,7 @@ def test_replay_reads_the_newest_messages_in_order(monkeypatch, calls) -> None:
         for i, c in enumerate(["一", "二", "三"], start=1)
     ]
     asyncio.run(_ui().replay([thread]))
-    assert [b["body"] for _, b in calls] == ["二", "三"]
+    assert [b["body"] for p, b in calls if p == "thread-message"] == ["二", "三"]
 
 
 def test_an_edit_that_removes_the_text_is_sent_as_an_empty_edit(calls) -> None:
@@ -683,4 +690,16 @@ def test_replay_includes_archived_request_threads(calls) -> None:
     output.archived_threads = archived_threads
     guild = SimpleNamespace(threads=[open_thread, other])
     asyncio.run(_ui().replay_all(_Client(output), guild))
-    assert sorted(b["body"] for _, b in calls) == sorted(["開いている", "閉じた"])
+    bodies = [b["body"] for p, b in calls if p == "thread-message"]
+    assert sorted(bodies) == sorted(["開いている", "閉じた"])
+
+
+def test_replay_removes_answers_deleted_while_the_bot_was_stopped(calls) -> None:
+    calls.replies["thread-message/captured"] = {"status": "ok", "message_ids": ["55", "77"]}
+    thread = _History(700, parent_id=OUTPUT, messages=[])
+    thread.messages = [_thread_message(thread)]  # id 55 still there; 77 is gone
+    asyncio.run(_ui().replay([thread]))
+    assert calls[-1] == (
+        "thread-message/delete",
+        {"guild_id": str(GUILD), "message_ids": ["77"], "thread_id": "700"},
+    )

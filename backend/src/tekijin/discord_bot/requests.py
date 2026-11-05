@@ -462,6 +462,27 @@ class RequestUI:
             logger.warning("could not list archived request threads", exc_info=True)
         await self.replay(threads)
 
+    async def _reconcile_deletions(self, thread: Any, recent: list[Any]) -> None:
+        """Kept messages no longer in the thread were deleted while the bot was
+        stopped: remove what they became. Only ids inside the range just read are
+        judged; an older one may simply not have been read."""
+
+        result = await self._call(
+            "thread-message/captured",
+            {"guild_id": str(self.gate.guild_id), "thread_id": str(thread.id)},
+        )
+        if result.get("status") != "ok":
+            return
+        present = {int(m.id) for m in recent}
+        oldest = min(present) if len(recent) >= _REPLAY_LIMIT and present else 0
+        missing = [
+            int(i)
+            for i in result.get("message_ids") or []
+            if str(i).isdigit() and int(i) >= oldest and int(i) not in present
+        ]
+        if missing:
+            await self.on_thread_delete(missing, thread_id=thread.id)
+
     async def replay(self, threads: Any) -> None:
         """Read the open request threads again, so messages written while the bot
         was away (or before a failed send) still reach the backend."""
@@ -475,6 +496,7 @@ class RequestUI:
                 recent = [m async for m in thread.history(limit=_REPLAY_LIMIT)]
                 for message in reversed(recent):
                     await self.on_thread_message(message)
+                await self._reconcile_deletions(thread, recent)
             except discord.DiscordException:
                 logger.warning("could not read request thread %s again", thread.id, exc_info=True)
 

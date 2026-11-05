@@ -602,3 +602,52 @@ def test_text_edited_away_and_back_is_captured_again(output_on, flow) -> None:
         headers=HEADERS,
     )
     assert resp.status_code == 422
+
+
+def test_a_decline_on_the_web_passes_the_request_on(output_on, flow) -> None:
+    """The responder declines in the web inbox, not in Discord: the next person
+    still gets the request thread (and sees it in their inbox)."""
+
+    from tekijin.data.inbox import pending_handoffs_for_responder
+
+    session_id, rec, _ = flow.requested()
+    flow.service.submit_resume(session_id, outcome="declined", recommendation_id=rec)
+    for _ in flow.service.stream_events(session_id):  # what the web's /events does
+        pass
+    new = flow.deliver_requests()
+    (next_rec,) = new
+    assert flow.scalar(select(Recommendation.employee_id).where(Recommendation.id == next_rec)) == 2
+    session = get_sessionmaker(flow.engine)()
+    try:
+        inbox = [p["session_id"] for p in pending_handoffs_for_responder(session, 2)]
+    finally:
+        session.close()
+    assert session_id in inbox
+
+
+def test_a_hand_off_never_sent_is_not_passed_on(output_on, flow) -> None:
+    out = flow.ask()
+    flow.link(RESPONDER, 1)
+    session_id = out["session_id"]
+    handoff = flow.service.get_handoff(session_id)
+    flow.service.submit_resume(
+        session_id, outcome="declined", recommendation_id=handoff.recommendation_id
+    )
+    for _ in flow.service.stream_events(session_id):
+        pass
+    assert flow.outbox() == []
+
+
+def test_captured_ids_are_listed_for_reconciliation(output_on, flow) -> None:
+    _, rec, thread = flow.requested()
+    flow.act(RESPONDER, rec, "accept")
+    time.sleep(0.01)
+    mid = _snowflake(40)
+    flow.post(
+        "/thread-message",
+        {**_user(RESPONDER), "thread_id": thread, "message_id": mid, "body": "答え"},
+    )
+    listed = flow.post("/thread-message/captured", {"guild_id": GUILD, "thread_id": thread})
+    assert listed == {"status": "ok", "message_ids": [mid]}
+    other = flow.post("/thread-message/captured", {"guild_id": GUILD, "thread_id": "123"})
+    assert other["status"] == "ignored"

@@ -41,6 +41,7 @@ from tekijin.config import Settings
 from tekijin.data.db import session_scope
 from tekijin.data.discord_requests import (
     REQUEST,
+    captured_message_ids,
     enqueue_post,
     mark_message_seen,
     pending_outbox,
@@ -488,6 +489,37 @@ def discord_thread_message_delete(
     if touched:
         service.schedule_knowledge_embed()
     return DiscordThreadDeleteResponse(status="ok", removed=removed)
+
+
+class DiscordCapturedRequest(BaseModel):
+    guild_id: str = Field(pattern=_DISCORD_ID)
+    thread_id: str = Field(pattern=_DISCORD_ID)
+
+
+class DiscordCapturedResponse(BaseModel):
+    status: Literal["ok", "ignored", "disabled", "unlinked"]
+    message_ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/thread-message/captured", response_model=DiscordCapturedResponse)
+def discord_thread_captured(
+    req: DiscordCapturedRequest,
+    request: Request,
+    settings: Settings = Depends(require_bot_secret),
+) -> DiscordCapturedResponse:
+    """Which messages of a request thread are kept, so the bot can find those
+    deleted in Discord while it was stopped."""
+
+    if not settings.discord_output_enabled():
+        return DiscordCapturedResponse(status="disabled")
+    if str(settings.discord_guild_id) != req.guild_id:
+        return DiscordCapturedResponse(status="unlinked")
+    with session_scope(_service(request).session_factory) as session:
+        found = request_for_thread(session, req.thread_id)
+        if found is None:
+            return DiscordCapturedResponse(status="ignored")
+        ids = captured_message_ids(session, found.recommendation_id)
+    return DiscordCapturedResponse(status="ok", message_ids=ids)
 
 
 def _remove_captured(session: Session, seen: DiscordThreadMessageRow) -> bool:

@@ -26,6 +26,7 @@ from tekijin.data.discord_requests import (
     create_request,
     enqueue_post,
     mark_accepted,
+    question_was_sent,
 )
 from tekijin.data.members import discord_user_id_for
 from tekijin.models.tables import Employee, Question, Recommendation
@@ -94,6 +95,27 @@ def send_request(session: Session, *, session_id: str, recommendation_id: int, d
     return create_request(
         session, recommendation_id=recommendation_id, session_id=session_id, payload=payload
     )
+
+
+def pass_on_request(
+    session_factory: sessionmaker[Session],
+    *,
+    session_id: str,
+    recommendation_id: int,
+    draft: str,
+) -> bool:
+    """A Discord hand-off that was sent moved on to a new recommendation (a decline
+    or a referral, pressed in Discord or on the web): send it to the new person
+    too. A hand-off never sent (「依頼する」 not pressed yet) stays unsent."""
+
+    if not _enabled() or not session_id.startswith(DISCORD_SESSION_PREFIX):
+        return False
+    with session_scope(session_factory) as session:
+        if not question_was_sent(session, recommendation_id):
+            return False
+        return send_request(
+            session, session_id=session_id, recommendation_id=recommendation_id, draft=draft
+        )
 
 
 class DiscordNotifier:

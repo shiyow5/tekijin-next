@@ -91,6 +91,25 @@ def request_for_recommendation(session: Session, recommendation_id: int) -> Disc
     return session.get(DiscordRequest, recommendation_id)
 
 
+def question_was_sent(session: Session, recommendation_id: int) -> bool:
+    """True when another recommendation of the same question was sent from Discord."""
+
+    question_id = session.scalar(
+        select(Recommendation.question_id).where(Recommendation.id == recommendation_id)
+    )
+    if question_id is None:
+        return False
+    return (
+        session.scalar(
+            select(DiscordRequest.recommendation_id)
+            .join(Recommendation, Recommendation.id == DiscordRequest.recommendation_id)
+            .where(Recommendation.question_id == question_id)
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def request_for_thread(session: Session, thread_id: str) -> DiscordRequest | None:
     return session.scalars(
         select(DiscordRequest).where(DiscordRequest.thread_id == thread_id)
@@ -99,6 +118,22 @@ def request_for_thread(session: Session, thread_id: str) -> DiscordRequest | Non
 
 def seen_message(session: Session, message_id: str) -> DiscordThreadMessage | None:
     return session.get(DiscordThreadMessage, message_id)
+
+
+def captured_message_ids(session: Session, recommendation_id: int) -> list[str]:
+    """The thread messages of a request that are kept as chat messages or answers."""
+
+    return list(
+        session.scalars(
+            select(DiscordThreadMessage.message_id).where(
+                DiscordThreadMessage.recommendation_id == recommendation_id,
+                or_(
+                    DiscordThreadMessage.message_row_id.is_not(None),
+                    DiscordThreadMessage.answer_id.is_not(None),
+                ),
+            )
+        )
+    )
 
 
 def mark_message_seen(
