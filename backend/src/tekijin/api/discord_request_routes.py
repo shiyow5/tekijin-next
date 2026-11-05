@@ -29,7 +29,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -57,6 +57,7 @@ from tekijin.knowledge.request_answer import (
     update_thread_answer,
 )
 from tekijin.models.tables import Answer, DiscordOutbox, Message
+from tekijin.models.tables import DiscordThreadMessage as DiscordThreadMessageRow
 from tekijin.retrieval.embedding import PASSAGE
 
 logger = logging.getLogger(__name__)
@@ -105,16 +106,17 @@ class DiscordActionResponse(BaseModel):
 class DiscordThreadMessage(DiscordUser):
     thread_id: str = Field(pattern=_DISCORD_ID)
     message_id: str = Field(pattern=_DISCORD_ID)
-    body: str = Field(min_length=1, max_length=_MAX_THREAD_MESSAGE)
+    # Blank only for an edit that removed the text (an attachment may remain).
+    body: str = Field(max_length=_MAX_THREAD_MESSAGE)
     # The message was edited in Discord; it corrects what it already became.
     edited: bool = False
 
-    @field_validator("body")
-    @classmethod
-    def _nonblank(cls, value: str) -> str:
-        if not value.strip():
+    @model_validator(mode="after")
+    def _nonblank(self) -> DiscordThreadMessage:
+        self.body = self.body.strip()
+        if not self.body and not self.edited:
             raise ValueError("body must not be blank")
-        return value.strip()
+        return self
 
 
 class DiscordThreadResponse(BaseModel):
@@ -353,9 +355,14 @@ def discord_thread_message(
         accepted_at = found.accepted_at
         seen = seen_message(session, req.message_id)
         seen_rows = (seen.message_row_id, seen.answer_id) if seen is not None else None
+        cleared = seen is not None and seen.cleared
         sender = find_discord_member(session, guild_id, req.discord_user_id)
         parties = thread_parties(session, rec_id)
-    if seen_rows is not None:
+    if not req.body:  # the text was edited away
+        if seen_rows is None or parties is None:
+            return DiscordThreadResponse(status="ignored")
+        return _clear(service, req.message_id, parties)
+    if seen_rows is not None and not cleared:
         if req.edited and parties is not None:
             return _apply_edit(service, req, parties, *seen_rows)
         return DiscordThreadResponse(status="duplicate")
@@ -371,9 +378,10 @@ def discord_thread_message(
     if status is not None:
         # Remembered, so the bot sending it again (after a restart, once the
         # request is accepted) does not turn it into an answer.
-        with session_scope(service.session_factory) as session:
-            _lock_message(session, req.message_id)
-            mark_message_seen(session, req.message_id, rec_id)
+        if not cleared:
+            with session_scope(service.session_factory) as session:
+                _lock_message(session, req.message_id)
+                mark_message_seen(session, req.message_id, rec_id)
         return DiscordThreadResponse(status=status)
     assert parties is not None and sender is not None
     is_answer = sender == parties["responder_id"]
@@ -384,7 +392,8 @@ def discord_thread_message(
     written_at = snowflake_local_time(req.message_id)
     with session_scope(service.session_factory) as session:
         _lock_message(session, req.message_id)
-        if seen_message(session, req.message_id) is not None:
+        current = seen_message(session, req.message_id)
+        if current is not None and not current.cleared:
             return DiscordThreadResponse(status="duplicate")
         row = create_message(session, rec_id, sender, req.body, written_at)
         answer_id = None
@@ -401,7 +410,11 @@ def discord_thread_message(
                 now=now,
                 written_at=written_at,
             )
-        if not mark_message_seen(
+        if current is not None:  # text written again after it was edited away
+            current.message_row_id = row["id"]
+            current.answer_id = answer_id
+            current.cleared = False
+        elif not mark_message_seen(
             session, req.message_id, rec_id, message_row_id=row["id"], answer_id=answer_id
         ):
             raise HTTPException(status_code=409, detail="message already handled")
@@ -461,32 +474,63 @@ def discord_thread_message_delete(
                 if thread is not None:
                     mark_message_seen(session, message_id, thread.recommendation_id)
                 continue
+            seen.cleared = False  # deleted: never captured again
             if seen.message_row_id is None and seen.answer_id is None:
                 continue
-            if seen.answer_id is not None:
-                answer = session.get(Answer, seen.answer_id)
-                if answer is not None:
-                    session.delete(answer)
+            if _remove_captured(session, seen):
                 touched.add(seen.recommendation_id)
-            if seen.message_row_id is not None:
-                message = session.get(Message, seen.message_row_id)
-                if message is not None:
-                    session.delete(message)
-            seen.answer_id = None
-            seen.message_row_id = None
             removed += 1
         session.flush()
         for rec_id in touched:
             parties = thread_parties(session, rec_id)
-            if parties is None:
-                continue
-            session.execute(
-                text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 114, "obj": rec_id}
-            )
-            refresh_case_draft(session, parties=parties, now=now)
+            if parties is not None:
+                _refresh_draft(session, parties, rec_id, now)
     if touched:
         service.schedule_knowledge_embed()
     return DiscordThreadDeleteResponse(status="ok", removed=removed)
+
+
+def _remove_captured(session: Session, seen: DiscordThreadMessageRow) -> bool:
+    """Delete the chat message and answer a thread message became. True when an
+    answer was removed (the draft must be rewritten)."""
+
+    had_answer = seen.answer_id is not None
+    if seen.answer_id is not None:
+        answer = session.get(Answer, seen.answer_id)
+        if answer is not None:
+            session.delete(answer)
+    if seen.message_row_id is not None:
+        message = session.get(Message, seen.message_row_id)
+        if message is not None:
+            session.delete(message)
+    seen.answer_id = None
+    seen.message_row_id = None
+    return had_answer
+
+
+def _refresh_draft(session: Session, parties: dict, rec_id: int, now: dt.datetime) -> None:
+    session.execute(text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 114, "obj": rec_id})
+    refresh_case_draft(session, parties=parties, now=now)
+
+
+def _clear(service: AgentService, message_id: str, parties: dict) -> DiscordThreadResponse:
+    """An edit removed a message's text: what it became goes, but a later edit
+    that writes text again is captured anew."""
+
+    now = _now()
+    with session_scope(service.session_factory) as session:
+        _lock_message(session, message_id)
+        seen = seen_message(session, message_id)
+        if seen is None or (seen.message_row_id is None and not seen.cleared):
+            return DiscordThreadResponse(status="duplicate")  # ignored or deleted
+        touched = _remove_captured(session, seen)
+        seen.cleared = True
+        session.flush()
+        if touched:
+            _refresh_draft(session, parties, seen.recommendation_id, now)
+    if touched:
+        service.schedule_knowledge_embed()
+    return DiscordThreadResponse(status="updated")
 
 
 def _apply_edit(

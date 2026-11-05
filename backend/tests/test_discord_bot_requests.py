@@ -629,12 +629,15 @@ def test_replay_reads_the_newest_messages_in_order(monkeypatch, calls) -> None:
     assert [b["body"] for _, b in calls] == ["二", "三"]
 
 
-def test_an_edit_that_removes_the_text_removes_the_answer(calls) -> None:
+def test_an_edit_that_removes_the_text_is_sent_as_an_empty_edit(calls) -> None:
     thread = _Channel(700, parent_id=OUTPUT)
-    asyncio.run(_ui().on_thread_message(_thread_message(thread, content="  "), edited=True))
-    assert calls == [
-        (
-            "thread-message/delete",
-            {"guild_id": str(GUILD), "message_ids": ["55"], "thread_id": "700"},
-        )
+    ui = _ui()
+    asyncio.run(ui.on_thread_message(_thread_message(thread, content="  "), edited=True))
+    asyncio.run(ui.on_thread_message(_thread_message(thread, content="直した"), edited=True))
+    assert [(p, b["body"], b["edited"]) for p, b in calls] == [
+        ("thread-message", "", True),
+        ("thread-message", "直した", True),
     ]
+    # A new message without text is still not sent.
+    asyncio.run(ui.on_thread_message(_thread_message(thread, content="")))
+    assert len(calls) == 2

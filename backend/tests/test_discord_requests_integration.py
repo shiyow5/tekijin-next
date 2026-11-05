@@ -571,3 +571,34 @@ def test_a_late_answer_keeps_its_place(output_on, flow) -> None:
         session.close()
     assert draft.resolution == "手順1\n手順2"
     assert bodies[-2:] == ["手順1", "手順2"]
+
+
+def test_text_edited_away_and_back_is_captured_again(output_on, flow) -> None:
+    _, rec, thread = flow.requested()
+    flow.act(RESPONDER, rec, "accept")
+    time.sleep(0.01)
+    mid = _snowflake(30)
+
+    def write(body: str, **extra) -> str:
+        return flow.post(
+            "/thread-message",
+            {**_user(RESPONDER), "thread_id": thread, "message_id": mid, "body": body, **extra},
+        )["status"]
+
+    question_id = flow.scalar(select(Recommendation.question_id).where(Recommendation.id == rec))
+
+    def answers() -> list[str]:
+        return flow.scalars(select(Answer.body).where(Answer.question_id == question_id))
+
+    assert write("最初の答え") == "answered"
+    assert write("", edited=True) == "updated"
+    assert answers() == []
+    assert write("直した答え", edited=True) == "answered"
+    assert answers() == ["直した答え"]
+    # A blank body is only allowed on an edit.
+    resp = flow.client.post(
+        f"{BASE}/thread-message",
+        json={**_user(RESPONDER), "thread_id": thread, "message_id": mid, "body": " "},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 422

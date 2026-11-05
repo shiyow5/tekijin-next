@@ -294,11 +294,11 @@ class RequestUI:
         if not self.gate.is_request_thread(message.channel):
             return
         content = (message.content or "").strip()
-        if not content:
-            if edited:
-                # The text was edited away (an attachment may remain): what it
-                # became goes, as for a deletion.
-                await self.on_thread_delete([message.id], thread_id=message.channel.id)
+        edited = edited or getattr(message, "edited_at", None) is not None
+        # An edit that leaves no text (an attachment may remain) is sent too: the
+        # backend removes what the message became, and takes it again if text is
+        # written back later.
+        if not content and not edited:
             return
         body = {
             **discord_user(message.author.id, message.guild.id, message.author.display_name),
@@ -308,7 +308,7 @@ class RequestUI:
         }
         # A message read again after it was edited (a replay) is sent as an edit,
         # so its current text replaces what the original became.
-        if edited or getattr(message, "edited_at", None) is not None:
+        if edited:
             body["edited"] = True
         # Which read of the message this is: a later read carries newer text.
         self._reads += 1

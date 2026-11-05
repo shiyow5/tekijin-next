@@ -606,6 +606,9 @@ class DiscordThreadMessage(Base):
         ForeignKey("messages.id", ondelete="SET NULL")
     )
     answer_id: Mapped[str | None] = mapped_column(ForeignKey("answers.id", ondelete="SET NULL"))
+    # Its text was edited away (an attachment may remain). Unlike a deletion, an
+    # edit that writes text again is captured anew.
+    cleared: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
