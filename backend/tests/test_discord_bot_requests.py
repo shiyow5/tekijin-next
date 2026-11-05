@@ -661,3 +661,26 @@ def test_a_stale_replay_copy_never_replaces_a_live_edit(monkeypatch, calls) -> N
     asyncio.run(ui.on_thread_message(live, edited=True))
     asyncio.run(ui.on_thread_message(stale))  # the replay's copy, forwarded later
     assert [b["body"] for _, b in calls] == ["新しい"]
+
+
+def test_replay_includes_archived_request_threads(calls) -> None:
+    open_thread = _History(700, parent_id=OUTPUT, messages=[])
+    open_thread.messages = [_thread_message(open_thread, content="開いている")]
+    archived = _History(701, parent_id=OUTPUT, messages=[])
+    archived.messages = [_thread_message(archived, content="閉じた")]
+    other = _History(31, parent_id=30, messages=[])
+    other.messages = [_thread_message(other, content="ほか")]
+
+    output = _Channel(OUTPUT)
+
+    def archived_threads(limit=None):
+        async def gen():
+            for t in (archived, open_thread):
+                yield t
+
+        return gen()
+
+    output.archived_threads = archived_threads
+    guild = SimpleNamespace(threads=[open_thread, other])
+    asyncio.run(_ui().replay_all(_Client(output), guild))
+    assert sorted(b["body"] for _, b in calls) == sorted(["開いている", "閉じた"])

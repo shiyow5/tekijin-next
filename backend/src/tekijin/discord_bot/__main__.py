@@ -536,7 +536,7 @@ def main() -> None:
             and guild_now is not None
             and ("replay" not in tasks or tasks["replay"].done())
         ):
-            tasks["replay"] = asyncio.create_task(requests_ui.replay(list(guild_now.threads)))
+            tasks["replay"] = asyncio.create_task(requests_ui.replay_all(client, guild_now))
         if "flush" not in tasks:
             tasks["flush"] = asyncio.create_task(
                 batcher.run(_FLUSH_INTERVAL_S, start_history, ready=ready)

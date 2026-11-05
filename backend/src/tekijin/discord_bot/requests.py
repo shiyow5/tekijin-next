@@ -55,6 +55,8 @@ OUTBOX_INTERVAL_S = 5.0
 _THREAD_MESSAGE_MAX = 4000
 #: Thread messages kept for sending again while the backend is away.
 _RETRY_MAX = 1000
+#: How many of the most recently archived request threads are read again.
+_REPLAY_ARCHIVED = 50
 #: Key of the bot-side version stamp on a queued thread message (never sent).
 _VERSION = "_version"
 #: Older than any version.
@@ -440,6 +442,25 @@ class RequestUI:
         for body in list(self._retry.values()):
             if not await self._forward(body):
                 return  # still away; try the rest next time
+
+    async def replay_all(self, client: Any, guild: Any) -> None:
+        """Read again the open request threads and the recently archived ones: a
+        thread archived while the bot was away may still hold a missed answer."""
+
+        threads = [t for t in guild.threads if self.gate.is_request_thread(t)]
+        seen = {t.id for t in threads}
+        try:
+            channel = client.get_channel(self.gate.channel_id) or await client.fetch_channel(
+                self.gate.channel_id
+            )
+            if self.gate.owns(channel):
+                async for thread in channel.archived_threads(limit=_REPLAY_ARCHIVED):
+                    if thread.id not in seen:
+                        seen.add(thread.id)
+                        threads.append(thread)
+        except discord.DiscordException:
+            logger.warning("could not list archived request threads", exc_info=True)
+        await self.replay(threads)
 
     async def replay(self, threads: Any) -> None:
         """Read the open request threads again, so messages written while the bot
