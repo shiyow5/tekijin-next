@@ -21,3 +21,12 @@ PYTHONPATH=src python -m tekijin.data.circle
 ```
 
 専用の組織に入るので、ほかの組織のデータには触らない。何度流しても結果は同じになる。
+
+質問をすべて実際の処理の流れに通して数えるには、`scripts/circle_eval.py` を使う。DBは読むだけで、書き込みはしない。LLMの設定を環境変数で渡さないとスタブで動くので、出力の1行目で使ったモデルを確かめる。
+
+```bash
+PYTHONPATH=backend/src TEKIJIN_LLM_BACKEND=vllm TEKIJIN_LLM_BASE_URL=... TEKIJIN_LLM_MODEL=... \
+  python scripts/circle_eval.py --rows
+```
+
+種類ごとに、断った数、聞き返し、取次ぎ、根拠付きの答え、取次ぎと一緒に見せた答え、出典が正しい数、答えの語句を含む数、正しい人が3位以内に入った数、経路の内訳を出す。

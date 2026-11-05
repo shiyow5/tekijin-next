@@ -28,7 +28,7 @@ from tekijin.agent.protocols import (
     SourceSearch,
     SufficiencyModel,
 )
-from tekijin.agent.route import PRIOR_ANSWER, decide_route
+from tekijin.agent.route import PRIOR_ANSWER, decide_route, seek_person
 from tekijin.agent.safety import scan_disallowed
 from tekijin.agent.state import AgentState, RetrievalResult, empty_retrieval
 from tekijin.agent.stubs import (
@@ -263,6 +263,7 @@ class AgentNodes:
             "followup_count": 0,
             "declined_ids": [],
             "out_of_scope": False,
+            "seeks_person": False,
             "sufficient": False,
             "topics": [],
             "products": [],
@@ -319,6 +320,7 @@ class AgentNodes:
                 "situation": None,
                 "question_type": _QUESTION_TYPE_DEFAULT,
                 "out_of_scope": True,
+                "seeks_person": False,
                 "intent_confidence": 0.0,
             }
         result = self._intent.analyze(state["question"], state.get("asker"))
@@ -328,6 +330,7 @@ class AgentNodes:
             "situation": result.situation,
             "question_type": result.question_type,
             "out_of_scope": result.out_of_scope,
+            "seeks_person": result.seeks_person,
             "intent_confidence": result.confidence,
         }
         # #475 Screen 01: attach the "N other people asked in this area" reassurance
@@ -465,11 +468,17 @@ class AgentNodes:
 
     # -- C5: route decision (deterministic) -------------------------------
     def c5_route(self, state: AgentState) -> AgentState:
+        retrieval = state.get("retrieval") or empty_retrieval()
         decision = decide_route(
-            state.get("retrieval") or empty_retrieval(),
+            retrieval,
             prior_answer_reuse_min=self._prior_answer_reuse_min,
             prior_answer_relevance_floor=self._prior_answer_relevance_floor,
         )
+        # #108: only a member's question; the company path keeps decide_route's pick.
+        if state.get("org_id") is not None:
+            decision = seek_person(
+                decision, retrieval, seeks_person=bool(state.get("seeks_person"))
+            )
         return {
             "route": decision.route,
             "route_reason": decision.reason,

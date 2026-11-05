@@ -86,6 +86,21 @@ OUT_OF_SCOPE_KEYWORDS: tuple[str, ...] = (
 _QUOTE_KEYWORDS = ("見積", "価格", "費用", "料金")
 _ADMIN_KEYWORDS = ("申請", "手続き", "経費精算", "精算")
 _CHITCHAT_KEYWORDS = ("こんにちは", "雑談", "おはよう", "よろしく")
+# #108: wording that asks to be put in touch with someone rather than only for an
+# answer (「見てくれる人」「誰に聞けばいい」「相談したい」).
+SEEKS_PERSON_KEYWORDS: tuple[str, ...] = (
+    "くれる人",
+    "くれそうな人",
+    "できる人",
+    "詳しい人",
+    "くわしい人",
+    "わかる人",
+    "分かる人",
+    "人を探",
+    "誰に聞",
+    "誰に相談",
+    "相談したい",
+)
 
 # Required information slots per question type, and how to detect each in text.
 _REQUIRED_SLOTS: dict[str, tuple[str, ...]] = {
@@ -234,6 +249,7 @@ class KeywordIntentModel:
             question_type=question_type,
             out_of_scope=out_of_scope,
             confidence=confidence,
+            seeks_person=not out_of_scope and _contains_any(question, SEEKS_PERSON_KEYWORDS),
         )
 
     @staticmethod

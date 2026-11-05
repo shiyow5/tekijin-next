@@ -174,3 +174,27 @@ def decide_route(
         "確度の高い手がかりはありませんが、既定どおり人へ取り次ぎます。",
         0.0,
     )
+
+
+def seek_person(
+    decision: RouteDecision, retrieval: RetrievalResult, *, seeks_person: bool
+) -> RouteDecision:
+    """Send a question that asks for a person to the people the evidence names (#108).
+
+    For a member's question only (the caller checks). ``decide_route`` sends a
+    question whose sources are close to the document route, where a grounded
+    answer ends the run and nobody is offered. When the asker is looking for
+    someone (C1's ``seeks_person``) and C4 found at least one candidate, the
+    question goes to the person route instead; the #413 additive answer still shows
+    what the sources say next to the hand-off. With no candidate the decision is
+    returned unchanged, so the question gets the answer it would have got before.
+    """
+
+    candidates = retrieval.get("candidate_people") or []
+    if not seeks_person or not candidates or decision.route == PERSON:
+        return decision
+    return RouteDecision(
+        PERSON,
+        "人を探している質問なので、根拠に挙がった人に取り次ぎます。",
+        float(retrieval.get("people_confidence", 0.0)),
+    )

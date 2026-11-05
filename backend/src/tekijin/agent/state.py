@@ -136,6 +136,10 @@ class AgentState(TypedDict, total=False):
     question_type: str
     out_of_scope: bool
     intent_confidence: float
+    # #108: the asker wants to be put in touch with someone. For a member's question
+    # C5 then hands off to the people the evidence points to, even when the sources
+    # could answer (the answer is shown alongside, #413).
+    seeks_person: bool
     # #475 Screen 01: how many OTHER askers have previously asked a question in the
     # same topic area (reassurance — "you are not the only one"). Set by c1_intent
     # only when a read session is wired (``similar_askers_enabled``); absent/0

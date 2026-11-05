@@ -35,6 +35,9 @@ class IntentResult:
     question_type: str = "製品QA"
     out_of_scope: bool = False
     confidence: float = 0.0
+    # #108: the asker wants to be put in touch with someone, not only to get an
+    # answer. Routing reads it for a member's question only.
+    seeks_person: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,6 +22,13 @@ class IntentSchema(BaseModel):
         default=False, description="組織と結びつかない雑談・悪意ある入力なら true"
     )
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="意図理解の確信度")
+    seeks_person: bool = Field(
+        default=False,
+        description=(
+            "答えそのものより、頼める人・詳しい人を探している、または繋いでほしいなら true"
+            "（「〜できる人」「誰に聞けば」「相談したい」「見てくれる人」など）"
+        ),
+    )
 
 
 class SufficiencySchema(BaseModel):
