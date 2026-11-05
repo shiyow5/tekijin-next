@@ -260,7 +260,7 @@ def delete_conversation(
         .where(
             ChannelMessage.org_id == org_id,
             ChannelMessage.hidden_at.is_(None),
-            *_key_filter(external_id),
+            *conversation_filter(external_id),
         )
         .order_by(ChannelMessage.message_id)
         .with_for_update()
@@ -302,7 +302,7 @@ def _rebuild(
         .where(
             ChannelMessage.org_id == org_id,
             ChannelMessage.hidden_at.is_(None),
-            *_key_filter(key),
+            *conversation_filter(key),
         )
         .order_by(ChannelMessage.created_at, ChannelMessage.message_id)
     ).all()
@@ -347,7 +347,10 @@ def _rebuild(
     return result.status != "unchanged"
 
 
-def _key_filter(key: str) -> tuple:
+def conversation_filter(key: str) -> tuple:
+    """Conditions on ``channel_messages`` that select the conversation ``key`` (its
+    ``external_id``): a whole thread, or one channel's day in Japan time."""
+
     kind, _, rest = key.partition(":")
     if kind == "thread":
         return (ChannelMessage.thread_id == int(rest),)

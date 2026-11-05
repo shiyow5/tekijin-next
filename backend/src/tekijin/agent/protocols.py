@@ -11,7 +11,7 @@ each must satisfy.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -20,6 +20,7 @@ from tekijin.agent.state import RetrievalResult
 if TYPE_CHECKING:  # pragma: no cover - typing only (keeps the heavy retrieval import out)
     from tekijin.agent.state import SourceHit
     from tekijin.data.visibility import SourceScope
+    from tekijin.retrieval.experts import Expert, ExpertResult
     from tekijin.retrieval.fragments import CitedEvidence
     from tekijin.retrieval.sources import SourceSearchResult
 
@@ -213,6 +214,26 @@ class SourceSearch(Protocol):
     def evidence(
         self, hits: Sequence[SourceHit], org_id: int, scope: SourceScope
     ) -> list[CitedEvidence]: ...
+
+
+class ExpertFinder(Protocol):
+    """Who in an organization can answer a question, from evidence (#107, R5).
+
+    :class:`~tekijin.retrieval.experts.DbExpertFinder` reads the database."""
+
+    def find(
+        self,
+        *,
+        org_id: int,
+        question: str,
+        query_vector: Sequence[float],
+        scope: SourceScope,
+        source_hits: Sequence[SourceHit],
+        asker_id: int | None,
+        exclude: Iterable[int] = (),
+    ) -> ExpertResult: ...
+
+    def describe(self, org_id: int, member_ids: Iterable[int]) -> list[Expert]: ...
 
 
 class HasEmployeeId(Protocol):

@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from sse_starlette import EventSourceResponse
 
 from tekijin.api import schemas
+from tekijin.api.events import without_reasons
 from tekijin.api.service import (
     AgentService,
     AskerNotFound,
@@ -223,7 +224,11 @@ def events(
     require_session_participant(principal, asker_id, responder_id)
     if not service.is_streamable(session_id):
         raise HTTPException(status_code=404, detail="no active run for this session")
-    return EventSourceResponse(service.stream_events(session_id))
+    stream = service.stream_events(session_id)
+    # #107: for a member's question, the evidence reasons are for the asker only.
+    if principal.employee_id != asker_id and service.session_org_id(session_id) is not None:
+        return EventSourceResponse(without_reasons(e) for e in stream)
+    return EventSourceResponse(stream)
 
 
 @router.get("/handoff/{session_id}", response_model=schemas.HandoffResponse)

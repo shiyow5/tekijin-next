@@ -97,6 +97,7 @@ from tekijin.data.writes import (
 )
 from tekijin.knowledge.index import embed_knowledge_units
 from tekijin.retrieval.embedding import PASSAGE, Embedder
+from tekijin.retrieval.experts import DbExpertFinder
 from tekijin.retrieval.sources import ChunkSearch
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,20 @@ def _error_event() -> ServerSentEvent:
         event="error",
         data=schemas.ErrorData(error="内部エラーが発生しました").model_dump_json(),
     )
+
+
+def responder_view(primary: dict[str, Any], *, org_id: int | None) -> schemas.Recommendation:
+    """The hand-off's recommendation as the person being asked sees it.
+
+    ``person_id`` crosses the boundary in the external "E###" form, mirroring the
+    recommend event. For a member's question the reasons are dropped: they come
+    from evidence about the person (introductions, conversations…), which is shown
+    only to the asker (ADR-0012, #107)."""
+
+    shown = {**primary, "person_id": schemas.format_employee_id(primary["person_id"])}
+    if org_id is not None:
+        shown["reasons"] = []
+    return schemas.Recommendation(**shown)
 
 
 @dataclass
@@ -416,6 +431,13 @@ class AgentService:
         recs = values.get("recommendations") or []
         responder_id = recs[0]["person_id"] if recs else None
         return (asker_id, responder_id)
+
+    def session_org_id(self, session_id: str) -> int | None:
+        """The organization of the session's asker, ``None`` for the company path."""
+
+        values = getattr(self._snapshot(session_id), "values", None) or {}
+        org_id = values.get("org_id")
+        return org_id if isinstance(org_id, int) else None
 
     def pending_handoff_metadata(self, session_id: str) -> dict[str, int | str | None]:
         """Return durable identifiers needed to notify an external hand-off client."""
@@ -912,9 +934,7 @@ class AgentService:
             if primary is not None:
                 # person_id crosses the boundary in the external "E###" form,
                 # mirroring the recommend event (events.py / model-definition).
-                responder = schemas.Recommendation(
-                    **{**primary, "person_id": schemas.format_employee_id(primary["person_id"])}
-                )
+                responder = responder_view(primary, org_id=values.get("org_id"))
                 reuse = responder_reuse_stats(session, primary["person_id"])
             # SQL, not the checkpoint: the asker's method choice must also be
             # visible to the inbox / chat gating, which never read the graph
@@ -1571,6 +1591,7 @@ class AgentService:
             similar_askers_enabled=self._similar_askers_enabled,
             # An injected retriever is a test's stand-in for all of C4.
             source_search=None if self._retriever is not None else ChunkSearch(session),
+            expert_finder=None if self._retriever is not None else DbExpertFinder(session),
         )
 
     def _run(

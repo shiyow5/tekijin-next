@@ -18,6 +18,7 @@ send, reroute) are internal and emit nothing.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sse_starlette import ServerSentEvent
@@ -290,3 +291,28 @@ def interrupt_event(payload: dict[str, Any]) -> ServerSentEvent | None:
             ),
         )
     return None
+
+
+def without_reasons(event: ServerSentEvent) -> ServerSentEvent:
+    """``event`` with every recommendation's ``reasons`` emptied.
+
+    For a member's question the reasons come from evidence about the person
+    (introductions, conversations…), shown only to the asker (ADR-0012, #107). A
+    responder may open the same stream, so what reaches them goes through this.
+    Events carrying no recommendation pass unchanged."""
+
+    if event.event not in {"recommend", "message"} or not isinstance(event.data, str):
+        return event
+    try:
+        data = json.loads(event.data)
+    except ValueError:
+        return event
+    if not isinstance(data, dict):
+        return event
+    recs = data.get("recommendations")
+    if isinstance(recs, list):
+        data["recommendations"] = [{**r, "reasons": []} if isinstance(r, dict) else r for r in recs]
+    fallback = data.get("fallback_responder")
+    if isinstance(fallback, dict):
+        data["fallback_responder"] = {**fallback, "reasons": []}
+    return ServerSentEvent(event=event.event, data=json.dumps(data, ensure_ascii=False))

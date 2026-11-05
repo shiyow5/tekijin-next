@@ -21,7 +21,7 @@ import { PageBackLink } from "@/components/PageBackLink";
 import type { HandoffAction } from "@/hooks/useHandoff";
 import { useHandoff } from "@/hooks/useHandoff";
 import type { HandoffResponse, Reason } from "@/lib/api-types";
-import { reasonLabel } from "@/lib/reasons";
+import { reasonDetail, reasonLabel } from "@/lib/reasons";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -94,7 +94,7 @@ function ReasonList({ reasons }: { reasons: Reason[] }) {
           </span>
           <span>
             <span className="font-medium text-on-surface">{reasonLabel(reason.type)}</span>
-            {reason.detail ? `：${reason.detail}` : null}
+            {reasonDetail(reason) ? `：${reasonDetail(reason)}` : null}
           </span>
         </li>
       ))}
