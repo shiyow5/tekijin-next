@@ -80,6 +80,10 @@ class RetrievalResult(TypedDict):
     # as it does for documents.
     sources: NotRequired[list[SourceHit]]
     source_confidence: NotRequired[float]
+    # #107: for a member's question, everyone the evidence points to, best first, as
+    # recommendation rows (``Expert.as_recommendation``). ``candidate_people`` holds
+    # their ids, so C6 picks from these without searching again.
+    experts: NotRequired[list[dict[str, Any]]]
 
 
 def empty_retrieval() -> RetrievalResult:

@@ -97,6 +97,7 @@ from tekijin.data.writes import (
 )
 from tekijin.knowledge.index import embed_knowledge_units
 from tekijin.retrieval.embedding import PASSAGE, Embedder
+from tekijin.retrieval.experts import DbExpertFinder
 from tekijin.retrieval.sources import ChunkSearch
 
 logger = logging.getLogger(__name__)
@@ -1571,6 +1572,7 @@ class AgentService:
             similar_askers_enabled=self._similar_askers_enabled,
             # An injected retriever is a test's stand-in for all of C4.
             source_search=None if self._retriever is not None else ChunkSearch(session),
+            expert_finder=None if self._retriever is not None else DbExpertFinder(session),
         )
 
     def _run(

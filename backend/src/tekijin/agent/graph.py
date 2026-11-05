@@ -22,6 +22,7 @@ from tekijin.agent.nodes import AgentNodes
 from tekijin.agent.protocols import (
     AnswerabilityModel,
     DraftModel,
+    ExpertFinder,
     IntentModel,
     Retriever,
     SelfAnswerModel,
@@ -135,6 +136,7 @@ def build_agent(
     score_all_employees: bool = False,
     similar_askers_enabled: bool = False,
     source_search: SourceSearch | None = None,
+    expert_finder: ExpertFinder | None = None,
 ):
     """Compile and return the C1-C8 agent graph.
 
@@ -163,6 +165,8 @@ def build_agent(
             terminal (「適任者が見つかりませんでした」) becomes unreachable in practice.
         source_search: #81, what a question carrying an ``org_id`` searches instead
             of ``retriever``.
+        expert_finder: #107, who a member's question is handed to, found from the
+            evidence C4 searched. ``None`` leaves a member's question with nobody.
         checkpointer: LangGraph checkpointer; default ``MemorySaver``.
     """
 
@@ -205,6 +209,7 @@ def build_agent(
         # #87: score the whole roster in C6 (False = OFF -> C4's candidate set).
         employee_source=Repository(session) if score_all_employees else None,
         source_search=source_search,
+        expert_finder=expert_finder,
     )
     # #70: the critic is wired only when a model is supplied. Off (the default) the
     # graph is byte-for-byte the pre-#70 flow — C6 -> C7 directly.

@@ -19,6 +19,7 @@ from tekijin.agent.protocols import (
     AnswerabilityModel,
     DraftModel,
     EmployeeSource,
+    ExpertFinder,
     IntentModel,
     IntentResult,
     Retriever,
@@ -29,7 +30,7 @@ from tekijin.agent.protocols import (
 )
 from tekijin.agent.route import PRIOR_ANSWER, decide_route
 from tekijin.agent.safety import scan_disallowed
-from tekijin.agent.state import AgentState, empty_retrieval
+from tekijin.agent.state import AgentState, RetrievalResult, empty_retrieval
 from tekijin.agent.stubs import (
     INTENT_CONFIDENCE_THRESHOLD,
     MAX_FOLLOWUPS,
@@ -121,6 +122,40 @@ def draft_context(state: Mapping[str, Any]) -> tuple[list[str], dict[str, str]]:
     return missing, known_values
 
 
+def _pin(
+    state: Mapping[str, Any], declined: Sequence[int], asker_id: int | None, taken: set[int]
+) -> tuple[int | None, bool]:
+    """Who C6 seats at rank 1, and whether that is a responder's referral.
+
+    prior_answer hands off to the pinned past responder — UNTIL they decline, and
+    never if the pin IS the asker (they cannot answer their own question). In
+    either case the pin is dropped and the general pool fills the slots (never
+    dead-end on a single decline or a self-referential pin).
+
+    #518: a responder's explicit "他に適任者がいる → this person" is seated at rank
+    1 the same way, but is NOT gated on the prior_answer route — a referral happens
+    on the person route. It takes precedence over a prior_answer pin (the human's
+    explicit choice wins). Dropped once the referred person is declined / is the
+    asker / is already shown, so it never dead-ends or loops.
+    """
+
+    def usable(person: int | None) -> bool:
+        return (
+            person is not None
+            and person not in declined
+            and person != asker_id
+            and person not in taken
+        )
+
+    referred = state.get("referred_responder_id")
+    if usable(referred):
+        return referred, True
+    pinned = state.get("pinned_responder_id")
+    if state.get("route") == PRIOR_ANSWER and usable(pinned):
+        return pinned, False
+    return None, False
+
+
 class AgentNodes:
     """Bundles the graph's node implementations around their dependencies."""
 
@@ -148,6 +183,7 @@ class AgentNodes:
         additive_self_answer_floor: float = 0.20,
         employee_source: EmployeeSource | None = None,
         source_search: SourceSearch | None = None,
+        expert_finder: ExpertFinder | None = None,
     ) -> None:
         self._intent = intent_model
         self._sufficiency = sufficiency_model
@@ -199,6 +235,9 @@ class AgentNodes:
         self._employee_source = employee_source
         # #81: what an organization's members search instead of the undivided tables.
         self._source_search = source_search
+        # #107: who a member's question goes to. ``None`` leaves a member's question
+        # with no candidates, as before.
+        self._expert_finder = expert_finder
 
     # -- entry: validate input, reset per-question control fields ---------
     def reset(self, state: AgentState) -> AgentState:
@@ -384,20 +423,30 @@ class AgentNodes:
         question = state["question"]
         org_id = state.get("org_id")
         if org_id is not None and self._source_search is not None:
-            found = self._source_search.search(
-                question,
-                org_id,
-                state.get("query_vector") or [],
-                scope_from_state(state.get("source_scope")),
-            )
-            return {
-                "retrieval": {
-                    **empty_retrieval(),
-                    "sources": found.hits,
-                    "source_confidence": found.confidence,
-                    "document_confidence": found.confidence,
-                }
+            scope = scope_from_state(state.get("source_scope"))
+            query_vector = state.get("query_vector") or []
+            found = self._source_search.search(question, org_id, query_vector, scope)
+            retrieval: RetrievalResult = {
+                **empty_retrieval(),
+                "sources": found.hits,
+                "source_confidence": found.confidence,
+                "document_confidence": found.confidence,
             }
+            if self._expert_finder is not None:
+                asker = state.get("asker")
+                experts = self._expert_finder.find(
+                    org_id=org_id,
+                    question=question,
+                    query_vector=query_vector,
+                    scope=scope,
+                    source_hits=found.hits,
+                    asker_id=asker.get("id") if asker else None,
+                )
+                rows = [e.as_recommendation() for e in experts.experts]
+                retrieval["experts"] = rows
+                retrieval["candidate_people"] = [row["person_id"] for row in rows]
+                retrieval["people_confidence"] = experts.confidence
+            return {"retrieval": retrieval}
         topics = state.get("topics") or []
         # #371: on a multi-facet question (e.g. "経理×データ基盤") the raw query's dense
         # signal collapses onto the facet with the thicker corpus, dropping the other
@@ -463,7 +512,6 @@ class AgentNodes:
         topics = state.get("topics") or []
         retrieval = state.get("retrieval") or empty_retrieval()
         declined = state.get("declined_ids") or []
-        pinned = state.get("pinned_responder_id")
         asker = state.get("asker")
         asker_id = asker.get("id") if asker else None
         # A non-empty `recommendations` on entry means this is a reroute backfill
@@ -480,6 +528,8 @@ class AgentNodes:
         # referral is pending, so the return shape is byte-identical there.
         top_k = 3
         remaining = top_k - len(existing)
+        if state.get("org_id") is not None and self._expert_finder is not None:
+            return self._c6_org(state, retrieval, existing, top_k=top_k)
         if not topics or remaining <= 0:
             # Nothing to add: keep whatever survived the decline (possibly fewer
             # than 3), or [] on a genuinely fresh run with no topics at all.
@@ -498,39 +548,8 @@ class AgentNodes:
             else {}
         )
 
-        # prior_answer hands off to the pinned past responder — UNTIL they decline,
-        # and never if the pin IS the asker (they cannot answer their own question).
-        # In either case drop the pin and rely on the general candidate pool below
-        # (never dead-end on a single decline or a self-referential pin).
-        prior_pin: int | None = (
-            pinned
-            if (
-                state.get("route") == PRIOR_ANSWER
-                and pinned is not None
-                and pinned not in declined
-                and pinned != asker_id
-                and pinned not in existing_ids
-            )
-            else None
-        )
-        # #518: a responder's explicit "他に適任者がいる → this person" is seated at
-        # rank 1 the same way, but is NOT gated on the prior_answer route — a referral
-        # happens on the person route. It takes precedence over a prior_answer pin
-        # (the human's explicit choice wins). Dropped once the referred person is
-        # declined / is the asker / is already shown, so it never dead-ends or loops;
-        # None (the default) makes this whole block a no-op — c6 byte-identical.
-        referred = state.get("referred_responder_id")
-        referral_pin: int | None = (
-            referred
-            if (
-                referred is not None
-                and referred not in declined
-                and referred != asker_id
-                and referred not in existing_ids
-            )
-            else None
-        )
-        pin_id: int | None = referral_pin if referral_pin is not None else prior_pin
+        pin_id, is_referral = _pin(state, declined, asker_id, existing_ids)
+        referral_pin = pin_id if is_referral else None
 
         fresh: list[dict[str, Any]] = []
         if pin_id is not None:
@@ -582,6 +601,52 @@ class AgentNodes:
 
         if not fresh:
             return self._scored(existing, state)
+        return self._scored(existing + fresh, state)
+
+    def _c6_org(
+        self,
+        state: AgentState,
+        retrieval: Mapping[str, Any],
+        existing: list[dict[str, Any]],
+        *,
+        top_k: int,
+    ) -> AgentState:
+        """C6 for a member's question: the people C4's evidence pointed to (#107).
+
+        Same rules as the scorer path: survivors of a decline keep their place,
+        declined people and the asker never come back, and a referral or past
+        responder is seated first. C4 kept every member the evidence points to, so
+        a reroute picks the next one from that list without searching again."""
+
+        assert self._expert_finder is not None
+        org_id = state.get("org_id")
+        assert org_id is not None
+        remaining = top_k - len(existing)
+        if remaining <= 0:
+            return self._scored(existing, state)
+        declined = state.get("declined_ids") or []
+        asker = state.get("asker")
+        asker_id = asker.get("id") if asker else None
+        taken = {r["person_id"] for r in existing}
+        rows = [dict(row) for row in retrieval.get("experts") or []]
+        fresh: list[dict[str, Any]] = []
+        pin_id, is_referral = _pin(state, declined, asker_id, taken)
+        if pin_id is not None:
+            row = next((r for r in rows if r["person_id"] == pin_id), None)
+            if row is None:
+                described = self._expert_finder.describe(org_id, [pin_id])
+                row = described[0].as_recommendation() if described else None
+            if row is not None:
+                if is_referral:
+                    row["reasons"] = [
+                        {"type": "referral", "detail": "担当者からの推薦"},
+                        *row.get("reasons", []),
+                    ]
+                fresh.append(row)
+        blocked = taken | set(declined) | {r["person_id"] for r in fresh}
+        if asker_id is not None:
+            blocked.add(asker_id)
+        fresh += [r for r in rows if r["person_id"] not in blocked][: remaining - len(fresh)]
         return self._scored(existing + fresh, state)
 
     @staticmethod
