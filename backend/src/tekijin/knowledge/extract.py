@@ -1,10 +1,12 @@
 """Read a record and write a knowledge draft with an LLM (#112, R6).
 
-A record is something that may hold knowledge: a resolved hand-off thread now, and
-documents and Discord conversations in #113. The model is asked for one draft in the
-KCS shape (issue, environment, resolution, cause) and the draft is stored with
-:func:`tekijin.data.knowledge.create_draft`, so it waits for an admin before it can
-answer anything. The prompt carries no topic vocabulary and no company wording.
+A record is something that may hold knowledge: a resolved hand-off thread, or a
+solved Discord conversation (#113, ``knowledge/conversations.py``). Documents give
+several drafts per passage and use ``knowledge/documents.py``. The model is asked
+for one draft in the KCS shape (issue, environment, resolution, cause) and the
+draft is stored with :func:`tekijin.data.knowledge.create_draft`, so it waits for
+an admin before it can answer anything. The prompt carries no topic vocabulary
+and no company wording.
 
 The extractor takes an injected ``model`` (a ``with_structured_output``-bound
 runnable) so tests drive it with a fake and never touch a network.
@@ -14,7 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -42,12 +44,17 @@ _SYSTEM_PROMPT = (
 
 @dataclass(frozen=True, slots=True)
 class ExtractionSource:
-    """One record to read: its organization, its text, and what to cite."""
+    """One record to read: its organization, its text, and what to cite.
+
+    ``kind`` fixes the draft's kind whatever the model says (a solved conversation
+    is always a ``case``, #113); ``None`` keeps the model's.
+    """
 
     org_id: int
     text: str
     sources: tuple[SourceRef, ...]
     author_id: int | None = None
+    kind: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +64,8 @@ class ExtractionReport:
     skipped: int = 0
     errored: int = 0
     article_ids: tuple[int, ...] = field(default_factory=tuple)
+    # Records whose source changed while the model read them; nothing was stored.
+    outdated: int = 0
 
 
 class Extractor(Protocol):
@@ -102,15 +111,19 @@ def extract_and_store(
     extractor: Extractor,
     *,
     now: dt.datetime,
+    still_current: Callable[[ExtractionSource], bool] | None = None,
 ) -> ExtractionReport:
     """Extract each record and store a draft for it.
 
     A record that fails (the model or the write raised) is logged and counted as
     ``errored``, and its partial write is rolled back to a savepoint, so one bad
-    record does not lose the others. The caller owns the transaction.
+    record does not lose the others. ``still_current`` is asked after the model
+    answered and before the draft is written: ``False`` means the record changed
+    meanwhile, and nothing is stored for it (``outdated``). The caller owns the
+    transaction.
     """
 
-    seen = stored = skipped = errored = 0
+    seen = stored = skipped = errored = outdated = 0
     created: list[int] = []
     for source in sources:
         seen += 1
@@ -119,11 +132,14 @@ def extract_and_store(
             if draft is None:
                 skipped += 1
                 continue
+            if still_current is not None and not still_current(source):
+                outdated += 1
+                continue
             with session.begin_nested():
                 article = create_draft(
                     session,
                     org_id=source.org_id,
-                    kind=draft.kind,
+                    kind=source.kind or draft.kind,
                     issue=draft.issue,
                     environment=draft.environment,
                     resolution=draft.resolution,
@@ -138,5 +154,10 @@ def extract_and_store(
             errored += 1
             logger.warning("knowledge extraction failed for a record", exc_info=True)
     return ExtractionReport(
-        seen=seen, stored=stored, skipped=skipped, errored=errored, article_ids=tuple(created)
+        seen=seen,
+        stored=stored,
+        skipped=skipped,
+        errored=errored,
+        article_ids=tuple(created),
+        outdated=outdated,
     )

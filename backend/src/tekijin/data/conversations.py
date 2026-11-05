@@ -22,6 +22,12 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from tekijin.data.knowledge import (
+    SOURCE_EDITED_NOTE,
+    forget_message_sources,
+    reconcile_lost_sources,
+    return_to_review,
+)
 from tekijin.data.members import resolve_discord_member
 from tekijin.data.self_intros import (
     delete_message_intros,
@@ -58,6 +64,9 @@ class IngestResult:
     stored: int
     # Conversations whose stored text changed.
     conversations: int
+    # #113: Discord ids of the messages stored for the first time, in the order
+    # given (where a "solved" signal is looked for).
+    new_messages: tuple[int, ...] = ()
 
 
 def conversation_key(channel_id: int, thread_id: int | None, created_at: dt.datetime) -> str:
@@ -96,6 +105,10 @@ def ingest_messages(
     # post out of it. Unchanged posts are checked too, so replaying history fills
     # in introductions for posts stored before they existed.
     intros: list[ChannelMessage] = []
+    new: list[int] = []
+    # #113: stored messages whose text changed; knowledge made from them goes back
+    # to review.
+    edited: list[int] = []
     for message in messages:
         member = resolve_discord_member(
             session, org, message.author_discord_id, display_name=message.author_name, now=now
@@ -103,6 +116,7 @@ def ingest_messages(
         row = _find(session, org.id, message.message_id)
         if row is None:
             row = _insert(session, org.id, message.message_id)
+            new.append(message.message_id)
         elif _same(row, message, member.id):
             if is_intro_channel(row.channel_name):
                 intros.append(row)
@@ -110,6 +124,8 @@ def ingest_messages(
         else:
             changed.add(_key_of(row))
             intros.append(row)
+            if row.content != message.content:
+                edited.append(row.id)
         row.channel_id, row.channel_name = message.channel_id, message.channel_name
         row.thread_id, row.thread_name = message.thread_id, message.thread_name
         row.author_id, row.content = member.id, message.content
@@ -118,9 +134,12 @@ def ingest_messages(
         if is_intro_channel(row.channel_name) and row not in intros:
             intros.append(row)
     session.flush()
+    return_to_review(
+        session, org_id=org.id, channel_message_ids=edited, note=SOURCE_EDITED_NOTE, now=now
+    )
     sync_message_intros(session, embedder, org_id=org.id, rows=intros, now=now)
     rebuilt = sum(_rebuild(session, embedder, org.id, guild_id, key, now) for key in changed)
-    return IngestResult(stored=len(messages), conversations=rebuilt)
+    return IngestResult(stored=len(messages), conversations=rebuilt, new_messages=tuple(new))
 
 
 def _find(session: Session, org_id: int, message_id: int) -> ChannelMessage | None:
@@ -208,6 +227,8 @@ def delete_messages(
     session.flush()
     for key in keys:
         _rebuild(session, embedder, org_id, guild_id, key, now)
+    # #113: knowledge made from a deleted message lost that source.
+    reconcile_lost_sources(session, org_id=org_id, now=now)
     return len(rows)
 
 
@@ -269,6 +290,8 @@ def delete_conversation(
     for row in rows:
         row.hidden_at = now
     delete_message_intros(session, org_id=org_id, message_ids=[row.message_id for row in rows])
+    # #113: the hidden messages are no longer a source of any knowledge.
+    forget_message_sources(session, message_ids=[row.id for row in rows])
     session.execute(
         delete(SourceItem).where(
             SourceItem.org_id == org_id,
@@ -276,6 +299,7 @@ def delete_conversation(
             SourceItem.external_id == external_id,
         )
     )
+    reconcile_lost_sources(session, org_id=org_id, now=now)
     return len(rows)
 
 

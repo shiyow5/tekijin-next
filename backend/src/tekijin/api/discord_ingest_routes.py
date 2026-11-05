@@ -13,6 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from tekijin.api.discord_routes import require_bot_secret
 from tekijin.api.service import AgentService
@@ -27,6 +28,8 @@ from tekijin.data.conversations import (
 from tekijin.data.db import session_scope
 from tekijin.data.members import get_or_create_org_for_guild
 from tekijin.data.visibility import record_visibility
+from tekijin.knowledge.solve_signals import is_solve_emoji
+from tekijin.models.tables import ChannelMessage
 
 router = APIRouter(prefix="/internal/discord", include_in_schema=False)
 
@@ -95,6 +98,21 @@ class DiscordVisibilityRequest(BaseModel):
     threads: list[DiscordThreadVisibility] = Field(default_factory=list, max_length=20000)
 
 
+class DiscordReactionRequest(BaseModel):
+    guild_id: str = Field(pattern=_SNOWFLAKE)
+    channel_id: int = Field(ge=0)
+    message_id: int = Field(ge=0)
+    # Who reacted.
+    user_id: str = Field(pattern=_SNOWFLAKE)
+    emoji: str = Field(max_length=64)
+
+
+class DiscordReactionResponse(BaseModel):
+    # ``ignored``: not a check mark. ``pending``: the message is not stored yet;
+    # the bot sends the reaction again later.
+    status: Literal["ok", "unlinked", "ignored", "pending"]
+
+
 class DiscordVisibilityResponse(BaseModel):
     status: Literal["ok", "unlinked"]
 
@@ -156,6 +174,12 @@ def discord_messages(
             messages=[_incoming(m) for m in req.messages],
             now=service.now(),
         )
+        org_id = org.id
+    # #113: a new message may close a question (the asker's thanks); the job
+    # checks the organization's setting and reads the conversation.
+    request.app.state.knowledge_drafting.conversation_messages(
+        org_id=org_id, message_ids=result.new_messages
+    )
     return DiscordMessagesResponse(
         status="ok", stored=result.stored, conversations=result.conversations
     )
@@ -207,6 +231,40 @@ def discord_delete_streams(
             now=service.now(),
         )
     return DiscordDeleteResponse(status="ok", deleted=deleted)
+
+
+@router.post("/reactions", response_model=DiscordReactionResponse)
+def discord_reaction(
+    req: DiscordReactionRequest,
+    request: Request,
+    settings: Settings = Depends(require_bot_secret),
+) -> DiscordReactionResponse:
+    """A check mark on a message may mark its conversation solved (#113).
+
+    Only check marks are taken. The job checks the organization's
+    ``knowledge_from_conversations`` setting and that the person who reacted took
+    part in the conversation.
+    """
+
+    if not _ours(settings, req.guild_id):
+        return DiscordReactionResponse(status="unlinked")
+    if not is_solve_emoji(req.emoji):
+        return DiscordReactionResponse(status="ignored")
+    service = _service(request)
+    with session_scope(service.session_factory) as session:
+        org = get_or_create_org_for_guild(session, req.guild_id, name=f"Discord {req.guild_id}")
+        org_id = org.id
+        stored = session.scalar(
+            select(ChannelMessage.id).where(
+                ChannelMessage.org_id == org_id, ChannelMessage.message_id == req.message_id
+            )
+        )
+    if stored is None:
+        return DiscordReactionResponse(status="pending")
+    request.app.state.knowledge_drafting.reaction(
+        org_id=org_id, message_id=req.message_id, reactor_discord_id=req.user_id
+    )
+    return DiscordReactionResponse(status="ok")
 
 
 @router.get("/cursors", response_model=DiscordCursorsResponse)

@@ -100,6 +100,40 @@ class KnowledgeDraftSchema(BaseModel):
         return self
 
 
+#: How many drafts one passage of a document may give (#113). A manual's passage
+#: holds a few procedures or facts; a long list means the model is splitting hairs.
+MAX_DRAFTS_PER_PASSAGE = 6
+
+
+class DocumentKnowledgeItem(BaseModel):
+    """One procedure or fact read from a passage of a document (#113)."""
+
+    kind: Literal["procedure", "fact"] = Field(
+        default="fact", description="procedure=手順、fact=事実・決まりごと"
+    )
+    issue: str = Field(description="この知識が答える問い。質問する人の言葉に近い形で")
+    environment: str | None = Field(
+        default=None, description="どの場面で成り立つか。本文に無ければ null"
+    )
+    resolution: str = Field(description="問いへの答え。本文に書かれていることだけ")
+    cause: str | None = Field(default=None, description="理由。本文に無ければ null")
+
+
+class DocumentKnowledgeSchema(BaseModel):
+    """The procedures and facts in one passage of a document (#113, R6).
+
+    A manual or a hand-over note holds several pieces of knowledge, so the model
+    returns a list, possibly empty. Every item must answer its question from the
+    passage; items without an issue or an answer are dropped by the caller, and
+    only the first :data:`MAX_DRAFTS_PER_PASSAGE` are kept.
+    """
+
+    items: list[DocumentKnowledgeItem] = Field(
+        default_factory=list,
+        description=f"本文から読み取れる手順と事実(多くて{MAX_DRAFTS_PER_PASSAGE}件)。無ければ空",
+    )
+
+
 class QuestionStructureSchema(BaseModel):
     """On-demand question re-draft structured output (#475 Screen 01).
 

@@ -48,6 +48,9 @@ logger = logging.getLogger(__name__)
 HTTP_TIMEOUT_S = 60.0
 
 SessionFactory = sessionmaker[Session]
+#: Told the id of each document whose text was stored or changed (#113: the
+#: knowledge drafter reads it), after its transaction committed.
+OnChange = Callable[[int], object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +71,12 @@ class SyncReport:
 
 
 def sync_provider(
-    session_factory: SessionFactory, embedder: Embedder, *, org_id: int, provider: Provider
+    session_factory: SessionFactory,
+    embedder: Embedder,
+    *,
+    org_id: int,
+    provider: Provider,
+    on_change: OnChange | None = None,
 ) -> SyncReport:
     """One pass over one provider. Each document is stored in its own transaction."""
 
@@ -85,7 +93,13 @@ def sync_provider(
     report = replace(report, listed=len(documents))
     for document in documents.values():
         outcome = _sync_document(
-            session_factory, embedder, org_id, provider, document, stored.get(document.external_id)
+            session_factory,
+            embedder,
+            org_id,
+            provider,
+            document,
+            stored.get(document.external_id),
+            on_change,
         )
         report = replace(report, **{outcome: getattr(report, outcome) + 1})
 
@@ -109,6 +123,7 @@ def _sync_document(
     provider: Provider,
     document: RemoteDocument,
     known: StoredVersion | None,
+    on_change: OnChange | None = None,
 ) -> str:
     """Store one document and say what happened: a :class:`SyncReport` field."""
 
@@ -131,12 +146,16 @@ def _sync_document(
         return "failed"
     try:
         with session_factory() as session:
-            outcome = _store(session, embedder, org_id, provider.name, document, text, known)
+            outcome, item_id = _store(
+                session, embedder, org_id, provider.name, document, text, known
+            )
             session.commit()
-        return outcome
     except Exception:
         logger.exception("%s: could not store %s", provider.name, document.external_id)
         return "failed"
+    if on_change is not None and item_id is not None and outcome in ("added", "updated"):
+        on_change(item_id)
+    return outcome
 
 
 def _store(
@@ -147,13 +166,13 @@ def _store(
     document: RemoteDocument,
     text: str,
     known: StoredVersion | None,
-) -> str:
+) -> tuple[str, int | None]:
     if not text.strip():
         # An emptied document must not keep answering with its old text.
         if known is not None:
             delete_source_item(session, item_id=known.item_id, org_id=org_id)
         logger.info("%s: %s has no text; not stored", provider, document.external_id)
-        return "skipped"
+        return "skipped", None
     result = upsert_source_item(
         session,
         embedder,
@@ -169,7 +188,7 @@ def _store(
     if result.status == "unchanged":
         # Same text, newer time: remember the time so it is not fetched again.
         set_source_updated_at(session, item_id=result.item_id, updated_at=document.modified_at)
-    return result.status
+    return result.status, result.item_id
 
 
 def _describe(exc: BaseException) -> str:
@@ -187,8 +206,12 @@ def run_pass(
     *,
     org_id: int,
     providers: Sequence[Provider],
+    on_change: OnChange | None = None,
 ) -> list[SyncReport]:
-    return [sync_provider(session_factory, embedder, org_id=org_id, provider=p) for p in providers]
+    return [
+        sync_provider(session_factory, embedder, org_id=org_id, provider=p, on_change=on_change)
+        for p in providers
+    ]
 
 
 def run_forever(run_once: Callable[[], object], *, interval_s: float, stop: threading.Event) -> int:
@@ -249,6 +272,18 @@ def _connect(settings: Settings) -> tuple[SessionFactory, Embedder]:  # pragma: 
     return get_sessionmaker(get_engine(settings.database_url)), embedder
 
 
+def _inline_drafting(
+    settings: Settings, session_factory: SessionFactory, embedder: Embedder
+) -> Any:
+    """#113: knowledge drafts from changed documents, run in the poller's own loop."""
+
+    from tekijin.knowledge.drafting import KnowledgeDrafting
+
+    return KnowledgeDrafting.from_settings(
+        settings, session_factory=session_factory, embedder=embedder, inline=True
+    )
+
+
 @contextmanager
 def _stop_on_signals(stop: threading.Event) -> Iterator[None]:
     def handle(signum: int, frame: FrameType | None) -> None:
@@ -272,6 +307,7 @@ def main(
     make_providers: Callable[[Settings, httpx.Client], list[Provider]] = build_providers,
     connect: Callable[[Settings], tuple[SessionFactory, Embedder]] = _connect,
     stop: threading.Event | None = None,
+    make_drafting: Callable[[Settings, SessionFactory, Embedder], Any] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="python -m tekijin.ingest.poll")
     parser.add_argument("--once", action="store_true", help="run one pass and exit")
@@ -281,6 +317,7 @@ def main(
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     settings = settings or get_settings()
+    make_drafting = make_drafting or _inline_drafting
     if settings.discord_guild_id is None:
         sys.stderr.write("TEKIJIN_DISCORD_GUILD_ID is not set: it names the organization.\n")
         return 2
@@ -299,9 +336,15 @@ def main(
             return 2
         session_factory, embedder = connect(settings)
         org_id = resolve_org_id(session_factory, settings.discord_guild_id)
+        drafting = make_drafting(settings, session_factory, embedder)
+
+        def drafted(item_id: int) -> None:
+            drafting.document_changed(org_id=org_id, item_id=item_id)
 
         def once() -> list[SyncReport]:
-            return run_pass(session_factory, embedder, org_id=org_id, providers=providers)
+            return run_pass(
+                session_factory, embedder, org_id=org_id, providers=providers, on_change=drafted
+            )
 
         if args.once:
             return 0 if all(r.ok for r in once()) else 1

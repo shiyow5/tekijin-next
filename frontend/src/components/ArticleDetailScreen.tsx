@@ -296,6 +296,14 @@ export function ArticleDetailScreen({ articleId }: { articleId: string }) {
             <h1 className="min-w-0 break-words font-bold text-on-surface text-xl">
               {state.article.issue}
             </h1>
+            {state.article.review_note ? (
+              <p
+                role="note"
+                className="rounded-lg bg-surface-container px-sm py-xs text-on-surface text-sm"
+              >
+                確認に戻った理由: {state.article.review_note}
+              </p>
+            ) : null}
             <dl className="flex flex-col gap-sm text-sm">
               {(
                 [
@@ -317,7 +325,8 @@ export function ArticleDetailScreen({ articleId }: { articleId: string }) {
               {state.article.author_name ? <span>作成: {state.article.author_name}</span> : null}
               {state.article.verified_at ? (
                 <span>
-                  確認: {state.article.verifier_name ?? "管理者"}（
+                  {state.article.state === "verified" ? "確認" : "前回の確認"}:{" "}
+                  {state.article.verifier_name ?? "管理者"}（
                   {formatDateJst(state.article.verified_at) ?? "—"}）
                 </span>
               ) : null}

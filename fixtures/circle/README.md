@@ -30,3 +30,12 @@ PYTHONPATH=backend/src TEKIJIN_LLM_BACKEND=vllm TEKIJIN_LLM_BASE_URL=... TEKIJIN
 ```
 
 種類ごとに、断った数、聞き返し、取次ぎ、根拠付きの答え、取次ぎと一緒に見せた答え、出典が正しい数、答えの語句を含む数、正しい人が3位以内に入った数、経路の内訳を出す。
+
+知識回答(#113)を測るときは、先にサークルの文書と解決した会話から知識の下書きを作り、確認済みにする。この手順だけはDBに書き込む。書き込み先はサークルの組織に限り、作り直す前にサークルの知識だけを消す。本物のLLMが要る。
+
+```bash
+PYTHONPATH=backend/src TEKIJIN_LLM_BACKEND=vllm ... \
+  python scripts/circle_eval.py --build-knowledge --floor-sweep --knowledge both --rows
+```
+
+`--floor-sweep` は、確認済みの知識が下限ごとに何問を引き受けるかを、グラフを通さずに数える。`--knowledge both` は知識回答をオフとオンで1回ずつ流し、出力の `knowledge` の列に知識から答えた数を出す。

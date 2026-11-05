@@ -107,6 +107,50 @@ def test_new_documents_are_stored(engine, fake_embedder, org) -> None:
     assert a.author_id is None
 
 
+def test_stored_and_changed_documents_are_reported(engine, fake_embedder, org) -> None:
+    """#113: the knowledge drafter is told which documents to read."""
+
+    org_id, _ = org
+    changed: list[int] = []
+    factory = get_sessionmaker(engine)
+    sync_provider(
+        factory,
+        fake_embedder,
+        org_id=org_id,
+        provider=FakeProvider([_doc("a")]),
+        on_change=changed.append,
+    )
+    assert changed == [_items(engine, org_id)["a"].id]
+    sync_provider(
+        factory,
+        fake_embedder,
+        org_id=org_id,
+        provider=FakeProvider([_doc("a")]),
+        on_change=changed.append,
+    )
+    assert len(changed) == 1  # unchanged: not reported again
+
+
+def test_main_hands_changed_documents_to_the_drafter(engine, fake_embedder, org) -> None:
+    org_id, _ = org
+    told: list[tuple[int, int]] = []
+
+    class Drafter:
+        def document_changed(self, *, org_id: int, item_id: int) -> bool:
+            told.append((org_id, item_id))
+            return True
+
+    status = main(
+        ["--once"],
+        settings=Settings(discord_guild_id=GUILD),
+        make_providers=lambda s, c: [FakeProvider([_doc("a")])],
+        connect=lambda s: (get_sessionmaker(engine), fake_embedder),
+        make_drafting=lambda s, f, e: Drafter(),
+    )
+    assert status == 0
+    assert told == [(org_id, _items(engine, org_id)["a"].id)]
+
+
 def test_unchanged_documents_are_not_fetched_again(engine, fake_embedder, org) -> None:
     org_id, _ = org
     _sync(engine, fake_embedder, org_id, FakeProvider([_doc("a")]))

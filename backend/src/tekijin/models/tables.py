@@ -75,6 +75,11 @@ class Organization(Base):
     expertise_from_messages: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+    # #113: make case drafts from solved Discord conversations. Separate from
+    # ``expertise_from_messages`` (who knows what) and off by default.
+    knowledge_from_conversations: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -690,6 +695,9 @@ class KnowledgeArticle(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime)
     verified_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+    # #113: why the article is back in review (its source changed or was lost).
+    # Shown to the admin; cleared when the article is verified again.
+    review_note: Mapped[str | None] = mapped_column(Text)
 
 
 class KnowledgeSource(Base):

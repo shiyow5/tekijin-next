@@ -405,6 +405,26 @@ def test_add_stores_a_note_and_resending_a_url_updates_it(
         assert session.scalar(select(func.count()).select_from(Chunk)) == 3
 
 
+def test_an_added_or_changed_note_is_handed_to_the_drafter(discord_env, engine, fake_embedder):
+    """#113: ``/tekijin add`` tells the knowledge drafter what to read."""
+
+    told: list[int] = []
+
+    class Drafter:
+        def document_changed(self, *, org_id: int, item_id: int) -> bool:
+            told.append(item_id)
+            return True
+
+    client = _bot_client(engine, fake_embedder)
+    client.app.state.knowledge_drafting = Drafter()
+    user = _join(client)
+    note = {**user, "text": "通帳 印鑑", "url": "https://ex.com/b"}
+    client.post(ADD, json=note, headers=HEADERS)
+    client.post(ADD, json=note, headers=HEADERS)  # unchanged
+    client.post(ADD, json={**note, "text": "通帳 金庫"}, headers=HEADERS)
+    assert len(told) == 2 and told[0] == told[1]
+
+
 @pytest.mark.parametrize(
     "extra",
     [

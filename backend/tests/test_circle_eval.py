@@ -25,7 +25,24 @@ from tekijin.eval.circle import (
     score_row,
     summarize,
 )
+from tekijin.eval.circle_knowledge import (
+    NotTheCircle,
+    as_dict,
+    build_circle_knowledge,
+    circle_org,
+    floor_sweep,
+    format_build,
+    format_sweep,
+    reset_circle_knowledge,
+)
+from tekijin.knowledge.documents import DocumentDraftExtractor
+from tekijin.knowledge.extract import DraftExtractor
 from tekijin.llm.factory import make_llm_nodes
+from tekijin.llm.schemas import (
+    DocumentKnowledgeItem,
+    DocumentKnowledgeSchema,
+    KnowledgeDraftSchema,
+)
 from tekijin.retrieval.experts import FLOORS, DbExpertFinder
 
 NOW = dt.datetime(2026, 11, 2, 12, 0, 0)
@@ -108,7 +125,7 @@ def test_the_summary_counts_each_kind() -> None:
     table = format_summary(summary)
     assert table.splitlines()[0].startswith("kind | n | out_of_scope")
     assert "person | 1 |" in table
-    assert format_rows(rows).splitlines()[2].startswith("c person  person    ---H----R top3=m04")
+    assert format_rows(rows).splitlines()[2].startswith("c person  person    ---H----R- top3=m04")
 
 
 # --------------------------------------------------------------------------- #
@@ -149,6 +166,8 @@ def seeded(engine, bigrams):
     yield factory
     with factory() as cleanup:
         for table in (
+            "knowledge_sources",
+            "knowledge_articles",
             "self_intros",
             "chunks",
             "source_items",
@@ -191,3 +210,78 @@ def test_every_circle_question_runs_read_only(seeded, bigrams) -> None:
         person
     )
     assert summary["person"]["hit_at_3"] >= 4
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge built from the circle (#113), with fake models
+# --------------------------------------------------------------------------- #
+class _PassageFacts:
+    """One fact per passage: its first line as the question, the passage as answer."""
+
+    def invoke(self, prompt):
+        body = prompt[1][1].split("本文:\n", 1)[1]
+        item = DocumentKnowledgeItem(kind="fact", issue=body.splitlines()[0], resolution=body)
+        return DocumentKnowledgeSchema(items=[item])
+
+
+class _CaseFromChat:
+    def invoke(self, prompt):
+        lines = prompt[1][1].split("\n\n", 1)[1].splitlines()
+        return KnowledgeDraftSchema(
+            extractable=True, kind="case", issue=lines[0], resolution="\n".join(lines[1:])
+        )
+
+
+def test_the_circles_knowledge_is_built_verified_and_answers(seeded, bigrams) -> None:
+    circle = load_circle()
+    with seeded() as session:
+        session.execute(text("UPDATE organizations SET name = 'x'"))
+        with pytest.raises(NotTheCircle):
+            circle_org(session)
+        session.rollback()
+        assert reset_circle_knowledge(session) == 0
+        report = build_circle_knowledge(
+            session,
+            bigrams,
+            case_extractor=DraftExtractor(model=_CaseFromChat()),
+            document_extractor=DocumentDraftExtractor(model=_PassageFacts()),
+            now=NOW,
+        )
+        session.commit()
+    assert report.documents == len(circle.documents)
+    assert report.document_drafts > report.documents
+    # focus, cloud-rule, starscape and chat-snack end with the asker's thanks.
+    assert report.signals >= 4 and report.cases >= 3
+    assert report.verified == report.document_drafts + report.cases
+    assert "verified=" in format_build(report) and as_dict(report)["cases"] == report.cases
+
+    with seeded() as session:
+        read_only(session)
+        org_id = circle_org_id(session)
+        ids = circle_ids(session, circle, org_id)
+        assert ids.message_sources
+        sweep = floor_sweep(session, bigrams, circle, ids, floors=(0.0, 0.99))
+        assert sweep[0].taken["answer"] == 22 and sweep[0].cite_ok > 0
+        assert sweep[1].taken["answer"] < 22
+        assert format_sweep(sweep).splitlines()[1].startswith("0.00 | 22")
+        settings = Settings(llm_backend="stub")
+        finder = DbExpertFinder(session, floors=dict.fromkeys(FLOORS, 0.0))
+        _, *rest = make_llm_nodes(settings)
+        nodes = (_ConfidentKeywords(), *rest)
+        agent = build_circle_agent(
+            session, bigrams, settings, nodes, expert_finder=finder, knowledge_floor=0.0
+        )
+        rows = run_circle(agent, circle, org_id, ids, now=NOW, thread_prefix="k")
+        session.rollback()
+    summary = summarize(rows)
+    # Questions that do not ask for a person are answered from knowledge; the
+    # ones that do are still handed to a person.
+    assert summary["answer"]["knowledge"] >= 20
+    assert summary["answer"]["cite_ok"] > 0
+    person = [r for r in rows if r.kind == "person"]
+    assert not any(r.knowledge for r in person)
+    assert "K" in format_rows(rows)
+
+    with seeded() as session:
+        assert reset_circle_knowledge(session) == report.verified + report.wip
+        session.commit()

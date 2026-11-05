@@ -23,6 +23,7 @@ from tekijin.api.slack_routes import router as slack_router
 from tekijin.api.source_routes import router as source_router
 from tekijin.auth.service import LoginRateLimiter
 from tekijin.config import DEV_ADMIN_PASSWORD, DEV_AUTH_SECRET, Settings, get_settings
+from tekijin.knowledge.drafting import KnowledgeDrafting
 from tekijin.slack.dedup import SeenEventIds
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,11 @@ def create_app(agent_service: AgentService | None = None) -> FastAPI:
 
         agent_service = build_default_service(settings)
     app.state.agent_service = agent_service
+    # #113: knowledge drafts from documents and solved conversations, off the
+    # request path. Tests replace it with an inline runner and fake extractors.
+    app.state.knowledge_drafting = KnowledgeDrafting.from_settings(
+        settings, session_factory=agent_service.session_factory, embedder=agent_service.embedder
+    )
     # In-process login throttle (single-worker API; see _lifespan). Shared by all
     # /auth/login calls so brute-force attempts are counted per email across the
     # process.

@@ -12,6 +12,10 @@ an admin of the organization, and used to answer questions once verified.
   answer it gave. :func:`matching_drafts` / :func:`record_demand` count the
   questions a draft would have answered, which orders the review queue.
 
+When a source changes or goes (#113), :func:`return_to_review` and
+:func:`reconcile_lost_sources` send verified knowledge back to review with a
+``review_note`` saying why, and delete a draft that has no source left.
+
 Visibility: an article is shown to a reader only when the reader may see every one
 of its sources (a private channel's message hides what was made from it, and so
 does a message hidden from the web). A source whose item was deleted is lost and
@@ -27,7 +31,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, exists, func, not_, or_, select, update
+from sqlalchemy import ColumnElement, and_, delete, exists, func, not_, or_, select, update
 from sqlalchemy.orm import Session
 
 from tekijin.data.visibility import EVERYTHING, SourceScope, stream_visible, visible
@@ -48,6 +52,11 @@ VERIFIED = "verified"
 
 #: The fields a review may edit.
 EDITABLE_FIELDS: frozenset[str] = frozenset({"kind", "issue", "environment", "resolution", "cause"})
+
+#: Review notes (#113): why an article came back to the admin.
+SOURCE_CHANGED_NOTE = "出典の資料が更新されました。今の資料と見比べてから確認してください。"
+SOURCE_EDITED_NOTE = "出典の発言が編集されました。今の発言と見比べてから確認してください。"
+SOURCE_LOST_NOTE = "出典の一部が削除されました。残った出典で裏付けられるか確認してください。"
 
 _DISCORD_MESSAGE_URL = "https://discord.com/channels/{guild}/{channel}/{message}"
 
@@ -101,6 +110,7 @@ class ArticleDTO:
     created_at: dt.datetime
     updated_at: dt.datetime
     verified_at: dt.datetime | None
+    review_note: str | None = None
 
     @classmethod
     def from_row(cls, row: KnowledgeArticle) -> ArticleDTO:
@@ -122,7 +132,16 @@ class ArticleDTO:
             created_at=row.created_at,
             updated_at=row.updated_at,
             verified_at=row.verified_at,
+            review_note=row.review_note,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class LostSourceReport:
+    """What :func:`reconcile_lost_sources` did: articles sent back, articles deleted."""
+
+    returned: tuple[int, ...] = ()
+    deleted: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +335,7 @@ def verify_article(
     row.verifier_id = verifier_id
     row.verified_at = now
     row.superseded_by = None
+    row.review_note = None
     row.updated_at = now
     session.flush()
     return ArticleDTO.from_row(row)
@@ -359,6 +379,204 @@ def retire_article(
     row.updated_at = now
     session.flush()
     return ArticleDTO.from_row(row)
+
+
+# --------------------------------------------------------------------------- #
+# sources that change or go (#113)
+# --------------------------------------------------------------------------- #
+def _reviewed(row: KnowledgeArticle | ArticleDTO) -> bool:
+    """Whether an admin has vouched for the article: it is verified, or it was and
+    came back to review because its source changed or went (#113), which keeps
+    ``verified_at``. Such an article is never deleted or replaced automatically."""
+
+    return row.state == VERIFIED or row.verified_at is not None
+
+
+def _back_to_review(row: KnowledgeArticle, note: str, now: dt.datetime) -> None:
+    """Put ``row`` back in review (its text and embedding are kept) and say why.
+
+    A verified article becomes a draft but keeps ``verified_at`` and
+    ``verifier_id``: who last vouched for it and when, which the admin sees next
+    to the note and which keeps it from being deleted automatically.
+    """
+
+    if row.state == VERIFIED:
+        row.state = "draft"
+    row.review_note = note
+    row.updated_at = now
+
+
+def return_to_review(
+    session: Session,
+    *,
+    org_id: int,
+    source_item_ids: Iterable[int] = (),
+    channel_message_ids: Iterable[int] = (),
+    note: str,
+    now: dt.datetime,
+) -> list[int]:
+    """Send the articles made from these items or messages back to review.
+
+    Used when what they say may no longer hold: a document's text changed, or a
+    message was edited. A verified article becomes a draft; a draft or ``wip``
+    one gets the note too, so it is not verified without the admin seeing it.
+    Retired articles are left alone. Returns the ids changed, in id order.
+    """
+
+    item_ids = list(source_item_ids)
+    message_ids = list(channel_message_ids)
+    if not item_ids and not message_ids:
+        return []
+    cites = or_(
+        KnowledgeSource.source_item_id.in_(item_ids),
+        KnowledgeSource.channel_message_id.in_(message_ids),
+    )
+    rows = session.scalars(
+        select(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.org_id == org_id,
+            KnowledgeArticle.state != "retired",
+            exists().where(KnowledgeSource.article_id == KnowledgeArticle.id, cites),
+        )
+        .order_by(KnowledgeArticle.id)
+        .with_for_update()
+    ).all()
+    for row in rows:
+        _back_to_review(row, note, now)
+    session.flush()
+    return [row.id for row in rows]
+
+
+def _lost() -> ColumnElement[bool]:
+    return and_(
+        KnowledgeSource.source_item_id.is_(None),
+        KnowledgeSource.channel_message_id.is_(None),
+        KnowledgeSource.question_id.is_(None),
+    )
+
+
+def forget_message_sources(session: Session, *, message_ids: Sequence[int]) -> None:
+    """Mark the sources citing these ``channel_messages`` rows as lost.
+
+    A message hidden from the web keeps its row (it marks where history left
+    off), so the foreign key does not clear the source; this does. Follow with
+    :func:`reconcile_lost_sources`.
+    """
+
+    if message_ids:
+        session.execute(
+            update(KnowledgeSource)
+            .where(KnowledgeSource.channel_message_id.in_(list(message_ids)))
+            .values(channel_message_id=None)
+        )
+
+
+def reconcile_lost_sources(session: Session, *, org_id: int, now: dt.datetime) -> LostSourceReport:
+    """Deal with the organization's articles that lost a source.
+
+    A source is lost when what it named was deleted (its id became NULL). For
+    each article with one, the lost rows are removed. An article nobody has
+    verified is deleted when no source is left. Any other article goes back to
+    review with :data:`SOURCE_LOST_NOTE` (a retired one stays retired), even an
+    article an admin verified that has no source left, so the admin's work is
+    never deleted behind their back. Removing the lost rows means an admin who verifies
+    the article again decides, from the note and the live sources, who may read
+    it. Idempotent.
+    """
+
+    lost = session.execute(
+        select(KnowledgeSource.id, KnowledgeSource.article_id)
+        .join(KnowledgeArticle, KnowledgeArticle.id == KnowledgeSource.article_id)
+        .where(KnowledgeArticle.org_id == org_id, _lost())
+    ).all()
+    if not lost:
+        return LostSourceReport()
+    article_ids = sorted({article_id for _, article_id in lost})
+    session.execute(delete(KnowledgeSource).where(KnowledgeSource.id.in_([i for i, _ in lost])))
+    live: dict[int, int] = {
+        int(article_id): int(count)
+        for article_id, count in session.execute(
+            select(KnowledgeSource.article_id, func.count())
+            .where(KnowledgeSource.article_id.in_(article_ids))
+            .group_by(KnowledgeSource.article_id)
+        ).all()
+    }
+    returned: list[int] = []
+    deleted: list[int] = []
+    rows = session.scalars(
+        select(KnowledgeArticle)
+        .where(KnowledgeArticle.id.in_(article_ids))
+        .order_by(KnowledgeArticle.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    for row in rows:
+        if not _reviewed(row) and not live.get(row.id):
+            session.delete(row)
+            deleted.append(row.id)
+        elif row.state != "retired":
+            _back_to_review(row, SOURCE_LOST_NOTE, now)
+            returned.append(row.id)
+    session.flush()
+    return LostSourceReport(returned=tuple(returned), deleted=tuple(deleted))
+
+
+def articles_citing(
+    session: Session, *, org_id: int, source_item_id: int
+) -> list[tuple[ArticleDTO, bool]]:
+    """Articles made from one item, each with whether that item is its only source."""
+
+    rows = session.scalars(
+        select(KnowledgeArticle)
+        .where(
+            KnowledgeArticle.org_id == org_id,
+            exists().where(
+                KnowledgeSource.article_id == KnowledgeArticle.id,
+                KnowledgeSource.source_item_id == source_item_id,
+            ),
+        )
+        .order_by(KnowledgeArticle.id)
+    ).all()
+    other = set(
+        session.scalars(
+            select(KnowledgeSource.article_id).where(
+                KnowledgeSource.article_id.in_([r.id for r in rows]),
+                or_(
+                    KnowledgeSource.source_item_id.is_(None),
+                    KnowledgeSource.source_item_id != source_item_id,
+                ),
+            )
+        )
+    )
+    return [(ArticleDTO.from_row(r), r.id not in other) for r in rows]
+
+
+def drop_unreviewed_drafts(session: Session, *, org_id: int, source_item_id: int) -> int:
+    """Delete the drafts nobody reviewed that were made only from this item.
+
+    Called when the item's text changed (they say what the old text said) and
+    before its drafts are made again. Returns how many were deleted.
+    """
+
+    stale = [
+        a.id
+        for a, only in articles_citing(session, org_id=org_id, source_item_id=source_item_id)
+        if only and a.state in REVIEW_STATES and not _reviewed(a)
+    ]
+    if not stale:
+        return 0
+    # The review conditions are in the DELETE itself: an admin may verify one of
+    # these between the read above and here, and PostgreSQL checks the WHERE
+    # again on a row another transaction changed, so that article is kept.
+    result = session.execute(
+        delete(KnowledgeArticle).where(
+            KnowledgeArticle.id.in_(stale),
+            KnowledgeArticle.org_id == org_id,
+            KnowledgeArticle.state.in_(REVIEW_STATES),
+            KnowledgeArticle.verified_at.is_(None),
+        )
+    )
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------- #

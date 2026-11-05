@@ -75,6 +75,20 @@ describe("ArticleDetailScreen (#112)", () => {
     expect(screen.queryByLabelText("答え")).toBeNull();
   });
 
+  it("says why the article came back to review (#113)", async () => {
+    getArticleMock.mockResolvedValue({
+      ...DRAFT,
+      review_note: "出典の資料が更新されました。",
+      verified_at: "2026-11-02T10:00:00",
+    });
+    render(<ArticleDetailScreen articleId="7" />);
+
+    expect(await screen.findByRole("note")).toHaveTextContent(
+      "確認に戻った理由: 出典の資料が更新されました。",
+    );
+    expect(screen.getByText(/前回の確認:/)).toBeInTheDocument();
+  });
+
   it("lets the admin edit and verify", async () => {
     patchArticleMock.mockResolvedValue({ ...DRAFT, resolution: "月600円" });
     reviewArticleMock.mockResolvedValue({ ...DRAFT, resolution: "月600円", state: "verified" });

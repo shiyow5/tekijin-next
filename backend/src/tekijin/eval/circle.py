@@ -17,6 +17,9 @@ What each row records, per the design doc §4.7:
 * ``contains`` — the answer shown contains every expected phrase.
 * ``hit_at_3`` — for a ``person`` question, a correct member is among the first
   three recommendations.
+* ``knowledge`` — the answer came from verified knowledge (#113). Its citations
+  name the documents (``src_``) and Discord messages (``msg_``) the knowledge was
+  made from; a message counts as the conversation it belongs to.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from __future__ import annotations
 import datetime as dt
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -35,8 +38,9 @@ from tekijin.agent.graph import build_agent
 from tekijin.config import Settings
 from tekijin.data.circle import GUILD_ID, Circle, external_id
 from tekijin.data.circle import _discord_id as circle_discord_id
+from tekijin.data.conversations import conversation_key
 from tekijin.llm.factory import make_llm_nodes
-from tekijin.models.tables import Identity, Organization, SourceItem
+from tekijin.models.tables import ChannelMessage, Identity, Organization, SourceItem
 from tekijin.retrieval.embedding import Embedder
 from tekijin.retrieval.experts import DbExpertFinder
 from tekijin.retrieval.sources import ChunkSearch, source_citation_id
@@ -52,6 +56,7 @@ _COUNTED = (
     "cite_ok",
     "contains",
     "hit_at_3",
+    "knowledge",
 )
 
 
@@ -63,6 +68,9 @@ class CircleIds:
     citation_ids: Mapping[str, str]
     # Stored member id -> fixture member key ("m04").
     member_keys: Mapping[int, str]
+    # A knowledge answer's message citation ("msg_<id>") -> its conversation's
+    # "src_<id>" (#113).
+    message_sources: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +89,7 @@ class RowResult:
     hit_at_3: bool
     top3: tuple[str, ...]
     answer: str
+    knowledge: bool = False
 
 
 def read_only(session: Session) -> None:
@@ -105,12 +114,15 @@ def build_circle_agent(
     nodes: tuple[Any, ...] | None = None,
     *,
     expert_finder: Any | None = None,
+    knowledge_floor: float | None = None,
 ) -> Any:
     """The graph the API builds for a member's question, on a ``MemorySaver``.
 
     Mirrors ``api/factory.py`` and ``AgentService._graph`` for the switches that
     reach a member's question; ``nodes`` defaults to the configured LLM backend and
     ``expert_finder`` to ``DbExpertFinder`` with its calibrated floors.
+    ``knowledge_floor`` wires the knowledge answer with that floor (#113), as
+    ``knowledge_retrieval_enabled`` does in the API; ``None`` leaves it out.
     """
 
     intent, sufficiency, draft, answerability, self_answer = nodes or make_llm_nodes(settings)
@@ -134,6 +146,7 @@ def build_circle_agent(
         similar_askers_enabled=settings.similar_askers_enabled,
         source_search=ChunkSearch(session),
         expert_finder=expert_finder or DbExpertFinder(session),
+        knowledge_answer_min_similarity=knowledge_floor,
     )
 
 
@@ -159,7 +172,22 @@ def circle_ids(session: Session, circle: Circle, org_id: int) -> CircleIds:
         for m in circle.members
         if circle_discord_id(m["key"]) in by_discord
     }
-    return CircleIds(citation_ids=citation_ids, member_keys=member_keys)
+    messages = session.execute(
+        select(
+            ChannelMessage.id,
+            ChannelMessage.channel_id,
+            ChannelMessage.thread_id,
+            ChannelMessage.created_at,
+        ).where(ChannelMessage.org_id == org_id)
+    ).all()
+    message_sources = {
+        f"msg_{mid}": source_citation_id(stored[key])
+        for mid, channel, thread, at in messages
+        if (key := conversation_key(channel, thread, at)) in stored
+    }
+    return CircleIds(
+        citation_ids=citation_ids, member_keys=member_keys, message_sources=message_sources
+    )
 
 
 def score_row(
@@ -176,7 +204,7 @@ def score_row(
         shown, citations = values.get("answer") or "", values.get("self_answer_citations") or []
     else:
         shown, citations = additive_text, values.get("additive_citations") or []
-    cited = {c.get("source_id") for c in citations}
+    cited = {ids.message_sources.get(c.get("source_id"), c.get("source_id")) for c in citations}
     wanted = {ids.citation_ids[r] for r in question.get("sources", []) if r in ids.citation_ids}
     phrases = question.get("contains", [])
     top3 = tuple(
@@ -198,6 +226,7 @@ def score_row(
         hit_at_3=bool(set(top3) & set(question.get("members", []))),
         top3=top3,
         answer=(values.get("answer") or additive_text or "").replace("\n", " "),
+        knowledge=bool(values.get("knowledge_article_ids")),
     )
 
 
@@ -272,6 +301,7 @@ def format_rows(rows: Iterable[RowResult]) -> str:
                 flag(r.cite_ok, "C"),
                 flag(r.contains, "P"),
                 flag(r.hit_at_3, "R"),
+                flag(r.knowledge, "K"),
             ]
         )
         lines.append(
