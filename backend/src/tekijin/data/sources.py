@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from tekijin.data.self_intros import sync_document_intros
+from tekijin.data.self_intros import DISCORD_PROVIDER, sync_document_intros
 from tekijin.data.visibility import SourceScope, visible
 from tekijin.ingest.chunking import passage_text, split_text
 from tekijin.models.tables import Chunk, SourceItem
@@ -152,16 +152,10 @@ def _unchanged(
 
 
 def _sync_intros(session: Session, embedder: Embedder, item: SourceItem, now: dt.datetime) -> None:
-    sync_document_intros(
-        session,
-        embedder,
-        org_id=item.org_id,
-        item_id=item.id,
-        provider=item.provider,
-        title=item.title,
-        body=item.body,
-        now=now,
-    )
+    # A Discord conversation never holds introductions (its channel's posts do), and
+    # skipping it spares a lock on every conversation replayed from history.
+    if item.provider != DISCORD_PROVIDER:
+        sync_document_intros(session, embedder, item_id=item.id, now=now)
 
 
 def _find(session: Session, org_id: int, provider: str, external_id: str) -> SourceItem | None:

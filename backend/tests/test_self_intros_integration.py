@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from tekijin.data.conversations import (
     IncomingMessage,
@@ -24,11 +24,13 @@ from tekijin.data.self_intros import (
     delete_member_intros,
     search_self_intros,
     set_join_intro,
+    sync_document_intros,
 )
 from tekijin.data.sources import delete_source_item, upsert_source_item
 from tekijin.data.visibility import EVERYTHING, PUBLIC, SourceScope, record_visibility
-from tekijin.models.tables import Employee, Organization, SelfIntro
+from tekijin.models.tables import Employee, Organization, SelfIntro, SourceItem
 from tekijin.retrieval.bm25_cache import clear_bm25_cache
+from tekijin.retrieval.indexing import embed_corpus
 
 NOW = dt.datetime(2026, 11, 5, 12, 0, 0)
 GUILD = "106106106"
@@ -182,6 +184,41 @@ def test_an_opted_out_member_cannot_set_an_intro(session, fake_embedder, org) ->
     assert _intros(session, org) == []
 
 
+def test_an_opt_out_committed_after_the_member_was_loaded_is_seen(
+    session, fake_embedder, org
+) -> None:
+    member = _member(session, org, "1", "山田 太郎")
+    # As if another request opted the member out after this one loaded them: the
+    # loaded object still says they are in.
+    session.execute(update(Employee).where(Employee.id == member.id).values(opted_out_at=NOW))
+    assert member.opted_out_at is None
+
+    assert not set_join_intro(session, fake_embedder, member=member, text="会計です", now=NOW)
+    _doc(session, fake_embedder, org)
+    assert _intros(session, org) == []
+
+
+def test_the_document_is_read_again_under_its_lock(session, fake_embedder, org) -> None:
+    yamada = _member(session, org, "1", "山田 太郎")
+    item_id = _doc(session, fake_embedder, org).item_id
+    # Another request changed the stored document after this one read it.
+    session.execute(update(SourceItem).where(SourceItem.id == item_id).values(title="会計の資料"))
+
+    sync_document_intros(session, fake_embedder, item_id=item_id, now=NOW)
+
+    assert (yamada.id, "slides") not in _texts(session, org)
+
+
+def test_lost_vectors_are_restored_by_embed_corpus(session, fake_embedder, org) -> None:
+    member = _member(session, org, "1", "山田 太郎")
+    set_join_intro(session, fake_embedder, member=member, text="会計です", now=NOW)
+    session.execute(update(SelfIntro).where(SelfIntro.org_id == org.id).values(embedding=None))
+    session.expire_all()
+
+    assert embed_corpus(session, fake_embedder)["self_intros"] >= 1
+    assert all(row.embedding is not None for row in _intros(session, org))
+
+
 # --------------------------------------------------------------------------- #
 # Discord introduction channel
 # --------------------------------------------------------------------------- #
@@ -224,6 +261,12 @@ def test_posts_in_the_intro_channel_become_intros(session, fake_embedder, org) -
     assert set(rows) == {1, 2, 901}
     assert rows[1].origin == "discord" and rows[1].text == "会計を担当しています"
     assert (rows[901].discord_channel_id, rows[901].discord_thread_id) == (INTRO_CHANNEL, 901)
+
+
+def test_a_message_sent_twice_in_one_batch_is_one_intro(session, fake_embedder, org) -> None:
+    _ingest(session, fake_embedder, org, [_msg(1, "会計です"), _msg(1, "会計です")])
+
+    assert [r.message_id for r in _intros(session, org)] == [1]
 
 
 def test_an_edit_updates_and_a_delete_removes_the_intro(session, fake_embedder, org) -> None:

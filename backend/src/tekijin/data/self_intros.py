@@ -55,7 +55,7 @@ _POOL = 50
 
 # Discord's conversation provider, whose titles name the channel; a conversation
 # in the introduction channel is not a document of introductions.
-_DISCORD_PROVIDER = "discord"
+DISCORD_PROVIDER = "discord"
 
 _SLIDE_HEADING = re.compile(r"^\s*(?:スライド|slide)\s*[0-9０-９]+", re.IGNORECASE)
 _MD_HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+\S")
@@ -172,7 +172,7 @@ def intro_sections(body: str, names: Mapping[int, str]) -> dict[int, str]:
 
 
 def is_intro_document(provider: str, title: str | None) -> bool:
-    return provider != _DISCORD_PROVIDER and INTRO_TITLE in (title or "")
+    return provider != DISCORD_PROVIDER and INTRO_TITLE in (title or "")
 
 
 def is_intro_channel(name: str | None) -> bool:
@@ -189,49 +189,67 @@ def _org_members(session: Session, org_id: int) -> list[Employee]:
     return list(session.scalars(select(Employee).where(Employee.org_id == org_id)).all())
 
 
-def sync_document_intros(
-    session: Session,
-    embedder: Embedder,
-    *,
-    org_id: int,
-    item_id: int,
-    provider: str,
-    title: str | None,
-    body: str,
-    now: dt.datetime,
-) -> int:
-    """Make the ``slides`` rows of one source item match its text. Returns how
-    many rows it has now.
+def _writable_members(session: Session, member_ids: Iterable[int]) -> set[int]:
+    """Of these members, those who may have introductions written now.
 
-    Rows whose text did not change keep their embedding, so re-running it on an
-    unchanged document embeds nothing. A member who has opted out gets no row.
-    The caller commits.
+    The rows are share-locked until the caller commits, so ``/tekijin optout``
+    (which updates the row before deleting the member's introductions) waits for
+    this write and then deletes what it wrote, or has already committed and the
+    member is left out here. Read from the database, not from loaded objects,
+    which may predate an opt-out committed since."""
+
+    ids = sorted(set(member_ids))
+    if not ids:
+        return set()
+    rows = session.execute(
+        select(Employee.id, Employee.opted_out_at)
+        .where(Employee.id.in_(ids))
+        .with_for_update(read=True)
+    ).all()
+    return {member_id for member_id, opted_out_at in rows if opted_out_at is None}
+
+
+def sync_document_intros(
+    session: Session, embedder: Embedder, *, item_id: int, now: dt.datetime
+) -> int:
+    """Make the ``slides`` rows of one source item match its stored text. Returns
+    how many rows it has now.
+
+    The item is locked and read again first, so an upsert of it that committed
+    meanwhile is what the rows are built from. Rows whose text did not change keep
+    their embedding, so re-running it on an unchanged document embeds nothing. A
+    member who has opted out gets no row. The caller commits.
     """
 
-    if not is_intro_document(provider, title):
+    item = session.scalars(
+        select(SourceItem)
+        .where(SourceItem.id == item_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if item is None or not is_intro_document(item.provider, item.title):
         session.execute(delete(SelfIntro).where(SelfIntro.source_item_id == item_id))
         return 0
-    # Serializes with an upsert of the same item, which holds this lock while it
-    # writes, and with another sync of it.
-    session.execute(select(SourceItem.id).where(SourceItem.id == item_id).with_for_update())
-    members = _org_members(session, org_id)
-    sections = intro_sections(body, {m.id: m.name for m in members})
-    opted_out = {m.id for m in members if m.opted_out_at is not None}
-    wanted = {mid: text for mid, text in sections.items() if mid not in opted_out}
+    members = _org_members(session, item.org_id)
+    sections = intro_sections(item.body, {m.id: m.name for m in members})
     stored = {
         row.member_id: row
         for row in session.scalars(
             select(SelfIntro).where(SelfIntro.source_item_id == item_id)
         ).all()
     }
+    changed = [m for m, text in sections.items() if m not in stored or stored[m].text != text]
+    vectors = embedder.encode([sections[m] for m in changed], kind=PASSAGE) if changed else []
+    allowed = _writable_members(session, sections)
+    wanted = {m: text for m, text in sections.items() if m in allowed}
     for member_id, row in stored.items():
         if member_id not in wanted:
             session.delete(row)
-    changed = [mid for mid, text in wanted.items() if mid not in stored or stored[mid].text != text]
-    vectors = embedder.encode([wanted[mid] for mid in changed], kind=PASSAGE) if changed else []
     for member_id, vector in zip(changed, vectors, strict=True):
+        if member_id not in wanted:
+            continue
         row = stored.get(member_id) or SelfIntro(
-            org_id=org_id, member_id=member_id, origin=SLIDES, source_item_id=item_id
+            org_id=item.org_id, member_id=member_id, origin=SLIDES, source_item_id=item_id
         )
         row.text, row.embedding, row.updated_at = wanted[member_id], vector, now
         session.add(row)
@@ -245,15 +263,17 @@ def set_join_intro(
     """Set or replace the member's ``join`` row. False (nothing written) when the
     member has opted out, or belongs to no organization. The caller commits."""
 
-    if member.opted_out_at is not None or member.org_id is None:
-        return False
     text = text.strip()[:MAX_INTRO_LENGTH]
-    if not text:
+    if member.org_id is None or not text:
         return False
     row = _join_row(session, member.id)
-    if row is not None and row.text == text:
+    vector = (
+        None if row is not None and row.text == text else embedder.encode([text], kind=PASSAGE)[0]
+    )
+    if member.id not in _writable_members(session, [member.id]):
+        return False
+    if vector is None:
         return True
-    vector = embedder.encode([text], kind=PASSAGE)[0]
     if row is None:
         try:
             with session.begin_nested():
@@ -299,7 +319,8 @@ def sync_message_intros(
     the introduction channel is its author's introduction, anything else (or a
     hidden post) has none. The caller commits."""
 
-    messages = list(rows)
+    # One message may come twice in a batch; it is one row.
+    messages = list({m.message_id: m for m in rows}.values())
     if not messages:
         return
     stored = {
@@ -311,20 +332,19 @@ def sync_message_intros(
             )
         ).all()
     }
-    authors = {m.author_id for m in messages if m.author_id is not None}
-    opted_out = set(
-        session.scalars(
-            select(Employee.id).where(Employee.id.in_(authors), Employee.opted_out_at.isnot(None))
-        ).all()
-    )
-    wanted = [m for m in messages if _is_intro_message(m) and m.author_id not in opted_out]
-    keep = {m.message_id for m in wanted}
+    intro_posts = [m for m in messages if _is_intro_message(m)]
+    changed = [
+        m for m in intro_posts if m.message_id not in stored or _differs(stored[m.message_id], m)
+    ]
+    vectors = embedder.encode([m.content.strip() for m in changed], kind=PASSAGE) if changed else []
+    allowed = _writable_members(session, {m.author_id for m in intro_posts if m.author_id})
+    keep = {m.message_id for m in intro_posts if m.author_id in allowed}
     for message_id, row in stored.items():
         if message_id not in keep:
             session.delete(row)
-    changed = [m for m in wanted if m.message_id not in stored or _differs(stored[m.message_id], m)]
-    vectors = embedder.encode([m.content.strip() for m in changed], kind=PASSAGE) if changed else []
     for message, vector in zip(changed, vectors, strict=True):
+        if message.message_id not in keep:
+            continue
         row = stored.get(message.message_id) or SelfIntro(
             org_id=org_id, origin=DISCORD, message_id=message.message_id
         )
