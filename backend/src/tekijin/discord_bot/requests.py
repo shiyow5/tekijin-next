@@ -57,6 +57,10 @@ _THREAD_MESSAGE_MAX = 4000
 _RETRY_MAX = 1000
 #: Key of the bot-side version stamp on a queued thread message (never sent).
 _VERSION = "_version"
+#: Older than any version.
+_NO_VERSION: tuple[float, int] = (float("-inf"), -1)
+#: Discord ids carry their creation time in milliseconds since 2015-01-01 UTC.
+_DISCORD_EPOCH_MS = 1420070400000
 #: How many of the newest messages of each open request thread are read again
 #: after a (re)connect.
 _REPLAY_LIMIT = 500
@@ -160,6 +164,21 @@ def review_view(
     return view
 
 
+def _written(message: Any) -> float:
+    """When this text of the message was written: its last edit, else its creation.
+
+    Versions are ordered by it first, so a copy read earlier (a history replay
+    that overlaps a live edit) can never replace a newer edit."""
+
+    edited_at = getattr(message, "edited_at", None)
+    if edited_at is not None and hasattr(edited_at, "timestamp"):
+        return float(edited_at.timestamp())
+    try:
+        return ((int(message.id) >> 22) + _DISCORD_EPOCH_MS) / 1000
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _who(interaction: Any) -> dict[str, Any]:
     return discord_user(interaction.user.id, interaction.guild_id, interaction.user.display_name)
 
@@ -185,7 +204,7 @@ class RequestUI:
         # How many thread messages have been read; orders versions of one message.
         self._reads = 0
         # The newest version of each message the backend has taken (recent ones).
-        self._taken: dict[str, int] = {}
+        self._taken: dict[str, tuple[float, int]] = {}
         # Sends in flight, one lock per message id.
         self._sending: dict[str, tuple[asyncio.Lock, int]] = {}
         # Recently deleted message ids: never sent to the backend after deletion.
@@ -312,7 +331,7 @@ class RequestUI:
             body["edited"] = True
         # Which read of the message this is: a later read carries newer text.
         self._reads += 1
-        body[_VERSION] = self._reads
+        body[_VERSION] = (_written(message), self._reads)
         await self._forward(body)
 
     async def on_thread_delete(
@@ -391,8 +410,8 @@ class RequestUI:
         message_id = body["message_id"]
         if message_id in self._deleted:
             return True  # deleted meanwhile; never send it
-        version = body.get(_VERSION, 0)
-        if version <= self._taken.get(message_id, -1):
+        version = body.get(_VERSION, _NO_VERSION)
+        if version <= self._taken.get(message_id, _NO_VERSION):
             return True  # a newer version was already taken; this one is obsolete
         result = await self._call(
             "thread-message", {k: v for k, v in body.items() if k != _VERSION}
@@ -400,13 +419,13 @@ class RequestUI:
         if message_id in self._deleted:
             return True  # deleted while it was being sent; the deletion follows
         queued = self._retry.get(message_id)
-        queued_version = queued.get(_VERSION, 0) if queued is not None else None
+        queued_version = queued.get(_VERSION, _NO_VERSION) if queued is not None else None
         if "status" in result:
             # A queued version read later than this one still has to be sent;
             # one read earlier is superseded by what was just taken.
             if queued_version is not None and queued_version <= version:
                 self._retry.pop(message_id, None)
-            self._taken[message_id] = max(version, self._taken.get(message_id, -1))
+            self._taken[message_id] = max(version, self._taken.get(message_id, _NO_VERSION))
             while len(self._taken) > _RETRY_MAX:
                 self._taken.pop(next(iter(self._taken)))
             return True

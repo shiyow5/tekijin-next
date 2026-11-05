@@ -611,8 +611,8 @@ def test_a_retry_snapshot_never_resends_a_superseded_version(monkeypatch, calls)
 
     monkeypatch.setattr(bot_requests, "internal_post", backend)
     ui = _ui()
-    old = {"message_id": "55", "body": "古い", "edited": True, "_version": 1}
-    new = {"message_id": "55", "body": "新しい", "edited": True, "_version": 2}
+    old = {"message_id": "55", "body": "古い", "edited": True, "_version": (1.0, 1)}
+    new = {"message_id": "55", "body": "新しい", "edited": True, "_version": (2.0, 2)}
     asyncio.run(ui._forward(new))
     asyncio.run(ui._forward(old))  # e.g. from a snapshot taken before ``new`` was sent
     assert [b["body"] for _, b in calls] == ["新しい"]
@@ -641,3 +641,23 @@ def test_an_edit_that_removes_the_text_is_sent_as_an_empty_edit(calls) -> None:
     # A new message without text is still not sent.
     asyncio.run(ui.on_thread_message(_thread_message(thread, content="")))
     assert len(calls) == 2
+
+
+def test_a_stale_replay_copy_never_replaces_a_live_edit(monkeypatch, calls) -> None:
+    """A history copy read before a live edit is sent after it: the edit wins."""
+
+    import datetime as dt
+
+    async def backend(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        return {"status": "updated"}
+
+    monkeypatch.setattr(bot_requests, "internal_post", backend)
+    ui = _ui()
+    thread = _Channel(700, parent_id=OUTPUT)
+    first = dt.datetime(2026, 11, 5, 10, 0, tzinfo=dt.UTC)
+    stale = _thread_message(thread, content="古い", edited_at=first)
+    live = _thread_message(thread, content="新しい", edited_at=first + dt.timedelta(minutes=1))
+    asyncio.run(ui.on_thread_message(live, edited=True))
+    asyncio.run(ui.on_thread_message(stale))  # the replay's copy, forwarded later
+    assert [b["body"] for _, b in calls] == ["新しい"]
