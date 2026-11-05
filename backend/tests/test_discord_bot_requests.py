@@ -487,12 +487,10 @@ def test_deletions_are_forwarded_and_retried(monkeypatch, calls) -> None:
 
     monkeypatch.setattr(bot_requests, "internal_post", flaky)
     ui = _ui()
-    asyncio.run(ui.on_thread_delete([55, 56]))
+    asyncio.run(ui.on_thread_delete([55, 56], thread_id=700))
     asyncio.run(ui.retry_deletes())
-    assert calls == [
-        ("thread-message/delete", {"guild_id": str(GUILD), "message_ids": ["55", "56"]}),
-        ("thread-message/delete", {"guild_id": str(GUILD), "message_ids": ["55", "56"]}),
-    ]
+    body = {"guild_id": str(GUILD), "message_ids": ["55", "56"], "thread_id": "700"}
+    assert calls == [("thread-message/delete", body), ("thread-message/delete", body)]
     asyncio.run(ui.retry_deletes())
     assert len(calls) == 2
 
@@ -524,3 +522,20 @@ def test_a_thread_known_late_is_read_again(monkeypatch, calls) -> None:
     _outbox(monkeypatch, [])
     asyncio.run(ui.deliver(client))
     assert [p for p, _ in calls] == ["outbox/1", "outbox/1", "thread-message"]
+
+
+def test_a_deleted_message_waiting_to_be_sent_is_never_sent(monkeypatch, calls) -> None:
+    replies = iter([{"kind": "error"}, {"status": "ok"}])
+
+    async def flaky(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        return next(replies)
+
+    monkeypatch.setattr(bot_requests, "internal_post", flaky)
+    ui = _ui()
+    thread = _Channel(700, parent_id=OUTPUT)
+    asyncio.run(ui.on_thread_message(_thread_message(thread)))  # fails, kept for retry
+    asyncio.run(ui.on_thread_delete([55], thread_id=700))
+    asyncio.run(ui.retry_messages())
+    asyncio.run(ui.on_thread_message(_thread_message(thread)))  # e.g. a replay
+    assert [p for p, _ in calls] == ["thread-message", "thread-message/delete"]

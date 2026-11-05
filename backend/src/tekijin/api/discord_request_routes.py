@@ -405,6 +405,9 @@ def discord_thread_message(
 class DiscordThreadDelete(BaseModel):
     guild_id: str = Field(pattern=_DISCORD_ID)
     message_ids: list[str] = Field(min_length=1, max_length=100)
+    # The thread the messages were in, when the bot knows it: ids never received
+    # are then remembered as deleted, so a late send of one is refused.
+    thread_id: str | None = Field(default=None, pattern=_DISCORD_ID)
 
     @field_validator("message_ids")
     @classmethod
@@ -437,9 +440,14 @@ def discord_thread_message_delete(
     touched: set[int] = set()
     now = _now()
     with session_scope(service.session_factory) as session:
+        thread = request_for_thread(session, req.thread_id) if req.thread_id else None
         for message_id in req.message_ids:
             seen = seen_message(session, message_id)
-            if seen is None or (seen.message_row_id is None and seen.answer_id is None):
+            if seen is None:
+                if thread is not None:
+                    mark_message_seen(session, message_id, thread.recommendation_id)
+                continue
+            if seen.message_row_id is None and seen.answer_id is None:
                 continue
             if seen.answer_id is not None:
                 answer = session.get(Answer, seen.answer_id)

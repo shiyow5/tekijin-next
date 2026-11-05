@@ -175,8 +175,12 @@ class RequestUI:
         self._lock = asyncio.Lock()
         # Thread messages the backend did not take; sent again with the outbox.
         self._retry: dict[str, dict[str, Any]] = {}
-        # Deleted request-thread messages the backend has not heard about yet.
+        # Deleted request-thread messages the backend has not heard about yet,
+        # and the thread each was in (when known).
         self._deletes: set[str] = set()
+        self._delete_threads: dict[str, str] = {}
+        # Recently deleted message ids: never sent to the backend after deletion.
+        self._deleted: dict[str, None] = {}
         # Posted outbox items whose result the backend has not taken yet.
         self._acks: dict[int, dict[str, Any]] = {}
 
@@ -293,25 +297,43 @@ class RequestUI:
             body["edited"] = True
         await self._forward(body)
 
-    async def on_thread_delete(self, message_ids: list[int]) -> None:
+    async def on_thread_delete(
+        self, message_ids: list[int], *, thread_id: int | None = None
+    ) -> None:
         """Messages deleted from a request thread: the backend removes the answers
-        they became. Kept and sent again while the backend is away."""
+        they became. Kept and sent again while the backend is away.
 
-        self._deletes.update(str(i) for i in message_ids)
+        A deleted message still waiting to be sent is dropped, and never sent
+        afterwards, or it would come back as an answer with nothing to undo it."""
+
+        ids = {str(i) for i in message_ids}
+        for message_id in ids:
+            self._retry.pop(message_id, None)
+            self._deleted[message_id] = None
+        while len(self._deleted) > _RETRY_MAX:
+            self._deleted.pop(next(iter(self._deleted)))
+        self._deletes.update(ids)
+        if thread_id is not None:
+            self._delete_threads.update({i: str(thread_id) for i in ids})
         await self.retry_deletes()
 
     async def retry_deletes(self) -> None:
         pending = sorted(self._deletes)
         for start in range(0, len(pending), 100):
             chunk = pending[start : start + 100]
-            result = await self._call(
-                "thread-message/delete",
-                {"guild_id": str(self.gate.guild_id), "message_ids": chunk},
-            )
+            body: dict[str, Any] = {"guild_id": str(self.gate.guild_id), "message_ids": chunk}
+            threads = {self._delete_threads[i] for i in chunk if i in self._delete_threads}
+            if len(threads) == 1:
+                # Lets the backend remember ids it never received, so a late
+                # send of one of them is refused too.
+                body["thread_id"] = threads.pop()
+            result = await self._call("thread-message/delete", body)
             if "status" not in result:
                 logger.warning("could not forward %d deletion(s); will retry", len(chunk))
                 return
             self._deletes.difference_update(chunk)
+            for message_id in chunk:
+                self._delete_threads.pop(message_id, None)
 
     async def on_thread_edit(self, client: Any, channel_id: int, message_id: int) -> None:
         """An edit in a request thread: the backend corrects the kept answer."""
@@ -332,7 +354,11 @@ class RequestUI:
         The backend remembers every message id it handled, so sending one again
         (a retry, or a replay after a restart) never makes a second answer."""
 
+        if body["message_id"] in self._deleted:
+            return True  # deleted meanwhile; never send it
         result = await self._call("thread-message", body)
+        if body["message_id"] in self._deleted:
+            return True  # deleted while it was being sent; the deletion follows
         if "status" in result:
             self._retry.pop(body["message_id"], None)
             return True

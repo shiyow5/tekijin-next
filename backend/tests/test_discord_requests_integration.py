@@ -489,6 +489,12 @@ def test_a_thread_message_is_handled_once(output_on, flow, monkeypatch) -> None:
         session.close()
     # Never handled again, even if sent once more.
     assert write(after, "正しい答え") == "duplicate"
+    # Deleted before it ever reached the backend: refused when it arrives late.
+    lost = _snowflake(14)
+    flow.post(
+        "/thread-message/delete", {"guild_id": GUILD, "message_ids": [lost], "thread_id": thread}
+    )
+    assert write(lost, "消した助言") == "duplicate"
     assert (
         flow.post("/thread-message/delete", {"guild_id": "1", "message_ids": [other]})["status"]
         == "unlinked"

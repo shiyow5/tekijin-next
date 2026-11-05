@@ -331,7 +331,7 @@ def main() -> None:
 
         channel = client.get_channel(channel_id)
         if gate.enabled and (channel is None or gate.is_request_thread(channel)):
-            await requests_ui.on_thread_delete(message_ids)
+            await requests_ui.on_thread_delete(message_ids, thread_id=channel_id)
 
     @client.event
     async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
