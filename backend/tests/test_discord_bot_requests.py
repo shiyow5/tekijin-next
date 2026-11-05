@@ -539,3 +539,39 @@ def test_a_deleted_message_waiting_to_be_sent_is_never_sent(monkeypatch, calls) 
     asyncio.run(ui.retry_messages())
     asyncio.run(ui.on_thread_message(_thread_message(thread)))  # e.g. a replay
     assert [p for p, _ in calls] == ["thread-message", "thread-message/delete"]
+
+
+def test_an_edit_is_not_lost_behind_its_original(monkeypatch, calls) -> None:
+    """The original is in flight when the edit arrives and fails: the edit stays
+    queued after the original is taken, and is sent next."""
+
+    release = asyncio.Event()
+
+    async def backend(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        if not body.get("edited") and len(calls) == 1:
+            await release.wait()  # the original is slow
+            return {"status": "answered"}
+        if body.get("edited") and len([c for c in calls if c[1].get("edited")]) == 1:
+            return {"kind": "error"}  # the first send of the edit fails
+        return {"status": "updated"}
+
+    monkeypatch.setattr(bot_requests, "internal_post", backend)
+    ui = _ui()
+    thread = _Channel(700, parent_id=OUTPUT)
+
+    async def scenario() -> None:
+        original = asyncio.create_task(ui.on_thread_message(_thread_message(thread)))
+        await asyncio.sleep(0)
+        edit = asyncio.create_task(
+            ui.on_thread_message(_thread_message(thread, content="直した"), edited=True)
+        )
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(original, edit)
+        await ui.retry_messages()
+
+    asyncio.run(scenario())
+    sent = [(b.get("edited", False), b["body"]) for _, b in calls]
+    assert sent == [(False, "答えです"), (True, "直した"), (True, "直した")]
+    assert ui._retry == {}

@@ -179,6 +179,8 @@ class RequestUI:
         # and the thread each was in (when known).
         self._deletes: set[str] = set()
         self._delete_threads: dict[str, str] = {}
+        # Sends in flight, one lock per message id.
+        self._sending: dict[str, tuple[asyncio.Lock, int]] = {}
         # Recently deleted message ids: never sent to the backend after deletion.
         self._deleted: dict[str, None] = {}
         # Posted outbox items whose result the backend has not taken yet.
@@ -354,19 +356,40 @@ class RequestUI:
         The backend remembers every message id it handled, so sending one again
         (a retry, or a replay after a restart) never makes a second answer."""
 
-        if body["message_id"] in self._deleted:
+        message_id = body["message_id"]
+        # One send per message at a time, so an edit never overtakes (or is
+        # cleared by) the original it corrects.
+        lock, users = self._sending.get(message_id, (asyncio.Lock(), 0))
+        self._sending[message_id] = (lock, users + 1)
+        try:
+            async with lock:
+                return await self._forward_locked(body)
+        finally:
+            lock, users = self._sending[message_id]
+            if users <= 1:
+                self._sending.pop(message_id, None)  # drop idle locks
+            else:
+                self._sending[message_id] = (lock, users - 1)
+
+    async def _forward_locked(self, body: dict[str, Any]) -> bool:
+        message_id = body["message_id"]
+        if message_id in self._deleted:
             return True  # deleted meanwhile; never send it
         result = await self._call("thread-message", body)
-        if body["message_id"] in self._deleted:
+        if message_id in self._deleted:
             return True  # deleted while it was being sent; the deletion follows
+        queued = self._retry.get(message_id)
         if "status" in result:
-            self._retry.pop(body["message_id"], None)
+            # A queued newer version (an edit) still has to be sent.
+            if queued is body or (queued is not None and not queued.get("edited")):
+                self._retry.pop(message_id, None)
             return True
-        logger.warning(
-            "could not forward request thread message %s; will retry", body["message_id"]
-        )
-        if len(self._retry) < _RETRY_MAX or body["message_id"] in self._retry:
-            self._retry[body["message_id"]] = body
+        logger.warning("could not forward request thread message %s; will retry", message_id)
+        # Never replace a queued edit with the original it corrects.
+        if queued is not None and queued.get("edited") and not body.get("edited"):
+            return False
+        if len(self._retry) < _RETRY_MAX or queued is not None:
+            self._retry[message_id] = body
         return False
 
     async def retry_messages(self) -> None:
