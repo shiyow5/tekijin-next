@@ -30,4 +30,16 @@ describe("sourceOrigin (#76)", () => {
     expect(sourceOrigin({ provider: "manual", author_name: "アリス" })).toBe("追加: アリス");
     expect(sourceOrigin({ provider: "manual", author_name: null })).toBe("追加: 管理者");
   });
+
+  it("names a shared Google document or slide deck (#99)", () => {
+    const doc = "https://docs.google.com/document/d/abc/edit";
+    const slides = "https://docs.google.com/presentation/d/abc/edit";
+    expect(sourceOrigin({ provider: "google", author_name: null, url: doc })).toBe(
+      "Googleドキュメント",
+    );
+    expect(sourceOrigin({ provider: "google", author_name: null, url: slides })).toBe(
+      "Googleスライド",
+    );
+    expect(sourceOrigin({ provider: "google", author_name: null, url: null })).toBe("Google");
+  });
 });
