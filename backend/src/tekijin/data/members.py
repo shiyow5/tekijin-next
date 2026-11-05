@@ -115,3 +115,32 @@ def set_opted_out(member: Employee, opted_out: bool, now: dt.datetime) -> None:
         member.opted_out_at = None
     elif member.opted_out_at is None:
         member.opted_out_at = now
+
+
+def find_discord_member(session: Session, guild_id: str, discord_user_id: str) -> int | None:
+    """The member id behind a Discord user, or ``None``. Never creates one (#114).
+
+    Pressing a button proves only who pressed it; someone TEKIJIN has never heard
+    from cannot be the asker or the requested member, so no member is made here.
+    """
+
+    org = _org_for_guild(session, guild_id)
+    if org is None:
+        return None
+    identity = _discord_identity(session, org, discord_user_id)
+    return identity.employee_id if identity is not None else None
+
+
+def discord_user_id_for(session: Session, guild_id: str, employee_id: int) -> str | None:
+    """The Discord user id of a member in the server's organization, or ``None``."""
+
+    return session.scalars(
+        select(Identity.external_id)
+        .join(Organization, Organization.id == Identity.org_id)
+        .where(
+            Organization.discord_guild_id == guild_id,
+            Identity.provider == DISCORD,
+            Identity.employee_id == employee_id,
+        )
+        .order_by(Identity.id)
+    ).first()

@@ -52,6 +52,9 @@ _TRUNCATE_ORDER: tuple[str, ...] = (
     "eval_runs",
     # #247: runtime-only (no fixture writes it), FKs questions + employees.
     "offline_consults",
+    # #114: runtime-only, FK recommendations (ON DELETE CASCADE).
+    "discord_outbox",
+    "discord_requests",
     "messages",
     "recommendations",
     "answers",

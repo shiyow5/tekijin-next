@@ -112,8 +112,18 @@ def test_format_answered_lists_sources() -> None:
 def test_format_handoff_names_people_and_points_to_web() -> None:
     out = summarize_events([("recommend", {"recommendations": [REC]}), ("draft", {"draft": "d"})])
     text = format_reply(out.model_dump(), web_url=WEB)
-    assert "社員1" in text and "営業部" in text and "類似の質問に過去3件回答" in text
+    assert "社員1" in text and "類似の質問に過去3件回答" in text
+    assert "営業部" not in text  # #114: no company-era department
     assert WEB in text
+
+
+def test_format_handoff_offers_the_button_when_it_can_be_sent() -> None:
+    """#114: with an output channel, the reply points to 「依頼する」, not the web."""
+
+    out = summarize_events([("recommend", {"recommendations": [REC]})])
+    text = format_reply(out.model_dump(), web_url=WEB, send_channel_id=5555)
+    assert "「依頼する」" in text and "<#5555>" in text and "社員1" in text
+    assert WEB not in text
 
 
 def test_format_handoff_lists_a_members_evidence_one_per_line() -> None:

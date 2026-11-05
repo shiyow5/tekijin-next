@@ -107,6 +107,8 @@ class DiscordAskRequest(DiscordUser):
 
 class DiscordAskResponse(AskOutcome):
     web_url: str
+    # #114: set when the hand-off can be sent from Discord (the 「依頼する」 button).
+    session_id: str | None = None
 
 
 class DiscordMemberRequest(DiscordUser):
@@ -191,11 +193,14 @@ def discord_ask(
     """Run one question to the end of its first segment and return the outcome.
 
     The run is the same one ``POST /ask`` + ``GET /events`` drive for the web client;
-    this just consumes the events server-side. D1 cannot continue a run that pauses
-    (a hand-off waiting to be sent, or a clarification), so the run is discarded
-    once read: the unsent recommendation must not reach the responder's inbox, and
-    a paused session would otherwise never be swept. The reply points the asker to
-    the web to ask again.
+    this just consumes the events server-side.
+
+    A hand-off is kept when Discord output is on (#114): the reply carries the
+    session id for the 「依頼する」 button (``discord_request_routes.py``). Any other
+    pause (a clarification) cannot be continued here, and neither can a hand-off
+    while output is off, so the run is discarded once read: the unsent
+    recommendation must not reach the responder's inbox, and a paused session would
+    otherwise never be swept. The reply points the asker to the web then.
     """
 
     web_url = settings.discord_web_url
@@ -216,14 +221,20 @@ def discord_ask(
     except AskerNotFound:
         logger.warning("discord user %s maps to unknown member %s", req.discord_user_id, asker_id)
         return DiscordAskResponse(kind="unlinked", web_url=web_url)
+    keep = False
     try:
         events = [
             (e.event or "", json.loads(e.data or "{}")) for e in service.stream_events(session_id)
         ]
+        summary = summarize_events(events)
+        keep = settings.discord_output_enabled() and summary.kind == "handoff"
     finally:
-        _discard(service, session_id)
-    outcome = _with_document_preview(service, summarize_events(events))
-    return DiscordAskResponse(**outcome.model_dump(), web_url=web_url)
+        if not keep:
+            _discard(service, session_id)
+    outcome = _with_document_preview(service, summary)
+    return DiscordAskResponse(
+        **outcome.model_dump(), web_url=web_url, session_id=session_id if keep else None
+    )
 
 
 def _with_document_preview(service: AgentService, outcome: AskOutcome) -> AskOutcome:

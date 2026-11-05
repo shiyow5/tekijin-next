@@ -18,6 +18,7 @@ from typing import Protocol
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from tekijin.channels.discord_notifier import DiscordNotifier
 from tekijin.slack import notify as slack_notify
 
 logger = logging.getLogger(__name__)
@@ -32,8 +33,13 @@ class ChannelNotifier(Protocol):
         employee_b: int,
         sender_name: str,
         body: str,
+        thread_id: int | None = None,
     ) -> None:
-        """Mirror a TEKIJIN chat message into the pair's channel, if one exists."""
+        """Mirror a TEKIJIN chat message into the pair's channel, if one exists.
+
+        ``thread_id`` is the hand-off's chat (the accepted recommendation id); the
+        Discord request thread is found by it (#114). Slack finds the pair's channel
+        by the two people instead and ignores it."""
 
     def announce_handoff_request(
         self,
@@ -73,6 +79,7 @@ class SlackNotifier:
         employee_b: int,
         sender_name: str,
         body: str,
+        thread_id: int | None = None,
     ) -> None:
         slack_notify.relay_to_channel(
             session_factory,
@@ -135,6 +142,7 @@ class FanoutNotifier:
         employee_b: int,
         sender_name: str,
         body: str,
+        thread_id: int | None = None,
     ) -> None:
         self._each(
             "relay_message",
@@ -144,6 +152,7 @@ class FanoutNotifier:
                 employee_b=employee_b,
                 sender_name=sender_name,
                 body=body,
+                thread_id=thread_id,
             ),
         )
 
@@ -187,6 +196,9 @@ class FanoutNotifier:
 
 @lru_cache(maxsize=1)
 def get_notifier() -> FanoutNotifier:
-    """The process-wide notifier. Slack only until the Discord adapter lands (D1+)."""
+    """The process-wide notifier: Slack and Discord (#114).
 
-    return FanoutNotifier((SlackNotifier(),))
+    Each checks its own settings on every call, so a channel that is not configured
+    does nothing."""
+
+    return FanoutNotifier((SlackNotifier(), DiscordNotifier()))

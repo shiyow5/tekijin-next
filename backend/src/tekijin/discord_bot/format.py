@@ -92,9 +92,15 @@ def format_add_reply(result: dict[str, Any]) -> str:
     return _FIXED_REPLIES["error"]
 
 
-def format_reply(outcome: dict[str, Any], *, web_url: str) -> str:
+def format_reply(
+    outcome: dict[str, Any], *, web_url: str, send_channel_id: int | None = None
+) -> str:
     """Compose the reply, clipping only the free text so the trailing parts (the
-    sources of an answer, the Web link of a hand-off) always survive."""
+    sources of an answer, the Web link of a hand-off) always survive.
+
+    ``send_channel_id`` (#114): the hand-off can be sent with the 「依頼する」 button
+    into a thread of that channel, so the reply says so instead of pointing to the web.
+    """
 
     kind = outcome.get("kind")
     text = (outcome.get("text") or "").strip()
@@ -108,7 +114,11 @@ def format_reply(outcome: dict[str, Any], *, web_url: str) -> str:
         return _join(text, tail)
     if kind == "handoff":
         return _handoff(
-            text, outcome.get("citations") or [], outcome.get("recommendations") or [], web_url
+            text,
+            outcome.get("citations") or [],
+            outcome.get("recommendations") or [],
+            web_url,
+            send_channel_id,
         )
     if kind == "followup":
         return _join(
@@ -159,20 +169,27 @@ def _handoff(
     citations: list[dict[str, Any]],
     recommendations: list[dict[str, Any]],
     web_url: str,
+    send_channel_id: int | None = None,
 ) -> str:
     people = ["この質問は、次の人に相談するのがよさそうです。"]
     for i, rec in enumerate(recommendations, start=1):
-        dept = f"({rec['dept']})" if rec.get("dept") else ""
-        people.append(f"{i}. {rec.get('name', '')}{dept}")
+        people.append(f"{i}. {rec.get('name', '')}")
         # One reason per line: a quoted self-introduction has its own 「、」 and 「。」
         # (#107), so joining reasons with 「、」 would run them together.
         people.extend(f"   - {r['detail']}" for r in rec.get("reasons") or [] if r.get("detail"))
     sources = _sources(citations) if reference else ""
     middle = "\n\n".join(part for part in (sources, "\n".join(people)) if part)
     head = f"参考になりそうな情報\n> {reference}" if reference else ""
-    # The Web link is the only way to send the request, so it is never clipped;
-    # the reference is clipped first, then the source/people list.
-    link = f"相談の依頼を送るには、Webで同じ質問をしてください: {web_url}"
+    # How to send the request is never clipped; the reference is clipped first,
+    # then the source/people list.
+    if send_channel_id is not None and recommendations:
+        first = recommendations[0].get("name", "")
+        link = (
+            f"「依頼する」を押すと、{first}さんへの相談の依頼を <#{send_channel_id}> の"
+            "スレッドに投稿します。チャンネルを見られる人には、質問の内容も見えます。"
+        )
+    else:
+        link = f"相談の依頼を送るには、Webで同じ質問をしてください: {web_url}"
     return _join(_join(head, middle, DISCORD_MESSAGE_LIMIT - len(link) - 2), link)
 
 

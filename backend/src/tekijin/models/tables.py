@@ -565,6 +565,46 @@ class Message(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
+class DiscordRequest(Base):
+    """A hand-off sent from Discord, received in a thread of the output channel (#114).
+
+    One row per recommendation the asker pressed 「依頼する」 for (or that a decline
+    passed the request on to). ``thread_id`` is NULL until the bot has created the
+    thread; the thread's messages are matched back to the hand-off through it.
+    """
+
+    __tablename__ = "discord_requests"
+
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("recommendations.id", ondelete="CASCADE"), primary_key=True
+    )
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    channel_id: Mapped[str | None] = mapped_column(String(32))
+    thread_id: Mapped[str | None] = mapped_column(String(32), unique=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DiscordOutbox(Base):
+    """What the bot still has to post (#114).
+
+    The API never talks to Discord (the bot token stays with the bot), so whatever
+    must appear in a request thread is queued here and the bot delivers it:
+    ``request`` creates the thread, ``post`` writes one message into it.
+    """
+
+    __tablename__ = "discord_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("discord_requests.recommendation_id", ondelete="CASCADE"), index=True
+    )
+    payload: Mapped[dict] = mapped_column(JSONB)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+    delivered_at: Mapped[dt.datetime | None] = mapped_column(DateTime)
+
+
 class EvalRun(Base):
     """A stored offline-evaluation snapshot (dashboard 推薦精度 source).
 
@@ -749,6 +789,8 @@ __all__ = [
     "Answer",
     "Recommendation",
     "Message",
+    "DiscordRequest",
+    "DiscordOutbox",
     "EvalRun",
     "Event",
     "Document",
