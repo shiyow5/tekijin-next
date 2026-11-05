@@ -31,6 +31,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from tekijin.api.discord_routes import DiscordUser, _guild_for, require_bot_secret
 from tekijin.api.service import AgentService, HandoffNotFound, SessionConflict, SessionInvalid
@@ -371,16 +372,21 @@ def discord_thread_message(
         # Remembered, so the bot sending it again (after a restart, once the
         # request is accepted) does not turn it into an answer.
         with session_scope(service.session_factory) as session:
+            _lock_message(session, req.message_id)
             mark_message_seen(session, req.message_id, rec_id)
         return DiscordThreadResponse(status=status)
     assert parties is not None and sender is not None
     is_answer = sender == parties["responder_id"]
     embedding = _embed(service, req.body) if is_answer else None
     now = _now()
+    # Stored at the time it was written, so a message recovered late still sorts
+    # in the conversation (and the draft) where it was written.
+    written_at = snowflake_local_time(req.message_id)
     with session_scope(service.session_factory) as session:
+        _lock_message(session, req.message_id)
         if seen_message(session, req.message_id) is not None:
             return DiscordThreadResponse(status="duplicate")
-        row = create_message(session, rec_id, sender, req.body, now)
+        row = create_message(session, rec_id, sender, req.body, written_at)
         answer_id = None
         if is_answer:
             # One draft per question even when two answers arrive together.
@@ -388,7 +394,12 @@ def discord_thread_message(
                 text("SELECT pg_advisory_xact_lock(:cls, :obj)"), {"cls": 114, "obj": rec_id}
             )
             answer_id, _ = record_thread_answer(
-                session, parties=parties, body=req.body, embedding=embedding, now=now
+                session,
+                parties=parties,
+                body=req.body,
+                embedding=embedding,
+                now=now,
+                written_at=written_at,
             )
         if not mark_message_seen(
             session, req.message_id, rec_id, message_row_id=row["id"], answer_id=answer_id
@@ -441,7 +452,10 @@ def discord_thread_message_delete(
     now = _now()
     with session_scope(service.session_factory) as session:
         thread = request_for_thread(session, req.thread_id) if req.thread_id else None
-        for message_id in req.message_ids:
+        for message_id in sorted(set(req.message_ids)):
+            # Waits for a capture of the same message still in flight, so its
+            # rows are seen (and removed) here rather than surviving the deletion.
+            _lock_message(session, message_id)
             seen = seen_message(session, message_id)
             if seen is None:
                 if thread is not None:
@@ -508,6 +522,23 @@ def _apply_edit(
     if answer_id is not None:
         service.schedule_knowledge_embed()
     return DiscordThreadResponse(status="updated")
+
+
+def _lock_message(session: Session, message_id: str) -> None:
+    """Serialize everything done for one Discord message (capture, deletion)."""
+
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:cls, hashtext(:obj))"),
+        {"cls": 1141, "obj": message_id},
+    )
+
+
+def snowflake_local_time(snowflake: str) -> dt.datetime:
+    """When a Discord message was written, as naive local time like the other
+    ``messages.created_at`` (routes.py stamps ``dt.datetime.now()``)."""
+
+    ms = (int(snowflake) >> 22) + _DISCORD_EPOCH_MS
+    return dt.datetime.fromtimestamp(ms / 1000)  # noqa: DTZ006 - naive local on purpose
 
 
 def snowflake_time(snowflake: str) -> dt.datetime:

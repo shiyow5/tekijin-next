@@ -627,3 +627,14 @@ def test_replay_reads_the_newest_messages_in_order(monkeypatch, calls) -> None:
     ]
     asyncio.run(_ui().replay([thread]))
     assert [b["body"] for _, b in calls] == ["二", "三"]
+
+
+def test_an_edit_that_removes_the_text_removes_the_answer(calls) -> None:
+    thread = _Channel(700, parent_id=OUTPUT)
+    asyncio.run(_ui().on_thread_message(_thread_message(thread, content="  "), edited=True))
+    assert calls == [
+        (
+            "thread-message/delete",
+            {"guild_id": str(GUILD), "message_ids": ["55"], "thread_id": "700"},
+        )
+    ]

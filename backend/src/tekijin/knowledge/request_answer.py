@@ -44,13 +44,15 @@ def record_thread_answer(
     body: str,
     embedding: Sequence[float] | None,
     now: dt.datetime,
+    written_at: dt.datetime | None = None,
 ) -> tuple[str, int | None]:
     """Store ``body`` as the responder's answer and refresh the case draft.
 
     ``parties`` is what :func:`tekijin.data.messages.thread_parties` returns for the
-    accepted hand-off. Returns ``(answer_id, draft_id)``; ``draft_id`` is ``None``
-    when no draft was written (no organization to keep it in, or the article was
-    already checked).
+    accepted hand-off. ``written_at`` is when the answer was written (default
+    ``now``); answers are ordered by it in the draft. Returns
+    ``(answer_id, draft_id)``; ``draft_id`` is ``None`` when no draft was written
+    (no organization to keep it in, or the article was already checked).
     """
 
     question = session.get(Question, parties["question_id"])
@@ -62,7 +64,7 @@ def record_thread_answer(
         body=body,
         topic=topics[0] if topics else None,
         embedding=embedding,
-        created_at=now,
+        created_at=written_at or now,
     )
     return answer_id, refresh_case_draft(session, parties=parties, now=now)
 

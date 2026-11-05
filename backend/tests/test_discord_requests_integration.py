@@ -537,3 +537,37 @@ def test_review_pages_past_drafts_sent_back(output_on, flow) -> None:
     after_checks = flow.post("/review", {**_user(ADMIN), "offset": 4, "shown": shown})
     assert after_checks["offset"] == 2
     assert {a["id"] for a in after_checks["articles"]} == {a["id"] for a in second["articles"]}
+
+
+def test_a_late_answer_keeps_its_place(output_on, flow) -> None:
+    """An answer recovered late is stored at the time it was written."""
+
+    _, rec, thread = flow.requested()
+    flow.act(RESPONDER, rec, "accept")
+    time.sleep(0.01)
+    earlier = _snowflake(20)
+    time.sleep(0.01)
+    later = _snowflake(21)
+
+    def write(message_id: str, body: str) -> str:
+        return flow.post(
+            "/thread-message",
+            {**_user(RESPONDER), "thread_id": thread, "message_id": message_id, "body": body},
+        )["status"]
+
+    assert write(later, "手順2") == "answered"
+    assert write(earlier, "手順1") == "answered"  # arrives after the later one
+    question_id = flow.scalar(select(Recommendation.question_id).where(Recommendation.id == rec))
+    session = get_sessionmaker(flow.engine)()
+    try:
+        (draft,) = articles_from_question(session, question_id)
+        bodies = [
+            m.body
+            for m in session.scalars(
+                select(Message).where(Message.recommendation_id == rec).order_by(Message.created_at)
+            )
+        ]
+    finally:
+        session.close()
+    assert draft.resolution == "手順1\n手順2"
+    assert bodies[-2:] == ["手順1", "手順2"]

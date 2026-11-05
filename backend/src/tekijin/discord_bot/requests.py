@@ -295,6 +295,10 @@ class RequestUI:
             return
         content = (message.content or "").strip()
         if not content:
+            if edited:
+                # The text was edited away (an attachment may remain): what it
+                # became goes, as for a deletion.
+                await self.on_thread_delete([message.id], thread_id=message.channel.id)
             return
         body = {
             **discord_user(message.author.id, message.guild.id, message.author.display_name),
