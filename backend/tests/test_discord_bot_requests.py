@@ -439,9 +439,10 @@ class _History(_Channel):
         super().__init__(cid, parent_id=parent_id)
         self.messages = messages
 
-    def history(self, **kwargs):
+    def history(self, *, limit=100, oldest_first=False):
         async def gen():
-            for m in self.messages:
+            ordered = self.messages if oldest_first else list(reversed(self.messages))
+            for m in ordered[:limit]:
                 yield m
 
         return gen()
@@ -601,3 +602,28 @@ def test_a_replayed_edited_message_is_sent_as_an_edit(calls) -> None:
     thread.messages = [_thread_message(thread, content="直した", edited_at=object())]
     asyncio.run(_ui().replay([thread]))
     assert calls[0][1]["edited"] is True
+
+
+def test_a_retry_snapshot_never_resends_a_superseded_version(monkeypatch, calls) -> None:
+    async def backend(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        return {"status": "updated"}
+
+    monkeypatch.setattr(bot_requests, "internal_post", backend)
+    ui = _ui()
+    old = {"message_id": "55", "body": "古い", "edited": True, "_version": 1}
+    new = {"message_id": "55", "body": "新しい", "edited": True, "_version": 2}
+    asyncio.run(ui._forward(new))
+    asyncio.run(ui._forward(old))  # e.g. from a snapshot taken before ``new`` was sent
+    assert [b["body"] for _, b in calls] == ["新しい"]
+
+
+def test_replay_reads_the_newest_messages_in_order(monkeypatch, calls) -> None:
+    monkeypatch.setattr(bot_requests, "_REPLAY_LIMIT", 2)
+    thread = _History(700, parent_id=OUTPUT, messages=[])
+    thread.messages = [
+        SimpleNamespace(**{**vars(_thread_message(thread, content=c)), "id": i})
+        for i, c in enumerate(["一", "二", "三"], start=1)
+    ]
+    asyncio.run(_ui().replay([thread]))
+    assert [b["body"] for _, b in calls] == ["二", "三"]

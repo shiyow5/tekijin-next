@@ -57,8 +57,9 @@ _THREAD_MESSAGE_MAX = 4000
 _RETRY_MAX = 1000
 #: Key of the bot-side version stamp on a queued thread message (never sent).
 _VERSION = "_version"
-#: How far back each open request thread is read again after a (re)connect.
-_REPLAY_LIMIT = 200
+#: How many of the newest messages of each open request thread are read again
+#: after a (re)connect.
+_REPLAY_LIMIT = 500
 _UNAVAILABLE = "いまは処理できません。しばらくしてから、もう一度お試しください。"
 
 
@@ -183,6 +184,8 @@ class RequestUI:
         self._delete_threads: dict[str, str] = {}
         # How many thread messages have been read; orders versions of one message.
         self._reads = 0
+        # The newest version of each message the backend has taken (recent ones).
+        self._taken: dict[str, int] = {}
         # Sends in flight, one lock per message id.
         self._sending: dict[str, tuple[asyncio.Lock, int]] = {}
         # Recently deleted message ids: never sent to the backend after deletion.
@@ -385,6 +388,8 @@ class RequestUI:
         if message_id in self._deleted:
             return True  # deleted meanwhile; never send it
         version = body.get(_VERSION, 0)
+        if version <= self._taken.get(message_id, -1):
+            return True  # a newer version was already taken; this one is obsolete
         result = await self._call(
             "thread-message", {k: v for k, v in body.items() if k != _VERSION}
         )
@@ -397,6 +402,9 @@ class RequestUI:
             # one read earlier is superseded by what was just taken.
             if queued_version is not None and queued_version <= version:
                 self._retry.pop(message_id, None)
+            self._taken[message_id] = max(version, self._taken.get(message_id, -1))
+            while len(self._taken) > _RETRY_MAX:
+                self._taken.pop(next(iter(self._taken)))
             return True
         logger.warning("could not forward request thread message %s; will retry", message_id)
         if queued_version is not None and queued_version > version:
@@ -418,7 +426,10 @@ class RequestUI:
             if not self.gate.is_request_thread(thread):
                 continue
             try:
-                async for message in thread.history(limit=_REPLAY_LIMIT, oldest_first=True):
+                # The newest messages, sent oldest first: what was missed while
+                # the bot was away is the latest part of the thread.
+                recent = [m async for m in thread.history(limit=_REPLAY_LIMIT)]
+                for message in reversed(recent):
                     await self.on_thread_message(message)
             except discord.DiscordException:
                 logger.warning("could not read request thread %s again", thread.id, exc_info=True)
