@@ -18,6 +18,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from tekijin.data.discord_requests import sent_to_responder
 from tekijin.models.tables import Employee, Question, Recommendation
 
 
@@ -48,6 +49,7 @@ def pending_handoffs_for_responder(session: Session, responder_id: int) -> list[
             Recommendation.employee_id == responder_id,
             Recommendation.rank == 1,
             Recommendation.outcome.is_(None),
+            sent_to_responder(),
             Question.session_id.is_not(None),
         )
         .order_by(Recommendation.created_at.desc(), Recommendation.id.desc())

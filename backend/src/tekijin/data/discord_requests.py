@@ -20,11 +20,11 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, exists, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from tekijin.models.tables import DiscordOutbox, DiscordRequest
+from tekijin.models.tables import DiscordOutbox, DiscordRequest, Question, Recommendation
 
 #: Every session ``/ask`` starts on Discord has this prefix (``api/discord_routes.py``).
 DISCORD_SESSION_PREFIX = "discord_"
@@ -34,6 +34,21 @@ POST = "post"
 
 #: How often a delivery may fail before the item is no longer offered.
 MAX_ATTEMPTS = 5
+
+
+def sent_to_responder() -> ColumnElement[bool]:
+    """The pending rank-1 recommendation was actually sent (#114).
+
+    ``/ask`` on Discord keeps its hand-off paused until the asker presses
+    「依頼する」, so until then the recommended member must not see it as a request
+    (the inbox and the request notifications use this). A hand-off asked on the web
+    counts as sent, as before.
+    """
+
+    return or_(
+        not_(Question.session_id.startswith(DISCORD_SESSION_PREFIX, autoescape=True)),
+        exists().where(DiscordRequest.recommendation_id == Recommendation.id),
+    )
 
 
 @dataclass(frozen=True, slots=True)

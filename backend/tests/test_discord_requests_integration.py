@@ -377,3 +377,31 @@ def test_outbox_counts_failures(output_on, flow) -> None:
     (item,) = flow.outbox()
     assert flow.post(f"/outbox/{item['id']}", {"ok": False})["status"] == "ok"
     assert flow.scalar(select(DiscordOutbox.attempts)) == 1
+
+
+def test_an_unsent_hand_off_is_not_in_the_inbox(output_on, flow) -> None:
+    from tekijin.data.inbox import pending_handoffs_for_responder
+    from tekijin.data.notifications import pending_request_notifications_for_responder
+
+    def pending() -> tuple[list, list]:
+        session = get_sessionmaker(flow.engine)()
+        try:
+            inbox = [
+                p["session_id"]
+                for p in pending_handoffs_for_responder(session, 1)
+                if p["session_id"].startswith("discord_")
+            ]
+            bell = [
+                n
+                for n in pending_request_notifications_for_responder(session, 1)
+                if str(n.get("session_id", "")).startswith("discord_")
+            ]
+            return inbox, bell
+        finally:
+            session.close()
+
+    out = flow.ask()
+    assert pending() == ([], [])
+    flow.post("/request", {**_user(ASKER), "session_id": out["session_id"]})
+    inbox, bell = pending()
+    assert inbox == [out["session_id"]] and len(bell) == 1
