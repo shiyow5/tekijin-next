@@ -8,6 +8,7 @@ TEKIJIN のドキュメント置き場。
 - `gpu-server-setup.md` … DGX（Tailscale 経由）での立ち上げ手順。
 - `discord-bot.md` … Discordボット(`/ask`)の立ち上げ手順。
 - `google-ingest.md` … GoogleドキュメントとスライドをGoogleのサービスアカウント経由で定期的に取り込む手順。
+- `notion-ingest.md` … Notionのページを内部インテグレーション経由で定期的に取り込む手順。
 - `plans/2026-10-27-general-org-redesign.md` … 任意の組織(Discord/Slack中心)向けへの作り替えの設計案。
 - **`slack-tunnel.md`** … Slack 連携用の一時的な公開経路。**⚠️ 2026-08-29 に撤去すること**（撤去手順とチェックリストを含む）。
 
