@@ -187,10 +187,14 @@ def delete_messages(
     """Forget deleted messages and rebuild their conversations. Unknown ids are
     ignored. Returns how many stored messages were deleted."""
 
+    # #106: locked (in id order, as introductions lock them) and read again, so an
+    # introduction a concurrent ingest is writing is committed before it is deleted.
     rows = session.scalars(
-        select(ChannelMessage).where(
-            ChannelMessage.org_id == org_id, ChannelMessage.message_id.in_(list(message_ids))
-        )
+        select(ChannelMessage)
+        .where(ChannelMessage.org_id == org_id, ChannelMessage.message_id.in_(list(message_ids)))
+        .order_by(ChannelMessage.message_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     ).all()
     keys = {_key_of(row) for row in rows}
     delete_message_intros(session, org_id=org_id, message_ids=[row.message_id for row in rows])
@@ -250,12 +254,17 @@ def delete_conversation(
     many messages were hidden.
     """
 
+    # #106: locked like delete_messages, so a concurrent introduction is deleted too.
     rows = session.scalars(
-        select(ChannelMessage).where(
+        select(ChannelMessage)
+        .where(
             ChannelMessage.org_id == org_id,
             ChannelMessage.hidden_at.is_(None),
             *_key_filter(external_id),
         )
+        .order_by(ChannelMessage.message_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     ).all()
     for row in rows:
         row.hidden_at = now

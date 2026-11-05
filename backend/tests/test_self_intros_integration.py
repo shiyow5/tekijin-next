@@ -197,7 +197,10 @@ def test_an_opt_out_committed_after_the_member_was_loaded_is_seen(
     member = _member(session, org, "1", "山田 太郎")
     # As if another request opted the member out after this one loaded them: the
     # loaded object still says they are in.
-    session.execute(update(Employee).where(Employee.id == member.id).values(opted_out_at=NOW))
+    session.execute(
+        update(Employee).where(Employee.id == member.id).values(opted_out_at=NOW),
+        execution_options={"synchronize_session": False},
+    )
     assert member.opted_out_at is None
 
     assert not set_join_intro(session, fake_embedder, member=member, text="会計です", now=NOW)
