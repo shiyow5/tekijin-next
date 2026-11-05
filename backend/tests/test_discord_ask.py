@@ -291,6 +291,41 @@ def test_format_member_reply() -> None:
     assert "エラー" in format_member_reply({"status": "joined"})
 
 
+def test_format_member_reply_about_intros() -> None:
+    """#106: join with an introduction, ``/tekijin intro``, and what optout does."""
+
+    url = "https://w/login#t"
+    saved = format_member_reply({"status": "joined", "login_url": url, "intro_saved": True})
+    assert "自己紹介を登録しました" in saved and url in saved
+    refused = format_member_reply({"status": "joined", "login_url": url, "intro_saved": False})
+    assert "登録しませんでした" in refused and url in refused
+    assert "自己紹介" not in format_member_reply({"status": "joined", "login_url": url})
+    assert "置き換わります" in format_member_reply({"status": "intro_saved"})
+    assert "何も変えていません" in format_member_reply({"status": "intro_unchanged"})
+    assert "optin" in format_member_reply({"status": "intro_refused"})
+    assert "join" in format_member_reply({"status": "not_joined"})
+    assert "自己紹介を消しました" in format_member_reply({"status": "opted_out"})
+    assert "/tekijin intro" in format_member_reply({"status": "opted_in"})
+
+
+def test_member_backend_sends_the_intro_only_when_given() -> None:
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"status": "intro_saved"})
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            common = {"base_url": "http://api", "secret": "k", "user": USER}
+            await member_backend(http, action="intro", intro="会計です", **common)
+            await member_backend(http, action="join", **common)
+
+    asyncio.run(run())
+    assert bodies[0]["action"] == "intro" and bodies[0]["intro"] == "会計です"
+    assert "intro" not in bodies[1]
+
+
 def _ask(handler) -> dict:
     async def run() -> dict:
         transport = httpx.MockTransport(handler)

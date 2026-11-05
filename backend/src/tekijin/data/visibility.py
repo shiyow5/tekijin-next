@@ -53,25 +53,43 @@ def visible(org_id: int, scope: SourceScope) -> ColumnElement[bool]:
 
     if scope.everything:
         return true()
+    return or_(
+        SourceItem.provider != _DISCORD,
+        stream_visible(org_id, scope, SourceItem.discord_channel_id, SourceItem.discord_thread_id),
+    )
+
+
+def stream_visible(
+    org_id: int, scope: SourceScope, channel_id: Any, thread_id: Any
+) -> ColumnElement[bool]:
+    """A condition that keeps rows said in a channel (and thread) ``scope`` may read.
+
+    ``channel_id`` and ``thread_id`` are the columns holding where a row was said,
+    so other tables than ``source_items`` (self-introductions, #106) follow the
+    same rule. A row whose channel is unknown is hidden.
+    """
+
+    if scope.everything:
+        return true()
     if scope.channels is None:
-        readable: Any = SourceItem.discord_channel_id.in_(
+        readable: Any = channel_id.in_(
             select(DiscordChannel.channel_id).where(
                 DiscordChannel.org_id == org_id, DiscordChannel.public.is_(True)
             )
         )
     elif scope.channels:
-        readable = SourceItem.discord_channel_id.in_(sorted(scope.channels))
+        readable = channel_id.in_(sorted(scope.channels))
     else:
         readable = false()
     public_thread = exists().where(
         DiscordThread.org_id == org_id,
-        DiscordThread.thread_id == SourceItem.discord_thread_id,
+        DiscordThread.thread_id == thread_id,
         DiscordThread.private.is_(False),
     )
-    thread_ok = [SourceItem.discord_thread_id.is_(None), public_thread]
+    thread_ok = [thread_id.is_(None), public_thread]
     if scope.thread_channels:
-        thread_ok.append(SourceItem.discord_channel_id.in_(sorted(scope.thread_channels)))
-    return or_(SourceItem.provider != _DISCORD, and_(readable, or_(*thread_ok)))
+        thread_ok.append(channel_id.in_(sorted(scope.thread_channels)))
+    return and_(readable, or_(*thread_ok))
 
 
 def scope_to_state(scope: SourceScope) -> dict[str, Any] | None:

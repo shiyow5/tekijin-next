@@ -1,7 +1,8 @@
 """Run the TEKIJIN Discord bot: ``python -m tekijin.discord_bot`` (Discord D1, #60).
 
-Registers ``/ask`` and the ``/tekijin`` group (``join``, ``optout``, ``optin``, ``add``),
-and forwards the server's conversation to the backend (#76): history after where
+Registers ``/ask`` and the ``/tekijin`` group (``join``, ``intro``, ``optout``,
+``optin``, ``add``), and forwards the server's conversation to the backend (#76):
+history after where
 ingestion left off when it starts, then new, edited and deleted messages as they
 happen. Reading message text needs the MESSAGE CONTENT privileged intent, which must
 also be switched on for the app in the Discord Developer Portal.
@@ -155,7 +156,9 @@ def main() -> None:
 
     group = app_commands.Group(name="tekijin", description="TEKIJINへの参加と設定")
 
-    async def member_action(interaction: discord.Interaction, action: str) -> None:
+    async def member_action(
+        interaction: discord.Interaction, action: str, intro: str | None = None
+    ) -> None:
         await interaction.response.defer(thinking=True, ephemeral=True)
         result = await member_backend(
             http,
@@ -163,12 +166,26 @@ def main() -> None:
             secret=settings.discord_bot_secret,
             user=_user(interaction),
             action=action,
+            intro=intro,
         )
         await interaction.followup.send(format_member_reply(result), ephemeral=True)
 
     @group.command(name="join", description="TEKIJINに参加し、Webのログイン用URLを受け取る")
-    async def join(interaction: discord.Interaction) -> None:
-        await member_action(interaction, "join")
+    @app_commands.describe(
+        intro="自己紹介(任意。1000字まで。得意なことや担当を書くと推薦に使われる)"
+    )
+    async def join(
+        interaction: discord.Interaction,
+        intro: app_commands.Range[str, 1, 1000] | None = None,
+    ) -> None:
+        await member_action(interaction, "join", intro)
+
+    @group.command(name="intro", description="自己紹介を登録する(前に登録したものは置き換わる)")
+    @app_commands.describe(text="自己紹介(1000字まで。得意なことや担当を書くと推薦に使われる)")
+    async def intro(
+        interaction: discord.Interaction, text: app_commands.Range[str, 1, 1000]
+    ) -> None:
+        await member_action(interaction, "intro", text)
 
     @group.command(name="optout", description="詳しい人として推薦される対象から外れる")
     async def optout(interaction: discord.Interaction) -> None:

@@ -57,6 +57,8 @@ _TRUNCATE_ORDER: tuple[str, ...] = (
     "ai_chat_history",
     "employee_chat_history",
     "employee_profiles",
+    # #106: also emptied by CASCADE (it references employees).
+    "self_intros",
     "employees",
 )
 
@@ -313,8 +315,8 @@ def _apply_schema_upgrades(engine: Engine) -> None:
                 "  cur text;\n"
                 "BEGIN\n"
                 "  FOREACH tbl IN ARRAY ARRAY['employee_profiles','questions',"
-                "'answers','documents','chunks'] LOOP\n"
-                # #70: a table newer than the DB (chunks) is skipped; create_all
+                "'answers','documents','chunks','self_intros'] LOOP\n"
+                # #70, #106: a table newer than the DB (chunks, self_intros) is skipped; create_all
                 # builds it at the current width.
                 "    CONTINUE WHEN to_regclass(tbl) IS NULL;\n"
                 "    SELECT format_type(atttypid, atttypmod) INTO cur\n"

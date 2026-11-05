@@ -267,7 +267,7 @@ def test_member_actions_refuse_another_server(discord_env, engine, fake_embedder
         json={"discord_user_id": "5005", "guild_id": "1", "action": "join"},
         headers=HEADERS,
     )
-    assert resp.json() == {"status": "unlinked", "login_url": None}
+    assert resp.json() == {"status": "unlinked", "login_url": None, "intro_saved": None}
 
 
 def _member_by_discord_id(engine, discord_user_id: str) -> int:
@@ -434,3 +434,84 @@ def test_add_cannot_replace_another_members_url(discord_env, engine, fake_embedd
     assert client.post(ADD, json={**owner, **note}, headers=HEADERS).json()["status"] == "added"
     replaced = client.post(ADD, json={**other, **note, "text": "書き換え"}, headers=HEADERS)
     assert replaced.json()["status"] == "not_owner"
+
+
+# --------------------------------------------------------------------------- #
+# #106: self-introductions with join / intro, and optout
+# --------------------------------------------------------------------------- #
+def _intro_rows(engine, discord_user_id: str) -> list[tuple[str, str]]:
+    from tekijin.data.db import get_sessionmaker
+    from tekijin.models.tables import SelfIntro
+
+    member_id = _member_by_discord_id(engine, discord_user_id)
+    with get_sessionmaker(engine)() as session:
+        rows = session.scalars(
+            select(SelfIntro).where(SelfIntro.member_id == member_id).order_by(SelfIntro.id)
+        ).all()
+        return [(row.origin, row.text) for row in rows]
+
+
+def test_join_with_an_intro_stores_it(discord_env, engine, fake_embedder) -> None:
+    client = _bot_client(engine, fake_embedder)
+    user = {"discord_user_id": "8001", "display_name": "会計係"}
+
+    body = client.post(
+        MEMBER, json={**user, "action": "join", "intro": "  会計 補助金  "}, headers=HEADERS
+    ).json()
+
+    assert body["status"] == "joined" and body["intro_saved"] is True
+    assert body["login_url"]
+    assert _intro_rows(engine, "8001") == [("join", "会計 補助金")]
+    # Joining again without one leaves it as it was.
+    again = client.post(MEMBER, json={**user, "action": "join"}, headers=HEADERS).json()
+    assert again["intro_saved"] is None
+    assert _intro_rows(engine, "8001") == [("join", "会計 補助金")]
+
+
+def test_intro_replaces_the_join_intro(discord_env, engine, fake_embedder) -> None:
+    client = _bot_client(engine, fake_embedder)
+    user = {"discord_user_id": "8002", "display_name": "写真班"}
+    assert (
+        client.post(
+            MEMBER, json={**user, "action": "intro", "intro": "写真"}, headers=HEADERS
+        ).json()["status"]
+        == "not_joined"
+    )
+    client.post(MEMBER, json={**user, "action": "join", "intro": "写真"}, headers=HEADERS)
+
+    def intro(text: str) -> str:
+        resp = client.post(MEMBER, json={**user, "action": "intro", "intro": text}, headers=HEADERS)
+        return resp.json()["status"]
+
+    assert intro("星景写真と現像") == "intro_saved"
+    assert intro("   ") == "intro_unchanged"
+    assert _intro_rows(engine, "8002") == [("join", "星景写真と現像")]
+
+
+def test_an_intro_longer_than_the_limit_is_rejected(discord_env, engine, fake_embedder) -> None:
+    client = _bot_client(engine, fake_embedder)
+    body = {"discord_user_id": "8003", "action": "intro", "intro": "x" * 1001}
+    assert client.post(MEMBER, json=body, headers=HEADERS).status_code == 422
+
+
+def test_optout_deletes_the_intro_and_optin_does_not_restore_it(
+    discord_env, engine, fake_embedder
+) -> None:
+    client = _bot_client(engine, fake_embedder)
+    user = {"discord_user_id": "8004", "display_name": "機材係"}
+    client.post(MEMBER, json={**user, "action": "join", "intro": "望遠鏡"}, headers=HEADERS)
+    assert _intro_rows(engine, "8004") == [("join", "望遠鏡")]
+
+    client.post(MEMBER, json={**user, "action": "optout"}, headers=HEADERS)
+    assert _intro_rows(engine, "8004") == []
+    refused = client.post(
+        MEMBER, json={**user, "action": "intro", "intro": "望遠鏡"}, headers=HEADERS
+    ).json()
+    assert refused["status"] == "intro_refused"
+    joined = client.post(
+        MEMBER, json={**user, "action": "join", "intro": "望遠鏡"}, headers=HEADERS
+    ).json()
+    assert joined["intro_saved"] is False
+
+    client.post(MEMBER, json={**user, "action": "optin"}, headers=HEADERS)
+    assert _intro_rows(engine, "8004") == []

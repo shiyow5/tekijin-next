@@ -244,6 +244,49 @@ class Chunk(Base):
     source_item: Mapped[SourceItem] = relationship()
 
 
+class SelfIntro(Base):
+    """What a member says about themselves, embedded for search (#106, R5).
+
+    ``origin`` says where it came from: ``slides`` (a section of an ingested
+    document titled 「自己紹介」), ``join`` (typed with ``/tekijin join`` or
+    ``/tekijin intro``) or ``discord`` (a post in the self-introduction channel).
+    Re-ingesting replaces a row instead of adding one: one row per member and
+    document, one ``join`` row per member, one row per Discord message. A Discord
+    row keeps where it was said, so it is shown only to readers of that channel.
+    """
+
+    __tablename__ = "self_intros"
+    __table_args__ = (
+        UniqueConstraint("member_id", "source_item_id", name="uq_self_intros_item"),
+        UniqueConstraint("org_id", "message_id", name="uq_self_intros_message"),
+        Index(
+            "uq_self_intros_join",
+            "member_id",
+            unique=True,
+            postgresql_where=text("origin = 'join'"),
+        ),
+        CheckConstraint("origin IN ('slides', 'join', 'discord')", name="ck_self_intros_origin"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    member_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"), index=True
+    )
+    origin: Mapped[str] = mapped_column(String(16))
+    source_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_items.id", ondelete="CASCADE"), index=True
+    )
+    message_id: Mapped[int | None] = mapped_column(BigInteger)
+    discord_channel_id: Mapped[int | None] = mapped_column(BigInteger)
+    discord_thread_id: Mapped[int | None] = mapped_column(BigInteger)
+    text: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime)
+
+
 class EmployeeProfile(Base):
     """Free-text self-description of an employee (one row per employee)."""
 

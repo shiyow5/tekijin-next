@@ -25,6 +25,7 @@ from tekijin.models.tables import (
     Document,
     EmployeeProfile,
     Question,
+    SelfIntro,
 )
 from tekijin.retrieval.embedding import PASSAGE, Embedder
 
@@ -42,6 +43,8 @@ _SPECS: tuple[tuple[str, Any, Callable[[Any], str | None]], ...] = (
     ("documents", Document, _document_text),
     # #70: ingested chunks, so an embedding-model change can re-embed them.
     ("chunks", Chunk, lambda r: passage_text(r.source_item.title, r.text)),
+    # #106: self-introductions, embedded as their text alone (data/self_intros.py).
+    ("self_intros", SelfIntro, lambda r: r.text),
 )
 
 

@@ -26,6 +26,7 @@ from typing import Annotated, Literal
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.orm import Session
 
 from tekijin.api import schemas
 from tekijin.api.service import AgentService, AskerNotFound, ServiceBusy
@@ -41,6 +42,7 @@ from tekijin.data.members import (
     resolve_discord_member,
     set_opted_out,
 )
+from tekijin.data.self_intros import MAX_INTRO_LENGTH, delete_member_intros, set_join_intro
 from tekijin.data.sources import (
     MANUAL,
     SourceOwnedElsewhere,
@@ -108,13 +110,32 @@ class DiscordAskResponse(AskOutcome):
 
 
 class DiscordMemberRequest(DiscordUser):
-    action: Literal["join", "optout", "optin"]
+    action: Literal["join", "optout", "optin", "intro"]
+    # #106: the self-introduction typed with ``join`` or ``intro``. Blank is no change.
+    intro: str | None = Field(default=None, max_length=MAX_INTRO_LENGTH)
+
+    @field_validator("intro")
+    @classmethod
+    def _intro_or_none(cls, value: str | None) -> str | None:
+        return (value or "").strip() or None
 
 
 class DiscordMemberResponse(BaseModel):
-    status: Literal["joined", "opted_out", "opted_in", "unlinked"]
+    status: Literal[
+        "joined",
+        "opted_out",
+        "opted_in",
+        "unlinked",
+        # ``intro``:
+        "intro_saved",
+        "intro_unchanged",
+        "intro_refused",
+        "not_joined",
+    ]
     # ``join`` only: open within 10 minutes, once.
     login_url: str | None = None
+    # ``join`` with an introduction: whether it was stored (not while opted out).
+    intro_saved: bool | None = None
 
 
 # ``/tekijin add`` (#70, #74): the typed text (the bot caps it at 4000) plus an
@@ -239,23 +260,36 @@ def discord_member(
     request: Request,
     settings: Settings = Depends(require_bot_secret),
 ) -> DiscordMemberResponse:
-    """``/tekijin join`` / ``optout`` / ``optin`` for the Discord user."""
+    """``/tekijin join`` / ``optout`` / ``optin`` / ``intro`` for the Discord user.
+
+    ``optout`` also deletes the member's self-introductions (#106); ``optin`` does
+    not bring them back. Those from a document return the next time it is stored.
+    """
 
     service: AgentService = request.app.state.agent_service
     guild_id = _guild_for(settings, req)
     if guild_id is None:
         return DiscordMemberResponse(status="unlinked")
     now = service.now()
+    intro_saved: bool | None = None
     with session_scope(service.session_factory) as session:
         org = get_or_create_org_for_guild(session, guild_id, name=f"Discord {guild_id}")
         member = resolve_discord_member(
             session, org, req.discord_user_id, display_name=req.display_name, now=now
         )
+        if req.action == "intro":
+            return _set_intro(session, service, member, req.intro, now)
         if req.action == "join":
             mark_joined(member, now)
             member_id = member.id
+            if req.intro is not None:
+                intro_saved = set_join_intro(
+                    session, service.embedder, member=member, text=req.intro, now=now
+                )
         else:
             set_opted_out(member, req.action == "optout", now)
+            if req.action == "optout":
+                delete_member_intros(session, member_id=member.id)
             return DiscordMemberResponse(
                 status="opted_out" if req.action == "optout" else "opted_in"
             )
@@ -263,7 +297,22 @@ def discord_member(
     return DiscordMemberResponse(
         status="joined",
         login_url=f"{settings.discord_web_url.rstrip('/')}/login#discord_login={token}",
+        intro_saved=intro_saved,
     )
+
+
+def _set_intro(
+    session: Session, service: AgentService, member: Employee, intro: str | None, now: dt.datetime
+) -> DiscordMemberResponse:
+    """``/tekijin intro``: only for a member who joined and has not opted out."""
+
+    if member.joined_at is None:
+        return DiscordMemberResponse(status="not_joined")
+    if intro is None:
+        return DiscordMemberResponse(status="intro_unchanged")
+    if not set_join_intro(session, service.embedder, member=member, text=intro, now=now):
+        return DiscordMemberResponse(status="intro_refused")
+    return DiscordMemberResponse(status="intro_saved")
 
 
 @router.post("/add", response_model=DiscordAddResponse)
