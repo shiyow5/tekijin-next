@@ -324,8 +324,9 @@ def test_outbox_does_nothing_without_an_output_channel(monkeypatch, calls) -> No
     assert calls == []
 
 
-def _thread_message(channel, *, bot: bool = False, content: str = "答えです"):
+def _thread_message(channel, *, bot: bool = False, content: str = "答えです", edited_at=None):
     return SimpleNamespace(
+        edited_at=edited_at,
         id=55,
         guild=SimpleNamespace(id=GUILD),
         author=SimpleNamespace(id=2001, bot=bot, display_name="回答者"),
@@ -575,3 +576,28 @@ def test_an_edit_is_not_lost_behind_its_original(monkeypatch, calls) -> None:
     sent = [(b.get("edited", False), b["body"]) for _, b in calls]
     assert sent == [(False, "答えです"), (True, "直した"), (True, "直した")]
     assert ui._retry == {}
+
+
+def test_an_older_queued_edit_is_dropped_once_a_newer_one_is_taken(monkeypatch, calls) -> None:
+    replies = iter([{"kind": "error"}, {"status": "updated"}])
+
+    async def backend(http, *, base_url, secret, path, body):
+        calls.append((path, body))
+        return next(replies)
+
+    monkeypatch.setattr(bot_requests, "internal_post", backend)
+    ui = _ui()
+    thread = _Channel(700, parent_id=OUTPUT)
+    asyncio.run(ui.on_thread_message(_thread_message(thread, content="一度目"), edited=True))
+    asyncio.run(ui.on_thread_message(_thread_message(thread, content="二度目"), edited=True))
+    asyncio.run(ui.retry_messages())
+    assert [b["body"] for _, b in calls] == ["一度目", "二度目"]
+    assert ui._retry == {}
+    assert all("_version" not in b for _, b in calls)
+
+
+def test_a_replayed_edited_message_is_sent_as_an_edit(calls) -> None:
+    thread = _History(700, parent_id=OUTPUT, messages=[])
+    thread.messages = [_thread_message(thread, content="直した", edited_at=object())]
+    asyncio.run(_ui().replay([thread]))
+    assert calls[0][1]["edited"] is True

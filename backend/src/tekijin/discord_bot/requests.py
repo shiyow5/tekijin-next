@@ -55,6 +55,8 @@ OUTBOX_INTERVAL_S = 5.0
 _THREAD_MESSAGE_MAX = 4000
 #: Thread messages kept for sending again while the backend is away.
 _RETRY_MAX = 1000
+#: Key of the bot-side version stamp on a queued thread message (never sent).
+_VERSION = "_version"
 #: How far back each open request thread is read again after a (re)connect.
 _REPLAY_LIMIT = 200
 _UNAVAILABLE = "いまは処理できません。しばらくしてから、もう一度お試しください。"
@@ -179,6 +181,8 @@ class RequestUI:
         # and the thread each was in (when known).
         self._deletes: set[str] = set()
         self._delete_threads: dict[str, str] = {}
+        # How many thread messages have been read; orders versions of one message.
+        self._reads = 0
         # Sends in flight, one lock per message id.
         self._sending: dict[str, tuple[asyncio.Lock, int]] = {}
         # Recently deleted message ids: never sent to the backend after deletion.
@@ -295,8 +299,13 @@ class RequestUI:
             "message_id": str(message.id),
             "body": content[:_THREAD_MESSAGE_MAX],
         }
-        if edited:
+        # A message read again after it was edited (a replay) is sent as an edit,
+        # so its current text replaces what the original became.
+        if edited or getattr(message, "edited_at", None) is not None:
             body["edited"] = True
+        # Which read of the message this is: a later read carries newer text.
+        self._reads += 1
+        body[_VERSION] = self._reads
         await self._forward(body)
 
     async def on_thread_delete(
@@ -375,19 +384,23 @@ class RequestUI:
         message_id = body["message_id"]
         if message_id in self._deleted:
             return True  # deleted meanwhile; never send it
-        result = await self._call("thread-message", body)
+        version = body.get(_VERSION, 0)
+        result = await self._call(
+            "thread-message", {k: v for k, v in body.items() if k != _VERSION}
+        )
         if message_id in self._deleted:
             return True  # deleted while it was being sent; the deletion follows
         queued = self._retry.get(message_id)
+        queued_version = queued.get(_VERSION, 0) if queued is not None else None
         if "status" in result:
-            # A queued newer version (an edit) still has to be sent.
-            if queued is body or (queued is not None and not queued.get("edited")):
+            # A queued version read later than this one still has to be sent;
+            # one read earlier is superseded by what was just taken.
+            if queued_version is not None and queued_version <= version:
                 self._retry.pop(message_id, None)
             return True
         logger.warning("could not forward request thread message %s; will retry", message_id)
-        # Never replace a queued edit with the original it corrects.
-        if queued is not None and queued.get("edited") and not body.get("edited"):
-            return False
+        if queued_version is not None and queued_version > version:
+            return False  # a newer version is already waiting
         if len(self._retry) < _RETRY_MAX or queued is not None:
             self._retry[message_id] = body
         return False
