@@ -432,6 +432,13 @@ class AgentService:
         responder_id = recs[0]["person_id"] if recs else None
         return (asker_id, responder_id)
 
+    def session_org_id(self, session_id: str) -> int | None:
+        """The organization of the session's asker, ``None`` for the company path."""
+
+        values = getattr(self._snapshot(session_id), "values", None) or {}
+        org_id = values.get("org_id")
+        return org_id if isinstance(org_id, int) else None
+
     def pending_handoff_metadata(self, session_id: str) -> dict[str, int | str | None]:
         """Return durable identifiers needed to notify an external hand-off client."""
         snapshot = self._snapshot(session_id)

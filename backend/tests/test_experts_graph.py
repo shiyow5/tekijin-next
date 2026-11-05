@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -13,6 +14,7 @@ from tekijin.agent.graph import build_agent
 from tekijin.agent.nodes import AgentNodes
 from tekijin.agent.protocols import IntentResult
 from tekijin.agent.state import AgentState, empty_retrieval
+from tekijin.api.events import node_event, without_reasons
 from tekijin.api.service import responder_view
 from tekijin.retrieval.experts import (
     DOCUMENT,
@@ -318,6 +320,27 @@ def test_the_person_asked_does_not_see_the_evidence_about_them() -> None:
     assert member_view.name == NAMES[2]
     assert [r.type for r in company_view.reasons] == [SELF_INTRO]
     assert primary["reasons"]  # the asker's copy is left as it was
+
+
+def test_the_stream_the_person_asked_can_open_carries_no_reasons() -> None:
+    finder = _Finder()
+    rec = finder.find(asker_id=ASKER).experts[0].as_recommendation()
+    recommend = node_event("c6_score", {"recommendations": [rec]})
+    message = node_event(
+        "document", {"answer": "資料に答えはありません。", "fallback_responder": rec}
+    )
+    draft = node_event("c7_draft", {"draft": "下書き"})
+    assert recommend is not None and message is not None and draft is not None
+
+    shown = json.loads(without_reasons(recommend).data)
+    assert shown["recommendations"][0]["reasons"] == []
+    assert shown["recommendations"][0]["name"] == NAMES[2]
+    assert "自己紹介" not in without_reasons(recommend).data
+    assert json.loads(message.data)["fallback_responder"]["reasons"]
+    assert json.loads(without_reasons(message).data)["fallback_responder"]["reasons"] == []
+    assert without_reasons(draft) is draft
+    # The asker's own event is left as it was.
+    assert json.loads(recommend.data)["recommendations"][0]["reasons"]
 
 
 def test_someone_who_opted_out_after_c4_is_not_brought_back() -> None:
