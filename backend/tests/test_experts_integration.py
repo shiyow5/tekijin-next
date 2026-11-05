@@ -59,7 +59,7 @@ def _member(session, org: Organization, discord_id: str, name: str) -> Employee:
     return resolve_discord_member(session, org, discord_id, display_name=name, now=NOW)
 
 
-def _find(session, embedder, org, *, scope=PUBLIC, hits_scope=None, asker=None, **kw):
+def _find(session, embedder, org, *, scope=PUBLIC, hits_scope=None, asker=None, exclude=(), **kw):
     """C4's search, then the finder, as ``c4_retrieve`` runs them."""
 
     vector = embedder.encode([QUERY])[0]
@@ -72,7 +72,7 @@ def _find(session, embedder, org, *, scope=PUBLIC, hits_scope=None, asker=None, 
         scope=scope,
         source_hits=found.hits,
         asker_id=asker,
-        exclude=kw.pop("exclude", ()),
+        exclude=exclude,
     )
 
 

@@ -16,7 +16,7 @@
 import { ConfidenceGauge } from "@/components/result/ConfidenceGauge";
 import type { Recommendation } from "@/lib/api-types";
 import { REVEAL_CLASS, revealStyle } from "@/lib/motion";
-import { reasonLabel } from "@/lib/reasons";
+import { reasonDetail, reasonLabel } from "@/lib/reasons";
 
 export interface CandidateCardProps {
   candidate: Recommendation;
@@ -101,7 +101,7 @@ export function CandidateCard({
                 </span>
                 <span>
                   <span className="font-medium text-on-surface">{reasonLabel(reason.type)}</span>
-                  {showDetail && reason.detail ? `：${reason.detail}` : null}
+                  {showDetail && reasonDetail(reason) ? `：${reasonDetail(reason)}` : null}
                 </span>
               </li>
             );

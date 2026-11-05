@@ -62,6 +62,37 @@ describe("CandidateCard — comparison info on non-top cards (#204)", () => {
   });
 });
 
+describe("CandidateCard — an organization member's evidence (#107)", () => {
+  const member = candidate({
+    dept: null,
+    confidence: "高",
+    reasons: [
+      { type: "self_intro", detail: "自己紹介: 望遠鏡と赤道儀の整備が趣味です" },
+      { type: "document", detail: "『機材の使い方と管理マニュアル』を書いた" },
+      { type: "conversation", detail: "#機材 › ピントが合わない の会話で発言した" },
+    ],
+  });
+
+  it("shows where each reason comes from on the expanded card", () => {
+    render(<CandidateCard candidate={member} rank={1} expanded={true} selected={true} />);
+    expect(
+      screen.getByText(fullText("自己紹介：望遠鏡と赤道儀の整備が趣味です")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(fullText("文書：『機材の使い方と管理マニュアル』を書いた")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(fullText("会話：#機材 › ピントが合わない の会話で発言した")),
+    ).toBeInTheDocument();
+  });
+
+  it("shows only the labels on a compact card", () => {
+    render(<CandidateCard candidate={member} rank={2} expanded={false} selected={false} />);
+    expect(screen.getAllByText(fullText("自己紹介")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/望遠鏡/)).not.toBeInTheDocument();
+  });
+});
+
 describe("CandidateCard — staggered entrance reveal (#475 Screen 01)", () => {
   it("fades in with the reveal animation, disabled under reduced motion", () => {
     render(<CandidateCard candidate={candidate()} rank={1} expanded={true} selected={true} />);

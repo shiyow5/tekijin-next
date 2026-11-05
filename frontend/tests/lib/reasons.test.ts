@@ -1,5 +1,5 @@
 import type { Reason } from "@/lib/api-types";
-import { REASON_LABELS, answersEvidence, reasonLabel } from "@/lib/reasons";
+import { REASON_LABELS, answersEvidence, reasonDetail, reasonLabel } from "@/lib/reasons";
 import { describe, expect, it } from "vitest";
 
 describe("reasonLabel", () => {
@@ -22,6 +22,32 @@ describe("reasonLabel", () => {
 
   it("falls back to the raw type for unknown reasons", () => {
     expect(reasonLabel("mystery")).toBe("mystery");
+  });
+});
+
+describe("an organization member's evidence (#107)", () => {
+  it("labels the four kinds of evidence and a referral", () => {
+    expect(reasonLabel("self_intro")).toBe("自己紹介");
+    expect(reasonLabel("document")).toBe("文書");
+    expect(reasonLabel("conversation")).toBe("会話");
+    expect(reasonLabel("answer")).toBe("TEKIJINでの回答");
+    expect(reasonLabel("referral")).toBe("担当者からの推薦");
+  });
+
+  it("drops a detail's prefix when it repeats the label", () => {
+    expect(reasonDetail({ type: "self_intro", detail: "自己紹介: 星座の神話が好きです" })).toBe(
+      "星座の神話が好きです",
+    );
+    expect(reasonDetail({ type: "referral", detail: "担当者からの推薦" })).toBeNull();
+  });
+
+  it("keeps every other detail as it is", () => {
+    const detail = "『機材の使い方と管理マニュアル』を書いた";
+    expect(reasonDetail({ type: "document", detail })).toBe(detail);
+    expect(reasonDetail({ type: "load", detail: "今週の対応件数: 少なめ" })).toBe(
+      "今週の対応件数: 少なめ",
+    );
+    expect(reasonDetail({ type: "answers", detail: "" })).toBeNull();
   });
 });
 

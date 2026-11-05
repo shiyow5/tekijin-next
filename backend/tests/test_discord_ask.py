@@ -116,6 +116,25 @@ def test_format_handoff_names_people_and_points_to_web() -> None:
     assert WEB in text
 
 
+def test_format_handoff_lists_a_members_evidence_one_per_line() -> None:
+    """#107: a member is recommended from evidence, each reason naming its source."""
+
+    member = {
+        **REC,
+        "dept": None,
+        "name": "岩田 颯太",
+        "reasons": [
+            {"type": "self_intro", "detail": "自己紹介: 3年。望遠鏡と赤道儀の整備が趣味です。"},
+            {"type": "document", "detail": "『機材の使い方と管理マニュアル』を書いた"},
+        ],
+    }
+    out = summarize_events([("recommend", {"recommendations": [member]})])
+    text = format_reply(out.model_dump(), web_url=WEB)
+
+    assert "1. 岩田 颯太\n   - 自己紹介: 3年。望遠鏡と赤道儀の整備が趣味です。\n" in text
+    assert "   - 『機材の使い方と管理マニュアル』を書いた" in text
+
+
 def test_format_followup_and_unlinked_point_to_web() -> None:
     followup = summarize_events([("followup", {"question": "どの拠点ですか?"})])
     assert WEB in format_reply(followup.model_dump(), web_url=WEB)

@@ -159,8 +159,10 @@ def _handoff(
     people = ["この質問は、次の人に相談するのがよさそうです。"]
     for i, rec in enumerate(recommendations, start=1):
         dept = f"({rec['dept']})" if rec.get("dept") else ""
-        reasons = "、".join(r.get("detail", "") for r in rec.get("reasons") or [])
-        people.append(f"{i}. {rec.get('name', '')}{dept}" + (f": {reasons}" if reasons else ""))
+        people.append(f"{i}. {rec.get('name', '')}{dept}")
+        # One reason per line: a quoted self-introduction has its own 「、」 and 「。」
+        # (#107), so joining reasons with 「、」 would run them together.
+        people.extend(f"   - {r['detail']}" for r in rec.get("reasons") or [] if r.get("detail"))
     sources = _sources(citations) if reference else ""
     middle = "\n\n".join(part for part in (sources, "\n".join(people)) if part)
     head = f"参考になりそうな情報\n> {reference}" if reference else ""
