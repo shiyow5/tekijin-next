@@ -9,6 +9,9 @@
 
 import type {
   AckResponse,
+  ArticleDetail,
+  ArticleEditRequest,
+  ArticleListResponse,
   AskRequest,
   ChatMessage,
   ChatThreadDetail,
@@ -100,14 +103,24 @@ async function extractErrorMessage(response: Response): Promise<string> {
 }
 
 /** POST `body` as JSON to `{base}{path}`, throwing {@link ApiError} on non-2xx. */
-async function postJson<T>(path: string, body: unknown, options: RequestOptions = {}): Promise<T> {
+function postJson<T>(path: string, body: unknown, options: RequestOptions = {}): Promise<T> {
+  return sendJson<T>("POST", path, body, options);
+}
+
+/** Send `body` as JSON with `method`, throwing {@link ApiError} on non-2xx. */
+async function sendJson<T>(
+  method: "POST" | "PATCH",
+  path: string,
+  body: unknown,
+  options: RequestOptions = {},
+): Promise<T> {
   // Trim a trailing slash on an explicit override so `${base}${path}` never
   // doubles up; the config default is already normalized.
   const baseUrl = (options.baseUrl ?? getApiBaseUrl()).replace(/\/+$/, "");
   const doFetch = options.fetchImpl ?? fetch;
 
   const response = await doFetch(`${baseUrl}${path}`, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
     signal: options.signal,
@@ -686,4 +699,51 @@ export function deleteSource(id: number, options: RequestOptions = {}): Promise<
 /** GET /sources/{id} — one of the organization's sources with its body (#74). */
 export function getSource(id: number, options: RequestOptions = {}): Promise<SourceDetail> {
   return getJson<SourceDetail>(`/sources/${id}`, options);
+}
+
+/**
+ * GET /articles — one page of the organization's knowledge (#112). `view: "review"`
+ * lists the drafts waiting for the admin, most wanted first (403 for a member).
+ */
+export function getArticles(
+  options: RequestOptions & {
+    view?: "verified" | "review";
+    q?: string;
+    offset?: number;
+    limit?: number;
+  } = {},
+): Promise<ArticleListResponse> {
+  const { view, q, offset, limit, ...requestOptions } = options;
+  const params = new URLSearchParams();
+  if (view !== undefined) params.set("view", view);
+  if (q) params.set("q", q);
+  if (offset !== undefined) params.set("offset", String(offset));
+  if (limit !== undefined) params.set("limit", String(limit));
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return getJson<ArticleListResponse>(`/articles${query}`, requestOptions);
+}
+
+/** GET /articles/{id} — one article with its sources (#112). */
+export function getArticle(id: number, options: RequestOptions = {}): Promise<ArticleDetail> {
+  return getJson<ArticleDetail>(`/articles/${id}`, options);
+}
+
+/** PATCH /articles/{id} — the admin edits an article's fields (#112). */
+export function patchArticle(
+  id: number,
+  changes: ArticleEditRequest,
+  options: RequestOptions = {},
+): Promise<ArticleDetail> {
+  return sendJson<ArticleDetail>("PATCH", `/articles/${id}`, changes, options);
+}
+
+/** POST /articles/{id}/{action} — the admin verifies, sends back or retires (#112). */
+export function reviewArticle(
+  id: number,
+  action: "verify" | "send-back" | "retire",
+  options: RequestOptions & { supersededBy?: number | null } = {},
+): Promise<ArticleDetail> {
+  const { supersededBy, ...requestOptions } = options;
+  const body = action === "retire" ? { superseded_by: supersededBy ?? null } : {};
+  return postJson<ArticleDetail>(`/articles/${id}/${action}`, body, requestOptions);
 }
